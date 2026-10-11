@@ -148,6 +148,22 @@ export const readProviderStatusCache = (filePath: string) =>
     );
   });
 
+/**
+ * Usage history is memory-only and `hydrateCachedProvider` never restores
+ * `usageLimits`, so writing it would rewrite tens of KB on every heartbeat.
+ */
+function withoutUsageHistory(provider: ServerProvider): ServerProvider {
+  const limits = provider.usageLimits;
+  if (!limits?.windows.some((window) => window.history !== undefined)) return provider;
+  return {
+    ...provider,
+    usageLimits: {
+      ...limits,
+      windows: limits.windows.map(({ history: _history, ...window }) => window),
+    },
+  };
+}
+
 export const writeProviderStatusCache = (input: {
   readonly filePath: string;
   readonly provider: ServerProvider;
@@ -155,6 +171,6 @@ export const writeProviderStatusCache = (input: {
   const { updateState: _updateState, ...cacheableProvider } = input.provider;
   return writeFileStringAtomically({
     filePath: input.filePath,
-    contents: `${JSON.stringify(cacheableProvider, null, 2)}\n`,
+    contents: `${JSON.stringify(withoutUsageHistory(cacheableProvider), null, 2)}\n`,
   });
 };

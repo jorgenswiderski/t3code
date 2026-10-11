@@ -16,12 +16,21 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ProviderHost from "./ProviderHost.ts";
-import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./usageLimits.ts";
+import {
+  EMPTY_USAGE_HISTORY,
+  type UsageHistory,
+  applyUsageLimitsUpdate,
+  attachUsageHistory,
+  recordUsageSamples,
+  resolveUsageLimitsAfterProbe,
+} from "./usageLimits.ts";
 import type { ManagedServerProvider } from "./snapshot.ts";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
   readonly enrichmentGeneration: number;
+  /** Session-window samples; published as `history` on the snapshot's windows. */
+  readonly usageHistory: UsageHistory;
 }
 
 function withUsageLimits(
@@ -69,6 +78,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const snapshotStateRef = yield* Ref.make<ProviderSnapshotState>({
     snapshot: initialSnapshot,
     enrichmentGeneration: 0,
+    usageHistory: EMPTY_USAGE_HISTORY,
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
@@ -173,17 +183,36 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
               published: state.snapshot.usageLimits,
               probed: probedSnapshot.usageLimits,
             });
-        const workspaceId =
-          usageLimits === probedSnapshot.usageLimits ? undefined : state.snapshot.auth.workspaceId;
+        const probeAccepted = usageLimits === probedSnapshot.usageLimits;
+        const workspaceId = probeAccepted ? undefined : state.snapshot.auth.workspaceId;
+        // Samples belong to one account. `applyUsageLimitsUpdate` rebuilds
+        // limits without `credentialFingerprint`, so a fingerprint change is
+        // only seen between two probes; the providers that publish one
+        // (Antigravity, OpenCode) have no runtime updates today.
+        const fingerprintChanged = differs(
+          state.snapshot.usageLimits?.credentialFingerprint,
+          probedSnapshot.usageLimits?.credentialFingerprint,
+        );
+        const carried =
+          switchedAccount || fingerprintChanged ? EMPTY_USAGE_HISTORY : state.usageHistory;
+        // A failed read that kept the last good limits records no sample.
+        const usageHistory = probeAccepted
+          ? recordUsageSamples({
+              history: carried,
+              limits: usageLimits,
+              windowIds: undefined,
+              at: usageLimits?.checkedAt ?? probedSnapshot.checkedAt,
+            })
+          : carried;
         const snapshot = withUsageLimits(
           workspaceId && !probedSnapshot.auth.workspaceId
             ? { ...probedSnapshot, auth: { ...probedSnapshot.auth, workspaceId } }
             : probedSnapshot,
-          usageLimits,
+          attachUsageHistory(usageLimits, usageHistory),
         );
         return [
           { snapshot, generation },
-          { snapshot, enrichmentGeneration: generation },
+          { snapshot, enrichmentGeneration: generation, usageHistory },
         ] as const;
       },
     );
@@ -208,13 +237,25 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           update,
           checkedAt: update.checkedAt,
         });
-        // `applyUsageLimitsUpdate` hands back the same object when nothing
-        // moved, which is the common case for Codex's per-tick notification.
-        if (usageLimits === state.snapshot.usageLimits) {
+        const usageHistory =
+          update.windows.length === 0
+            ? state.usageHistory
+            : recordUsageSamples({
+                history: state.usageHistory,
+                limits: usageLimits,
+                windowIds: new Set(update.windows.map((window) => window.id)),
+                at: update.checkedAt,
+              });
+        // Both helpers hand back their input when nothing moved, which is the
+        // common case for Codex's per-token notification.
+        if (usageLimits === state.snapshot.usageLimits && usageHistory === state.usageHistory) {
           return [null, state] as const;
         }
-        const snapshot = withUsageLimits(state.snapshot, usageLimits);
-        return [snapshot, { ...state, snapshot }] as const;
+        const snapshot = withUsageLimits(
+          state.snapshot,
+          attachUsageHistory(usageLimits, usageHistory),
+        );
+        return [snapshot, { ...state, snapshot, usageHistory }] as const;
       });
       if (snapshotToPublish !== null) {
         yield* PubSub.publish(changesPubSub, snapshotToPublish);

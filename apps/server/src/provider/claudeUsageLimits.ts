@@ -5,8 +5,9 @@
  *
  * - `get_usage` (on demand, during the capabilities probe) reports every
  *   window at once as 0–100 percentages with ISO reset times.
- * - `rate_limit_event` (streamed during a turn) names one window at a time
- *   with a 0–1 utilization fraction and an epoch-seconds reset.
+ * - `rate_limit_event` (streamed during a turn) lists every account-wide
+ *   window in `unifiedWindows`, with a 0–1 utilization fraction and an
+ *   epoch-seconds reset; older CLIs name one window at a time.
  *
  * @module provider/claudeUsageLimits
  */
@@ -126,28 +127,60 @@ function makeWindow(
   };
 }
 
+/** Utilization fractions carry float noise (`0.58 * 100`); two decimals match the probe's values. */
+function percentFromFraction(fraction: number): number {
+  return Math.round(fraction * 10_000) / 100;
+}
+
 /**
- * Utilization is a 0–1 fraction on the streamed event. An overage-included
- * event before any probe has named the bucket is dropped: guessing a name
- * would draw a row the next probe cannot reconcile.
+ * `rate_limit_info.unifiedWindows` shipped in the CLI after the SDK typings we
+ * pin, so it is read structurally until the `.d.ts` catches up. Every event
+ * lists the account-wide windows, not just the one named by `rateLimitType`.
+ */
+function readUnifiedWindows(info: SDKRateLimitInfo): ReadonlyArray<ServerProviderUsageWindow> {
+  const raw = (info as { readonly unifiedWindows?: unknown }).unifiedWindows;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return [];
+  const windows: ServerProviderUsageWindow[] = [];
+  for (const id of Object.keys(WINDOWS)) {
+    const entry: unknown = (raw as Record<string, unknown>)[id];
+    if (typeof entry !== "object" || entry === null) continue;
+    const { utilization, resetsAt } = entry as { utilization?: unknown; resetsAt?: unknown };
+    if (typeof utilization !== "number" || !Number.isFinite(utilization)) continue;
+    windows.push(
+      makeWindow(
+        id,
+        percentFromFraction(utilization),
+        isoFromEpochSeconds(typeof resetsAt === "number" ? resetsAt : undefined),
+      ),
+    );
+  }
+  return windows;
+}
+
+/**
+ * Utilization is a 0–1 fraction on the streamed event. The windows listed in
+ * `unifiedWindows` win over the single window the event names. An
+ * overage-included event before any probe has named the bucket is dropped:
+ * guessing a name would draw a row the next probe cannot reconcile.
  */
 export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
+  const byId = new Map<string, ServerProviderUsageWindow>();
   const type: string | undefined = info.rateLimitType;
-  if (!type || typeof info.utilization !== "number") {
-    return undefined;
+  if (type && typeof info.utilization === "number" && Number.isFinite(info.utilization)) {
+    const usedPercent = percentFromFraction(info.utilization);
+    const resetsAt = isoFromEpochSeconds(info.resetsAt);
+    if (type in WINDOWS) {
+      byId.set(type, makeWindow(type, usedPercent, resetsAt));
+    } else if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
+      const scoped = scopedWindow(names.overageIncluded, usedPercent, resetsAt);
+      byId.set(scoped.id, scoped);
+    }
   }
-  const usedPercent = info.utilization * 100;
-  const resetsAt = isoFromEpochSeconds(info.resetsAt);
-  if (type in WINDOWS) {
-    return { windows: [makeWindow(type, usedPercent, resetsAt)] };
-  }
-  if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
-    return { windows: [scopedWindow(names.overageIncluded, usedPercent, resetsAt)] };
-  }
-  return undefined;
+  for (const window of readUnifiedWindows(info)) byId.set(window.id, window);
+  return byId.size === 0 ? undefined : { windows: [...byId.values()] };
 }
 
 /**
