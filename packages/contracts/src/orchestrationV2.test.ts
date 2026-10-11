@@ -40,7 +40,9 @@ import {
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
+  OrchestrationV2ProviderTurnTokenUsage,
   OrchestrationV2ThreadShell,
+  OrchestrationV2ThreadShellJson,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
 } from "./orchestrationV2.ts";
@@ -128,6 +130,8 @@ const encodeOrchestrationV2ProviderThreadJson = Schema.encodeSync(
 );
 const decodeOrchestrationV2ProviderThread = Schema.decodeUnknownSync(OrchestrationV2ProviderThread);
 const decodeOrchestrationV2ThreadShell = Schema.decodeUnknownSync(OrchestrationV2ThreadShell);
+const decodeThreadShellJson = Schema.decodeUnknownSync(OrchestrationV2ThreadShellJson);
+const decodeTokenUsage = Schema.decodeUnknownSync(OrchestrationV2ProviderTurnTokenUsage);
 const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
   OrchestrationV2ProviderCapabilities,
 );
@@ -1313,6 +1317,81 @@ describe("orchestration V2 contracts", () => {
     });
 
     expect(shell.pendingBackgroundTasks).toEqual([]);
+  });
+
+  it("carries request identity on token usage and the latest token usage on the shell", () => {
+    const usage = {
+      usedTokens: 380000,
+      maxTokens: 1000000,
+      promptCacheTtlMs: 3600000,
+      requestIdentity: { model: "claude-opus-5-5", effort: "high", fastMode: false },
+      updatedAt: "2026-10-11T10:00:00.000Z",
+    };
+    const baseShell = {
+      createdBy: "user",
+      creationSource: "web",
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      providerInstanceId: "claudeAgent",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: "thread-1",
+      },
+      forkedFrom: null,
+      activeProviderThreadId: "provider-thread-1",
+      latestRunId: "run-1",
+      activeRunId: null,
+      status: "completed",
+      pendingRuntimeRequest: null,
+      latestVisibleMessage: null,
+      latestUserMessageAt: null,
+      hasActionableProposedPlan: false,
+      itemCount: 0,
+      visibleItemCount: 0,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      deletedAt: null,
+    };
+
+    expect(
+      "requestIdentity" in decodeTokenUsage({ usedTokens: 10, updatedAt: usage.updatedAt }),
+    ).toBe(false);
+    expect(decodeTokenUsage(usage)).toEqual(usage);
+    expect(decodeTokenUsage({ ...usage, requestIdentity: {} }).requestIdentity).toEqual({});
+    expect(
+      decodeTokenUsage({ ...usage, requestIdentity: { model: " claude-opus-5-5 " } })
+        .requestIdentity,
+    ).toEqual({ model: "claude-opus-5-5" });
+    expect(() => decodeTokenUsage({ ...usage, requestIdentity: { effort: "  " } })).toThrow();
+
+    expect(decodeOrchestrationV2ThreadShell(baseShell).latestTokenUsage).toBeUndefined();
+    expect(
+      decodeOrchestrationV2ThreadShell({ ...baseShell, latestTokenUsage: null }).latestTokenUsage,
+    ).toBeNull();
+    expect(
+      decodeOrchestrationV2ThreadShell({ ...baseShell, latestTokenUsage: usage }).latestTokenUsage,
+    ).toEqual(usage);
+    expect(
+      decodeThreadShellJson({
+        ...baseShell,
+        createdAt: "2026-10-11T00:00:00.000Z",
+        updatedAt: "2026-10-11T00:00:00.000Z",
+        latestTokenUsage: usage,
+      }).latestTokenUsage,
+    ).toEqual(usage);
   });
 });
 
