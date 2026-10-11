@@ -75,6 +75,7 @@ import {
 import { Label } from "../ui/label";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/menu";
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
+import { WEEKDAY_LABELS, WeekdayToggleGroup } from "./WeekdayToggleGroup";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Badge } from "../ui/badge";
@@ -103,9 +104,6 @@ import {
 } from "./settingsLayout";
 
 /** JS day-of-week (0 = Sunday) rendered Monday-first, matching how people read a week. */
-const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
-const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
-const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
 
 const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   worktree: "Create a new worktree",
@@ -1297,26 +1295,13 @@ function ScheduledTaskEditorDialog({
                     />
                     <span className="text-xs text-muted-foreground">on</span>
                   </div>
-                  <ToggleGroup
-                    multiple
-                    variant="outline"
-                    size="sm"
+                  <WeekdayToggleGroup
                     aria-label="Days to run"
-                    value={[...draft.weekdays].map(String)}
-                    onValueChange={(values) => {
-                      if (values.length === 0) return;
-                      setDraft((current) => ({
-                        ...current,
-                        weekdays: new Set(values.map(Number)),
-                      }));
-                    }}
-                  >
-                    {WEEKDAY_ORDER.map((day) => (
-                      <Toggle key={day} value={String(day)} aria-label={WEEKDAY_LABELS[day]}>
-                        {WEEKDAY_SHORT[day]}
-                      </Toggle>
-                    ))}
-                  </ToggleGroup>
+                    value={[...draft.weekdays]}
+                    onChange={(days) =>
+                      setDraft((current) => ({ ...current, weekdays: new Set(days) }))
+                    }
+                  />
                 </div>
               ) : (
                 <div className="flex items-center gap-2">
