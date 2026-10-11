@@ -475,9 +475,11 @@ describe("settings search targets", () => {
     const streaming = getSettingsSearchTargetScope("response-streaming")!;
     expect(streaming.scope).toBe("project-defaults");
     expect(isSettingsSearchScopeAvailable(streaming.scope, "project")).toBe(true);
-    for (const id of ["legacy-plan-mode", "legacy-context-window-indicator", "legacy-sidebar"]) {
+    for (const id of ["legacy-plan-mode", "legacy-sidebar", "usage-pacing-context-ring"]) {
       expect(getSettingsSearchTargetScope(id)!.scope).toBeNull();
     }
+    const ids: ReadonlyArray<string> = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
+    expect(ids).not.toContain("legacy-context-window-indicator");
   });
 });
 

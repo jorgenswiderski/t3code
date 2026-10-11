@@ -1,8 +1,14 @@
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { Input } from "../ui/input";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
 import { Switch } from "../ui/switch";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import {
   snapOffHoursWeight,
@@ -123,6 +129,32 @@ export function UsagePacingSettingsPanel() {
                 <NumberFieldInput aria-label="Off-hours weight" />
               </NumberFieldGroup>
             </NumberField>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("usage-pacing-context-ring")}
+          description="Shows the thread's context size and prompt-cache state as a ring next to the send button. The sidebar always shows it."
+          resetAction={
+            settings.composerContextRingEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.composerContextRingEnabled ? (
+              <SettingResetButton
+                label="context ring in composer"
+                onClick={() =>
+                  void updateSettings({
+                    composerContextRingEnabled: DEFAULT_UNIFIED_SETTINGS.composerContextRingEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.composerContextRingEnabled}
+              onCheckedChange={(checked) =>
+                void updateSettings({ composerContextRingEnabled: Boolean(checked) })
+              }
+              aria-label="Show context ring in composer"
+            />
           }
         />
       </SettingsSection>

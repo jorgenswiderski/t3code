@@ -651,15 +651,25 @@ describe("ClientSettings sidebar", () => {
   });
 });
 
-describe("ClientSettings context window meter", () => {
-  it("defaults off and preserves an explicit legacy opt-in", () => {
-    expect(decodeClientSettings({}).contextWindowMeterEnabled).toBe(false);
+describe("ClientSettings composer context ring", () => {
+  it("defaults on and decodes an explicit opt-out", () => {
+    expect(decodeClientSettings({}).composerContextRingEnabled).toBe(true);
     expect(
-      decodeClientSettings({ contextWindowMeterEnabled: true }).contextWindowMeterEnabled,
-    ).toBe(true);
+      decodeClientSettings({ composerContextRingEnabled: false }).composerContextRingEnabled,
+    ).toBe(false);
+  });
+
+  it("drops the retired contextWindowMeterEnabled key and uses the new default", () => {
+    const decoded = decodeClientSettings({ contextWindowMeterEnabled: false });
+    expect(decoded.composerContextRingEnabled).toBe(true);
+    expect("contextWindowMeterEnabled" in decoded).toBe(false);
+  });
+
+  it("is patchable and rejects non-booleans", () => {
     expect(
-      decodeClientSettingsPatch({ contextWindowMeterEnabled: true }).contextWindowMeterEnabled,
-    ).toBe(true);
+      decodeClientSettingsPatch({ composerContextRingEnabled: false }).composerContextRingEnabled,
+    ).toBe(false);
+    expect(() => decodeClientSettingsPatch({ composerContextRingEnabled: "no" })).toThrow();
   });
 });
 

@@ -1,11 +1,22 @@
 import { Button } from "../ui/button";
+import { cn } from "~/lib/utils";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   formatContextWindowCompactionMessage,
   formatContextWindowCost,
 } from "./ContextWindowMeter.logic";
+import type { ModelSelection, TimestampFormat } from "@t3tools/contracts";
+import type { RequestIdentity } from "@t3tools/shared/usagePacing";
 import { Minimize2Icon } from "lucide-react";
+import { useMemo } from "react";
+import { PACE_TIER_CLASSES } from "../pacing/paceTierClasses";
+import { ThreadContextGlyph, useThreadContextGlyphModel } from "../pacing/ThreadContextGlyph";
+import {
+  composerGlyphUsage,
+  formatGlyphTooltip,
+  glyphCacheClause,
+} from "../pacing/threadContextGlyph.logic";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
 function formatPercentage(value: number | null): string | null {
@@ -20,23 +31,37 @@ function formatPercentage(value: number | null): string | null {
 
 export function ContextWindowMeter(props: {
   usage: ContextWindowSnapshot;
+  /** Cache fields of the live provider-turn report `usage` was derived from, if any. */
+  liveUsage: {
+    promptCacheTtlMs?: number | undefined;
+    requestIdentity?: RequestIdentity | undefined;
+  } | null;
+  /** What the next request would run with; a different model or effort drops the cache dot. */
+  nextModelSelection: ModelSelection | null | undefined;
+  timestampFormat: TimestampFormat;
   modelDisplayName?: string | null;
   onCompact?: (() => void) | undefined;
   compactDisabled?: boolean | undefined;
   compactDisabledReason?: string | null | undefined;
 }) {
-  const { usage, modelDisplayName, onCompact, compactDisabled, compactDisabledReason } = props;
+  const {
+    usage,
+    liveUsage,
+    nextModelSelection,
+    timestampFormat,
+    modelDisplayName,
+    onCompact,
+    compactDisabled,
+    compactDisabledReason,
+  } = props;
+  const glyphUsage = useMemo(() => composerGlyphUsage(usage, liveUsage), [usage, liveUsage]);
+  const model = useThreadContextGlyphModel(glyphUsage, nextModelSelection);
   const usedPercentage = formatPercentage(usage.usedPercentage);
   const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
-  const radius = 9.75;
-  const circumference = 2 * Math.PI * radius;
-  const dashOffset = circumference * (1 - normalizedPercentage / 100);
   const totalProcessedTokens = usage.totalProcessedTokens ?? null;
   const showTotalProcessed = totalProcessedTokens !== null && totalProcessedTokens > 0;
-  const isOverloaded = normalizedPercentage > 90;
-  const usageColor = isOverloaded
-    ? "var(--color-error)"
-    : "color-mix(in oklab, var(--color-muted-foreground) 72%, transparent)";
+  if (model === null) return null;
+  const cacheClause = glyphCacheClause(model, timestampFormat);
 
   return (
     <Popover>
@@ -49,39 +74,10 @@ export function ContextWindowMeter(props: {
             size="icon-sm"
             variant="ghost-muted"
             className="size-7"
-            aria-label={
-              usage.maxTokens !== null && usedPercentage
-                ? `Context window ${usedPercentage} used`
-                : `Context window ${formatContextWindowTokens(usage.usedTokens)} tokens used`
-            }
+            aria-label={formatGlyphTooltip(model, timestampFormat)}
           >
-            <span className="relative flex size-5 items-center justify-center">
-              <svg
-                viewBox="0 0 24 24"
-                className="-rotate-90 absolute inset-0 size-full transform-gpu mx-0!"
-                aria-hidden="true"
-              >
-                <circle
-                  cx="12"
-                  cy="12"
-                  r={radius}
-                  fill="none"
-                  className="stroke-muted-foreground/24"
-                  strokeWidth="3"
-                />
-                <circle
-                  cx="12"
-                  cy="12"
-                  r={radius}
-                  fill="none"
-                  stroke={usageColor}
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeDasharray={circumference}
-                  strokeDashoffset={dashOffset}
-                  className="transition-[stroke-dashoffset,stroke] duration-500 ease-out motion-reduce:transition-none"
-                />
-              </svg>
+            <span className="flex size-5 items-center justify-center">
+              <ThreadContextGlyph size={18} model={model} />
             </span>
           </Button>
         }
@@ -123,10 +119,16 @@ export function ContextWindowMeter(props: {
               aria-label="Context window usage"
             >
               <div
-                className="h-full rounded-full transition-[width,background-color] duration-500 ease-out motion-reduce:transition-none"
-                style={{ width: `${normalizedPercentage}%`, backgroundColor: usageColor }}
+                className={cn(
+                  "h-full rounded-full transition-[width,background-color] duration-500 ease-out motion-reduce:transition-none",
+                  PACE_TIER_CLASSES[model.tierColor].bg,
+                )}
+                style={{ width: `${normalizedPercentage}%` }}
               />
             </div>
+          ) : null}
+          {cacheClause ? (
+            <div className="text-pretty text-secondary-label text-2xs">{cacheClause}</div>
           ) : null}
           {showTotalProcessed ? (
             <div className="flex items-center justify-between gap-3 text-2xs leading-4">

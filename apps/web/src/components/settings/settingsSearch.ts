@@ -604,10 +604,10 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["build plan composer old"],
   },
   {
-    id: "legacy-context-window-indicator",
-    title: "Context window indicator (legacy)",
-    to: "/settings/general",
-    searchTerms: ["composer meter usage tokens circle old"],
+    id: "usage-pacing-context-ring",
+    title: "Show context ring in composer",
+    to: "/settings/usage-pacing",
+    searchTerms: ["context window meter usage tokens circle cache dot composer ring"],
   },
   {
     id: "legacy-sidebar",
