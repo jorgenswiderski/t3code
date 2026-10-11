@@ -22,6 +22,7 @@ import {
   applyUsageLimitsUpdate,
   attachUsageHistory,
   recordUsageSamples,
+  usageLimitsLookSame,
   resolveUsageLimitsAfterProbe,
 } from "./usageLimits.ts";
 import type { ManagedServerProvider } from "./snapshot.ts";
@@ -246,15 +247,17 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
                 windowIds: new Set(update.windows.map((window) => window.id)),
                 at: update.checkedAt,
               });
-        // Both helpers hand back their input when nothing moved, which is the
-        // common case for Codex's per-token notification.
-        if (usageLimits === state.snapshot.usageLimits && usageHistory === state.usageHistory) {
+        // Nothing moved is the common case for Codex's per-token notification.
+        // A lagging reading also lands here: the raise in `attachUsageHistory`
+        // restores what is already published, so it must not publish again.
+        const published = attachUsageHistory(usageLimits, usageHistory);
+        if (
+          usageHistory === state.usageHistory &&
+          usageLimitsLookSame(published, state.snapshot.usageLimits)
+        ) {
           return [null, state] as const;
         }
-        const snapshot = withUsageLimits(
-          state.snapshot,
-          attachUsageHistory(usageLimits, usageHistory),
-        );
+        const snapshot = withUsageLimits(state.snapshot, published);
         return [snapshot, { ...state, snapshot, usageHistory }] as const;
       });
       if (snapshotToPublish !== null) {

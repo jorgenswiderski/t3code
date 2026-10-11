@@ -98,6 +98,28 @@ export function applyUsageLimitsUpdate(input: {
   };
 }
 
+/**
+ * Whether publishing `next` would show clients nothing new over `published`.
+ * `checkedAt` alone does not count, matching `applyUsageLimitsUpdate`.
+ */
+export function usageLimitsLookSame(
+  next: ServerProviderUsageLimits | undefined,
+  published: ServerProviderUsageLimits | undefined,
+): boolean {
+  if (next === published) return true;
+  if (next === undefined || published === undefined) return false;
+  return (
+    next.unavailable === published.unavailable &&
+    next.credentialFingerprint === published.credentialFingerprint &&
+    next.resetCredits === published.resetCredits &&
+    next.windows.length === published.windows.length &&
+    next.windows.every((window, index) => {
+      const other = published.windows[index]!;
+      return usageWindowEquals(window, other) && window.history === other.history;
+    })
+  );
+}
+
 function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageWindow): boolean {
   return (
     a.id === b.id &&
@@ -138,6 +160,20 @@ const USAGE_HISTORY_MAX_SAMPLES = 400;
 const USAGE_HISTORY_HEARTBEAT_MS = 60_000;
 /** The probe reports reset times as ISO strings, events as whole epoch seconds. */
 const USAGE_HISTORY_RESET_TOLERANCE_MS = 60_000;
+/**
+ * Points a reading may fall below the previous one of the same reset period
+ * and still count as a lagging source: probes and runtime events round
+ * differently. A larger drop is real (a rolling window aging out), kept as is.
+ */
+const USAGE_HISTORY_LAG_TOLERANCE = 1;
+
+function withoutLag(previous: number | undefined, reading: number): number {
+  return previous !== undefined &&
+    reading < previous &&
+    previous - reading <= USAGE_HISTORY_LAG_TOLERANCE
+    ? previous
+    : reading;
+}
 
 interface UsageHistoryEntry {
   readonly resetsAt: string | undefined;
@@ -193,12 +229,10 @@ export function recordUsageSamples(input: {
         : undefined;
     const last = entry?.samples.at(-1);
     const lastMs = last === undefined ? Number.NEGATIVE_INFINITY : Date.parse(last.at);
-    // Usage never falls within one reset period. A lower reading is a source
-    // that lags (probe and runtime events round differently), so the list
-    // stays monotonic and the burn does not jitter.
+    // A lagging reading would break the client's burn walk at every dip.
     const usedPercent =
-      last !== undefined && window.resetsAt !== undefined
-        ? Math.max(last.usedPercent, window.usedPercent)
+      window.resetsAt !== undefined
+        ? withoutLag(last?.usedPercent, window.usedPercent)
         : window.usedPercent;
     if (
       last !== undefined &&
@@ -221,8 +255,8 @@ export function recordUsageSamples(input: {
 
 /**
  * Publish `history` on the session windows of `limits`, and strip it from any
- * window that should not carry it. A session reading below the newest sample
- * of the same reset period is raised to it, so the published value always
+ * window that should not carry it. A session reading that lags the newest
+ * sample of the same reset period is raised to it, so the published value
  * equals the newest sample. Returns `limits` itself when no window changes.
  */
 export function attachUsageHistory(
@@ -237,11 +271,8 @@ export function attachUsageHistory(
     const wanted = samples !== undefined && samples.length > 0 ? samples : undefined;
     const newest = wanted?.at(-1)?.usedPercent;
     const usedPercent =
-      newest !== undefined &&
-      newest > window.usedPercent &&
-      window.resetsAt !== undefined &&
-      sameWindowReset(entry?.resetsAt, window.resetsAt)
-        ? newest
+      window.resetsAt !== undefined && sameWindowReset(entry?.resetsAt, window.resetsAt)
+        ? withoutLag(newest, window.usedPercent)
         : window.usedPercent;
     if (window.history === wanted && window.usedPercent === usedPercent) return window;
     changed = true;
