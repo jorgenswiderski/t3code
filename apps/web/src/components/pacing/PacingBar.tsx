@@ -5,7 +5,7 @@ import { PACE_TIER_CLASSES } from "./paceTierClasses";
 
 // Full literal class strings, so Tailwind's scanner emits them and shadcn/no-unknown-classes passes.
 const BAR_SIZE = {
-  header: { track: "h-[3px] w-[76px] shrink-0", tick: "h-[6px]" },
+  header: { track: "h-1 w-30 shrink-0", tick: "h-2" },
   popover: { track: "h-1 w-full", tick: "h-2" },
 } as const;
 

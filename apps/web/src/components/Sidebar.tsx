@@ -2035,7 +2035,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                     )}
                   >
-                    <ThreadContextGlyphBadge thread={thread} className="mr-1.5" />
+                    <ThreadContextGlyphBadge
+                      thread={thread}
+                      working={topStatus?.icon === "working"}
+                      className="mr-1.5"
+                    />
                     {topStatus ? (
                       isWokeStatus ? (
                         <Tooltip>
@@ -2065,7 +2069,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                           )}
                         >
                           {topStatus.icon === "working" ? (
-                            <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+                            // The spinning context ring stands in for this icon when the row has one.
+                            thread.latestTokenUsage ? null : (
+                              <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+                            )
                           ) : topStatus.icon === "input" ? (
                             <MessageCircleQuestionIcon aria-hidden className="size-4 shrink-0" />
                           ) : topStatus.icon === "approval" ? (

@@ -2,6 +2,7 @@ import type { ClientSettings, ModelSelection } from "@t3tools/contracts";
 import { useMemo } from "react";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useNowTick } from "~/hooks/useNowTick";
+import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { cn } from "~/lib/utils";
 import type { SidebarThreadSummary } from "~/types";
 import { PACE_TIER_CLASSES } from "./paceTierClasses";
@@ -20,14 +21,19 @@ const SIZE_CLASS: Record<GlyphSize, string> = { 14: "size-3.5", 18: "size-4.5" }
 
 const selectTimestampFormat = (settings: ClientSettings) => settings.timestampFormat;
 
-/** Context ring (arc from 12 o'clock, clockwise) with an optional prompt-cache dot in the middle. */
+/**
+ * Context ring (arc from 12 o'clock, clockwise) with an optional prompt-cache dot in the middle.
+ * `spinning` rotates the whole svg in stepped turns while the thread is working; it pauses offscreen.
+ */
 export function ThreadContextGlyph({
   size,
   model,
+  spinning = false,
   className,
 }: {
   size: GlyphSize;
   model: ThreadContextGlyphModel;
+  spinning?: boolean | undefined;
   className?: string | undefined;
 }) {
   const g = glyphGeometry(size);
@@ -47,7 +53,13 @@ export function ThreadContextGlyph({
       data-size={size}
       data-cache-state={model.cacheState}
       data-context-tier={model.tier}
-      className={cn("mx-0! shrink-0", SIZE_CLASS[size], className)}
+      ref={spinning ? observeVisibleAnimation : undefined}
+      className={cn(
+        "shrink-0",
+        SIZE_CLASS[size],
+        spinning && "motion-safe:visible-animate-stepped-spin",
+        className,
+      )}
     >
       <circle
         cx={g.center}
@@ -97,24 +109,31 @@ type GlyphThread = Pick<SidebarThreadSummary, "latestTokenUsage" | "modelSelecti
 function ThreadContextGlyphLive({
   usage,
   nextSelection,
+  working,
   className,
 }: {
   usage: ThreadContextUsage;
   nextSelection: ModelSelection;
+  working: boolean;
   className?: string | undefined;
 }) {
   const model = useThreadContextGlyphModel(usage, nextSelection);
   return model === null ? null : (
-    <ThreadContextGlyph size={14} model={model} className={className} />
+    <ThreadContextGlyph size={14} model={model} spinning={working} className={className} />
   );
 }
 
-/** 14 px glyph for a sidebar row; renders nothing without usage. */
+/**
+ * 14 px glyph for a sidebar row; renders nothing without usage. `working` spins it, standing in
+ * for the row's working icon.
+ */
 export function ThreadContextGlyphBadge({
   thread,
+  working = false,
   className,
 }: {
   thread: GlyphThread;
+  working?: boolean | undefined;
   className?: string | undefined;
 }) {
   // Checked before any hook subscription so rows without usage never subscribe to the clock.
@@ -123,6 +142,7 @@ export function ThreadContextGlyphBadge({
     <ThreadContextGlyphLive
       usage={thread.latestTokenUsage}
       nextSelection={thread.modelSelection}
+      working={working}
       className={className}
     />
   );

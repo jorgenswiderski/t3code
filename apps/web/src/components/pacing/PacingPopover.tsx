@@ -35,7 +35,7 @@ export function PacingPopover(props: {
           <button
             type="button"
             aria-label={props.triggerLabel}
-            className="cursor-default rounded-md px-2 py-1 hover:bg-accent/50 data-[popup-open]:bg-accent/50"
+            className="flex min-h-7 cursor-default items-center rounded-md px-2 hover:bg-accent/50 data-[popup-open]:bg-accent/50"
           />
         }
       >
