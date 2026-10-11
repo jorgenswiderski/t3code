@@ -215,7 +215,15 @@ Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
 
 Send `/compact` in an existing conversation to reduce context usage when the
-provider supports it. Web and desktop also offer compaction from the context meter.
+provider supports it.
+
+The ring beside the send button, and on every thread in the sidebar, shows how
+full the thread's context is. It turns yellow, orange and red as the context
+grows. A small dot means the thread's prompt cache is still warm; it turns amber
+shortly before the cache expires and disappears once it has. Hover the ring for
+the exact numbers. Turn the composer's ring off in **Settings > Usage pacing**;
+the sidebar always shows it. Web and desktop also offer compaction from the
+composer's ring.
 
 ## Goals
 
