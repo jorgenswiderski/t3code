@@ -586,3 +586,35 @@ describe("settings sidebar scope", () => {
     expect(isSettingsOverviewVisible({ project: "project", checkout: "checkout" })).toBe(true);
   });
 });
+
+describe("usage pacing settings search", () => {
+  const ids = [
+    "usage-pacing-show-session",
+    "usage-pacing-show-weekly",
+    "usage-pacing-show-model-scoped",
+    "usage-pacing-work-hours",
+    "usage-pacing-work-days",
+    "usage-pacing-off-hours-weight",
+  ] as const;
+
+  it.each(ids)("registers %s on the usage pacing page", (id) => {
+    const item = SETTINGS_SEARCH_ITEMS.find((candidate) => candidate.id === id);
+    expect(item?.to).toBe("/settings/usage-pacing");
+    expect(item?.title).toBeTruthy();
+    expect(searchableSetting(id).title).toBe(item?.title);
+  });
+
+  it("is a device-local section", () => {
+    expect(getSettingsSearchTargetScope("usage-pacing-work-hours")?.scope).toBeNull();
+  });
+
+  it.each([
+    ["work hours", "usage-pacing-work-hours"],
+    ["weekend", "usage-pacing-work-days"],
+    ["5h", "usage-pacing-show-session"],
+  ])("finds %j", (query, id) => {
+    const results = searchSettings(query, SETTINGS_SEARCH_ITEMS);
+    expect(results.map((result) => result.id)).toContain(id);
+    if (query === "work hours") expect(results[0]?.id).toBe(id);
+  });
+});

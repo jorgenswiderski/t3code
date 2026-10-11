@@ -448,6 +448,23 @@ export const ClientSettingsSchema = Schema.Struct({
   // Legacy context window meter. The composer hides it by default; users who
   // still want the old usage indicator can restore it from Settings.
   contextWindowMeterEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Usage pacing (header widget). Device-local. Work hours stay a plain string: client settings
+  // persist as one object, so a strict pattern that ever failed would discard every setting.
+  // Malformed values are repaired by shared/usagePacing's resolveWorkSchedule, not here.
+  // The defaults duplicate shared/usagePacing's DEFAULT_* (contracts cannot import shared); a web
+  // test asserts they stay equal.
+  usagePacingShowSession: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  usagePacingShowWeekly: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  usagePacingShowModelScoped: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  usagePacingWorkHours: Schema.String.pipe(
+    Schema.withDecodingDefault(Effect.succeed("09:00-17:00")),
+  ),
+  usagePacingWorkDays: Schema.Array(
+    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 })),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed([1, 2, 3, 4, 5]))),
+  usagePacingOffHoursWeight: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })).pipe(
+    Schema.withDecodingDefault(Effect.succeed(0.2)),
+  ),
   // Desktop resting composer: scrolling an existing thread's conversation
   // settles the composer into its single-line layout. Losing focus never does.
   composerCollapseOnScroll: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -1662,6 +1679,16 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   contextWindowMeterEnabled: Schema.optionalKey(Schema.Boolean),
+  usagePacingShowSession: Schema.optionalKey(Schema.Boolean),
+  usagePacingShowWeekly: Schema.optionalKey(Schema.Boolean),
+  usagePacingShowModelScoped: Schema.optionalKey(Schema.Boolean),
+  usagePacingWorkHours: Schema.optionalKey(Schema.String),
+  usagePacingWorkDays: Schema.optionalKey(
+    Schema.Array(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 }))),
+  ),
+  usagePacingOffHoursWeight: Schema.optionalKey(
+    Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  ),
   composerCollapseOnScroll: Schema.optionalKey(Schema.Boolean),
   composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),
   sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),

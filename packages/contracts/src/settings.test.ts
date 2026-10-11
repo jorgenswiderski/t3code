@@ -663,6 +663,52 @@ describe("ClientSettings context window meter", () => {
   });
 });
 
+describe("ClientSettings usage pacing", () => {
+  const defaults = {
+    usagePacingShowSession: true,
+    usagePacingShowWeekly: true,
+    usagePacingShowModelScoped: true,
+    usagePacingWorkHours: "09:00-17:00",
+    usagePacingWorkDays: [1, 2, 3, 4, 5],
+    usagePacingOffHoursWeight: 0.2,
+  };
+
+  it("decodes defaults, including for older stored objects", () => {
+    expect(decodeClientSettings({})).toMatchObject(defaults);
+    expect(decodeClientSettings({ chatWidth: "comfortable" })).toMatchObject(defaults);
+  });
+
+  it("keeps explicit values", () => {
+    const explicit = {
+      usagePacingShowSession: false,
+      usagePacingWorkHours: "20:00-02:00",
+      usagePacingWorkDays: [0, 6],
+      usagePacingOffHoursWeight: 0.5,
+    };
+    expect(decodeClientSettings(explicit)).toMatchObject(explicit);
+  });
+
+  it.each([
+    ["usagePacingShowSession", false],
+    ["usagePacingShowWeekly", false],
+    ["usagePacingShowModelScoped", false],
+    ["usagePacingWorkHours", "garbage"],
+    ["usagePacingWorkDays", [0, 6]],
+    ["usagePacingOffHoursWeight", 0.5],
+  ] as const)("patch accepts %s", (key, value) => {
+    expect(decodeClientSettingsPatch({ [key]: value })[key]).toEqual(value);
+  });
+
+  it.each([
+    { usagePacingWorkDays: [7] },
+    { usagePacingWorkDays: [1.5] },
+    { usagePacingOffHoursWeight: 1.01 },
+    { usagePacingOffHoursWeight: -0.01 },
+  ])("patch rejects %j", (patch) => {
+    expect(() => decodeClientSettingsPatch(patch)).toThrow();
+  });
+});
+
 describe("ClientSettings send shortcut", () => {
   it("defaults to Enter and validates the supported choices", () => {
     expect(decodeClientSettings({}).sendShortcut).toBe("enter");
