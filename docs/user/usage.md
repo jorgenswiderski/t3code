@@ -121,6 +121,23 @@ or endpoint configurations do not report subscription limits.
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+## Watch your pace in the chat header
+
+The chat header shows your subscription windows for the thread's provider, for example the 5-hour
+session and the weekly limit. Each row has a bar for how much you have used, a tick for how far
+through the window you are, a burn multiple, and when the window resets. A burn of `1.0x` means
+you will use the whole window by its reset at your current pace; above `1.0x` you are ahead of
+it. Hover the widget for every window with its countdown, and click to keep the popover open.
+
+Weekly burn is judged against when you actually work, not the raw calendar. In
+**Settings → Usage pacing**, set your work hours and work days; hours outside them count at the
+off-hours weight, and days off do not count at all. Choose which windows show in the header there
+too. Windows you hide still appear in the popover.
+
+The 5-hour burn needs a few minutes of activity to appear, and starts from a simpler estimate
+after the server restarts. A narrow window drops the reset time, and a very narrow one hides the
+widget.
+
 ## Connect a CLIProxyAPI hub
 
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
