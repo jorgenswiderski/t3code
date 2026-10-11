@@ -81,6 +81,7 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import { BUNDLED_CLAUDE_MODEL_CATALOG } from "../../provider/ClaudeModelCatalog.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -927,6 +928,122 @@ describe("ClaudeAdapterV2 context usage", () => {
       ttlFor({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 }),
       undefined,
     );
+  });
+
+  it("names the request a top-level usage report belongs to", () => {
+    const cases: ReadonlyArray<{
+      readonly responseModel: unknown;
+      readonly options: NonNullable<ModelSelection["options"]>;
+      readonly expected: ReturnType<typeof ClaudeAdapterV2.claudeRequestIdentity>;
+    }> = [
+      {
+        responseModel: "claude-sonnet-4-6",
+        options: [{ id: "effort", value: "ultrathink" }],
+        expected: { model: "claude-sonnet-4-6", effort: "ultrathink" },
+      },
+      // A dated API id resolves through the catalog alias.
+      {
+        responseModel: " claude-haiku-4-5-20251001 ",
+        options: [],
+        expected: { model: "claude-haiku-4-5" },
+      },
+      {
+        responseModel: "claude-opus-5-5[1m]",
+        options: [
+          { id: "effort", value: "high" },
+          { id: "fastMode", value: true },
+        ],
+        expected: { model: "claude-opus-5-5", effort: "high", fastMode: true },
+      },
+      {
+        responseModel: "claude-opus-5-5",
+        options: [{ id: "fastMode", value: false }],
+        expected: { model: "claude-opus-5-5", fastMode: false },
+      },
+      // Unknown ids pass through.
+      {
+        responseModel: "some-unknown-model",
+        options: [],
+        expected: { model: "some-unknown-model" },
+      },
+      { responseModel: "", options: [], expected: undefined },
+      {
+        responseModel: "   ",
+        options: [{ id: "effort", value: "high" }],
+        expected: { effort: "high" },
+      },
+      { responseModel: undefined, options: [], expected: undefined },
+      // The wire schema rejects blank strings, so a blank effort is omitted.
+      {
+        responseModel: "claude-sonnet-4-6",
+        options: [{ id: "effort", value: "  " }],
+        expected: { model: "claude-sonnet-4-6" },
+      },
+      // Wrong-typed options are ignored.
+      {
+        responseModel: "claude-sonnet-4-6",
+        options: [
+          { id: "effort", value: true },
+          { id: "fastMode", value: "yes" },
+        ],
+        expected: { model: "claude-sonnet-4-6" },
+      },
+    ];
+    for (const [index, { responseModel, options, expected }] of cases.entries()) {
+      assert.deepEqual(
+        ClaudeAdapterV2.claudeRequestIdentity(BUNDLED_CLAUDE_MODEL_CATALOG, responseModel, {
+          ...CLAUDE_TEST_MODEL_SELECTION,
+          options,
+        }),
+        expected,
+        `case ${index + 1}`,
+      );
+    }
+  });
+
+  it("carries the last cache TTL and the request identity onto a usage report", () => {
+    const report = (
+      cache: {
+        readonly cache_creation?: {
+          ephemeral_1h_input_tokens: number;
+          ephemeral_5m_input_tokens: number;
+        };
+      },
+      context: Parameters<typeof ClaudeAdapterV2.claudeProviderTurnTokenUsage>[3],
+    ) =>
+      ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+        { input_tokens: 1, output_tokens: 1, ...cache },
+        CLAUDE_TEST_MODEL_SELECTION,
+        "2026-08-29T00:00:00.000Z",
+        context,
+      );
+
+    // This response's own TTL wins over the carried one.
+    const ownTtl = report(
+      { cache_creation: { ephemeral_1h_input_tokens: 10, ephemeral_5m_input_tokens: 0 } },
+      { carriedPromptCacheTtlMs: 300_000 },
+    );
+    assert.strictEqual(ownTtl.promptCacheTtlMs, 3_600_000);
+    assert.isFalse("requestIdentity" in ownTtl);
+
+    const carried = report({}, { carriedPromptCacheTtlMs: 3_600_000 });
+    assert.strictEqual(carried.promptCacheTtlMs, 3_600_000);
+    assert.isFalse("requestIdentity" in carried);
+
+    const nothingWritten = report(
+      { cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 } },
+      { carriedPromptCacheTtlMs: 300_000 },
+    );
+    assert.strictEqual(nothingWritten.promptCacheTtlMs, 300_000);
+    assert.isFalse("requestIdentity" in nothingWritten);
+
+    const empty = report({}, {});
+    assert.isFalse("promptCacheTtlMs" in empty);
+    assert.isFalse("requestIdentity" in empty);
+
+    const identified = report({}, { requestIdentity: { model: "claude-sonnet-4-6" } });
+    assert.isFalse("promptCacheTtlMs" in identified);
+    assert.deepEqual(identified.requestIdentity, { model: "claude-sonnet-4-6" });
   });
 });
 
@@ -13476,6 +13593,253 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
   });
+
+  const makeUsageFrame = (input: {
+    readonly uuid: string;
+    readonly model?: string;
+    readonly parentToolUseId?: string | null;
+    readonly usage: Record<string, unknown>;
+  }) =>
+    claudeSdkFrame({
+      type: "assistant",
+      message: {
+        model: input.model ?? "claude-sonnet-4-6",
+        id: `msg_${input.uuid}`,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "Working." }],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: input.usage,
+      },
+      parent_tool_use_id: input.parentToolUseId ?? null,
+      uuid: input.uuid,
+      session_id: WAKE_NATIVE_SESSION,
+    });
+  const reportedUsage = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+    events.flatMap((event) =>
+      event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+        ? [event.providerTurn.tokenUsage]
+        : [],
+    );
+  const usageUuid = (suffix: string) => `00000000-0000-4000-8000-000000000${suffix}`;
+  const oneHourCacheWrite = {
+    input_tokens: 100,
+    output_tokens: 10,
+    cache_creation_input_tokens: 500,
+    cache_read_input_tokens: 0,
+    cache_creation: { ephemeral_1h_input_tokens: 500, ephemeral_5m_input_tokens: 0 },
+  };
+  const cacheReadOnly = {
+    input_tokens: 5,
+    output_tokens: 10,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 600,
+  };
+  const sonnetUltrathink = { model: "claude-sonnet-4-6", effort: "ultrathink" };
+
+  it.effect(
+    "stamps top-level usage with the request identity and carries the cache TTL across turns",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-usage-identity-1"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          makeUsageFrame({ uuid: usageUuid("d01"), usage: oneHourCacheWrite }),
+          makeUsageFrame({ uuid: usageUuid("d02"), usage: cacheReadOnly }),
+          makeUsageFrame({
+            uuid: usageUuid("d03"),
+            parentToolUseId: "toolu_usage_subagent",
+            usage: oneHourCacheWrite,
+          }),
+          makeResultFrame({ uuid: usageUuid("d04"), result: "Done." }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-usage-identity-2"),
+            text: "Continue again.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeUsageFrame({ uuid: usageUuid("d05"), usage: cacheReadOnly }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: usageUuid("d06"), result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+
+        const reported = reportedUsage(harness.events);
+        // The subagent frame reports nothing.
+        assert.lengthOf(reported, 3);
+        assert.include(reported[0], { usedTokens: 610, promptCacheTtlMs: 3_600_000 });
+        assert.deepEqual(reported[0]?.requestIdentity, sonnetUltrathink);
+        // A cache read names no TTL; the last one carries forward.
+        assert.include(reported[1], { usedTokens: 615, promptCacheTtlMs: 3_600_000 });
+        assert.deepEqual(reported[1]?.requestIdentity, sonnetUltrathink);
+        // ...across turns too.
+        assert.include(reported[2], { usedTokens: 615, promptCacheTtlMs: 3_600_000 });
+        assert.deepEqual(reported[2]?.requestIdentity, sonnetUltrathink);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect("leaves the compaction watermark without identity or carried TTL", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-usage-before-compact"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeUsageFrame({ uuid: usageUuid("d11"), usage: oneHourCacheWrite }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: usageUuid("d12"), result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+
+      const compact = harness.runtime.compactThread;
+      assert.isDefined(compact);
+      if (compact === undefined) return;
+      yield* compact(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-usage-compact"),
+          text: "/compact",
+          attachments: [],
+          providerTurnOrdinal: 2,
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "manual", pre_tokens: 1500, post_tokens: 400 },
+          uuid: usageUuid("d13"),
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: usageUuid("d14"), result: "Compacted conversation." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+
+      const reported = reportedUsage(harness.events);
+      const watermark = reported.find((usage) => usage.usedTokens === 400);
+      assert.isDefined(watermark);
+      if (watermark === undefined) return;
+      assert.isFalse("promptCacheTtlMs" in watermark);
+      assert.isFalse("requestIdentity" in watermark);
+      const beforeCompaction = reported.find((usage) => usage.usedTokens === 610);
+      assert.include(beforeCompaction, { promptCacheTtlMs: 3_600_000 });
+      assert.deepEqual(beforeCompaction?.requestIdentity, sonnetUltrathink);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
+  it.effect.each(["task_progress", "task_notification"] as const)(
+    "never reports a subagent's %s usage as the thread's context",
+    (subtype) =>
+      Effect.gen(function* () {
+        const TASK = "task-usage-regression";
+        const TOOL_USE = "toolu_usage_regression";
+        const HUGE = { total_tokens: 1_000_000, tool_uses: 12, duration_ms: 60_000 };
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-usage-regression-${subtype}`),
+            text: "Delegate.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          makeAssistantTextFrame({ uuid: usageUuid("e01"), text: "Delegating." }),
+          makeSubagentTaskStartedFrame({
+            taskId: TASK,
+            toolUseId: TOOL_USE,
+            uuid: usageUuid("e02"),
+          }),
+          subtype === "task_progress"
+            ? claudeSdkFrame({
+                type: "system",
+                subtype: "task_progress",
+                task_id: TASK,
+                tool_use_id: TOOL_USE,
+                description: "Reading files",
+                usage: HUGE,
+                uuid: usageUuid("e03"),
+                session_id: WAKE_NATIVE_SESSION,
+              })
+            : claudeSdkFrame({
+                ...makeSubagentNotificationFrame({
+                  taskId: TASK,
+                  toolUseId: TOOL_USE,
+                  summary: "Done.",
+                  uuid: usageUuid("e03"),
+                }),
+                usage: HUGE,
+              }),
+          makeResultFrame({ uuid: usageUuid("e04"), result: "Delegated." }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        // The backgrounded subagent may outlive the root turn; wait on the root.
+        yield* Queue.take(harness.terminalReceipts);
+
+        const reported = reportedUsage(harness.events);
+        assert.deepEqual(
+          reported.map((usage) => usage.usedTokens),
+          [2],
+        );
+        for (const usage of reported) assert.strictEqual(usage.maxTokens, 200_000);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 });
 
 describe("ClaudeAdapterV2 query message stream", () => {

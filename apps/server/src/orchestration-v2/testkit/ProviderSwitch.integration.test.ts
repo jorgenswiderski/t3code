@@ -1198,6 +1198,129 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
+  it.live("puts the newest token usage on the thread shell as turns report it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("latest-token-usage");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const registry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            tokenUsageByRunOrdinal: {
+              1: { usedTokens: 40_000, maxTokens: 200_000 },
+              2: {
+                usedTokens: 55_000,
+                maxTokens: 200_000,
+                promptCacheTtlMs: 3_600_000,
+                requestIdentity: { model: "claude-sonnet-4-6", effort: "high" },
+              },
+            },
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const run = Effect.fn("run")(function* (ordinal: number) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`latest-token-usage:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`latest-token-usage:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: `Request ${ordinal}`,
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            return (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status;
+          });
+          // The per-thread read ws.ts performs for every live shell push, and
+          // the snapshot a reconnecting client hydrates from.
+          const shellUsage = Effect.map(
+            orchestrator.getThreadShell(threadId),
+            (shell) => shell?.latestTokenUsage,
+          );
+          const snapshotUsage = Effect.map(
+            orchestrator.getShellSnapshot(),
+            (snapshot) =>
+              snapshot.threads.find((thread) => thread.id === threadId)?.latestTokenUsage,
+          );
+          const readBoth = Effect.all([shellUsage, snapshotUsage]);
+
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("latest-token-usage:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Latest token usage",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          for (const usage of yield* readBoth) assert.isNull(usage);
+
+          assert.equal(yield* run(1), "completed");
+          for (const usage of yield* readBoth) {
+            assert.isDefined(usage);
+            assert.isNotNull(usage);
+            assert.include(usage, { usedTokens: 40_000, maxTokens: 200_000 });
+            assert.isFalse("promptCacheTtlMs" in usage);
+          }
+
+          assert.equal(yield* run(2), "completed");
+          const afterRun2 = yield* readBoth;
+          for (const usage of afterRun2) {
+            assert.isDefined(usage);
+            assert.isNotNull(usage);
+            assert.include(usage, { usedTokens: 55_000, promptCacheTtlMs: 3_600_000 });
+            assert.deepEqual(usage.requestIdentity, {
+              model: "claude-sonnet-4-6",
+              effort: "high",
+            });
+          }
+
+          // Run 3 reports no usage; its terminal update must not erase run 2's.
+          assert.equal(yield* run(3), "completed");
+          assert.deepEqual(yield* readBoth, afterRun2);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "latest-token-usage",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              registry,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live("keeps the native session after turns refused before reaching the provider", () =>
     Effect.scoped(
       Effect.gen(function* () {

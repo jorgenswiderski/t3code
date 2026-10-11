@@ -24,6 +24,7 @@ import type {
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
+  OrchestrationV2ProviderTurnTokenUsage,
   OrchestrationV2Run,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadShellSnapshot,
@@ -50,6 +51,7 @@ import {
   OrchestrationV2ProviderSessionJson as OrchestrationV2ProviderSessionJsonSchema,
   OrchestrationV2ProviderThreadJson as OrchestrationV2ProviderThreadJsonSchema,
   OrchestrationV2ProviderTurnJson as OrchestrationV2ProviderTurnJsonSchema,
+  OrchestrationV2ProviderTurnTokenUsage as OrchestrationV2ProviderTurnTokenUsageSchema,
   OrchestrationV2RunAttemptJson as OrchestrationV2RunAttemptJsonSchema,
   OrchestrationV2RunJson as OrchestrationV2RunJsonSchema,
   OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
@@ -992,6 +994,7 @@ type ShellThreadRow = {
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
   readonly has_actionable_proposed_plan: number;
+  readonly latest_token_usage_json: string | null;
   readonly item_count: number;
   readonly runless_item_count: number;
 };
@@ -1101,6 +1104,9 @@ const decodeProviderThreadPayload = Schema.decodeUnknownEffect(
 );
 const decodeProviderTurnPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ProviderTurnJsonSchema),
+);
+const decodeProviderTurnTokenUsageJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ProviderTurnTokenUsageSchema),
 );
 const decodeRuntimeRequestPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2RuntimeRequestJsonSchema),
@@ -1525,6 +1531,10 @@ export function threadShellFromProjection(
       projection.providerThreads,
       projection.thread.activeProviderThreadId,
     ),
+    latestTokenUsage: latestTokenUsageForShell(
+      projection.providerTurns,
+      projection.thread.activeProviderThreadId,
+    ),
     itemCount: activeLocalTurnItems(projection).length,
     visibleItemCount: projection.visibleTurnItems.length,
     createdAt: projection.thread.createdAt,
@@ -1580,6 +1590,36 @@ function activeProviderGoalForShell(
   return providerThreads.find((thread) => thread.id === activeProviderThreadId)?.goal ?? null;
 }
 
+/**
+ * Newest token usage the active provider thread reported: latest `updatedAt`,
+ * ties to the higher ordinal. Other provider threads (subagents, the previous
+ * provider after a handoff) never count. Mirrors the `latest_token_usage_json`
+ * subquery in `selectShellThreadRows`; keep the two in step.
+ */
+function latestTokenUsageForShell(
+  providerTurns: ReadonlyArray<
+    Pick<OrchestrationV2ProviderTurn, "providerThreadId" | "ordinal" | "tokenUsage">
+  >,
+  activeProviderThreadId: OrchestrationV2ThreadProjection["thread"]["activeProviderThreadId"],
+): OrchestrationV2ProviderTurnTokenUsage | null {
+  if (activeProviderThreadId === null) return null;
+  let latest: {
+    readonly at: number;
+    readonly ordinal: number;
+    readonly usage: OrchestrationV2ProviderTurnTokenUsage;
+  } | null = null;
+  for (const turn of providerTurns) {
+    if (turn.providerThreadId !== activeProviderThreadId || turn.tokenUsage === undefined) continue;
+    const parsed = Date.parse(turn.tokenUsage.updatedAt);
+    // SQLite's julianday() is NULL for an unparseable time and sorts it last.
+    const at = Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+    if (latest === null || at > latest.at || (at === latest.at && turn.ordinal > latest.ordinal)) {
+      latest = { at, ordinal: turn.ordinal, usage: turn.tokenUsage };
+    }
+  }
+  return latest?.usage ?? null;
+}
+
 function isInterruptibleRunForShell(run: OrchestrationV2ThreadProjection["runs"][number]): boolean {
   return run.status === "preparing" || run.status === "starting" || run.status === "running";
 }
@@ -1614,6 +1654,7 @@ type ShellThreadState = {
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly providerInstanceHistory: OrchestrationV2ThreadShell["providerInstanceHistory"];
   readonly goal: OrchestrationV2ThreadShell["goal"];
+  readonly latestTokenUsage: OrchestrationV2ProviderTurnTokenUsage | null;
   readonly itemCount: number;
   readonly runlessItemCount: number;
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
@@ -1780,6 +1821,7 @@ function shellFromState(input: {
     pendingBackgroundTasks: input.state.pendingBackgroundTasks,
     providerInstanceHistory: input.state.providerInstanceHistory,
     goal: input.state.goal,
+    latestTokenUsage: input.state.latestTokenUsage,
     itemCount: input.state.itemCount,
     visibleItemCount: input.visibleItemCount,
     createdAt: input.state.thread.createdAt,
@@ -5284,6 +5326,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND plan.kind = 'proposed_plan'
                   AND plan.status = 'active'
               ) AS has_actionable_proposed_plan,
+              (
+                -- Mirrors latestTokenUsageForShell: the active provider
+                -- thread's newest report, by report time, then turn ordinal.
+                SELECT json_extract(turn.payload_json, '$.tokenUsage')
+                FROM orchestration_v2_projection_provider_turns turn
+                WHERE turn.provider_thread_id = t.active_provider_thread_id
+                  AND turn.thread_id = t.thread_id
+                  AND json_type(turn.payload_json, '$.tokenUsage') = 'object'
+                ORDER BY
+                  julianday(json_extract(turn.payload_json, '$.tokenUsage.updatedAt')) DESC,
+                  turn.ordinal DESC
+                LIMIT 1
+              ) AS latest_token_usage_json,
               -- Count per run on the covering (thread_id, run_id) index, then
               -- look up each run once, instead of one run lookup per item.
               (
@@ -5702,6 +5757,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             pullRequests: thread.pullRequests,
           }),
         ];
+        // A row this build cannot decode reads as "no usage" rather than
+        // failing the whole shell; the sidebar then shows no glyph.
+        const latestTokenUsage =
+          row.latest_token_usage_json === null
+            ? null
+            : yield* decodeProviderTurnTokenUsageJson(row.latest_token_usage_json).pipe(
+                Effect.orElseSucceed(() => null),
+              );
         return {
           thread,
           latestRunId,
@@ -5744,6 +5807,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             providerThreadsByThreadId.get(thread.id) ?? [],
             thread.activeProviderThreadId,
           ),
+          latestTokenUsage,
           itemCount: row.item_count,
           runlessItemCount: row.runless_item_count,
           updatedAt: thread.updatedAt,

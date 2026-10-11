@@ -42,7 +42,11 @@ import type {
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
+import {
+  applyClaudePromptEffortPrefix,
+  getModelSelectionBooleanOptionValue,
+  getModelSelectionStringOptionValue,
+} from "@t3tools/shared/model";
 import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
   formatClaudeResumeCompactionQuestion,
@@ -64,6 +68,7 @@ import {
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
+  type OrchestrationV2ProviderTurnRequestIdentity,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2UserInputQuestion,
   type OrchestrationV2Subagent,
@@ -189,6 +194,37 @@ function claudePromptCacheTtlMs(
   return undefined;
 }
 
+/**
+ * The identity a top-level request ran with, for the client's prompt-cache
+ * check. The response names a dated API id ("claude-haiku-4-5-20251001"),
+ * sometimes with a context suffix ("[1m]"); the catalog slug is the
+ * vocabulary of ModelSelection.model, which is what the client compares
+ * against. Effort and fast mode are the raw selection values (no default
+ * resolution). Blank values are omitted: the wire schema rejects them.
+ */
+export function claudeRequestIdentity(
+  catalog: ClaudeModelCatalog,
+  responseModel: unknown,
+  modelSelection: ModelSelection,
+): OrchestrationV2ProviderTurnRequestIdentity | undefined {
+  const reported =
+    // Same suffix rule as P1's sameRequestIdentity (`replace(/\[.*$/, "")`).
+    typeof responseModel === "string" ? responseModel.trim().replace(/\[.*$/, "").trim() : "";
+  const model = reported.length === 0 ? undefined : resolveClaudeModelSlug(catalog, reported);
+  const effort = getModelSelectionStringOptionValue(modelSelection, "effort")?.trim();
+  const fastMode = getModelSelectionBooleanOptionValue(modelSelection, "fastMode");
+  const identity = {
+    ...(model === undefined ? {} : { model }),
+    ...(effort ? { effort } : {}),
+    ...(fastMode === undefined ? {} : { fastMode }),
+  };
+  return Object.keys(identity).length === 0 ? undefined : identity;
+}
+
+/**
+ * Projects one Claude usage report onto the provider turn's token usage.
+ * A response that wrote no cache takes the provider thread's last known TTL from `context`.
+ */
 export function claudeProviderTurnTokenUsage(
   usage: {
     readonly input_tokens: number;
@@ -199,13 +235,18 @@ export function claudeProviderTurnTokenUsage(
   },
   modelSelection: ModelSelection,
   updatedAt: string,
+  context: {
+    readonly carriedPromptCacheTtlMs?: number | undefined;
+    readonly requestIdentity?: OrchestrationV2ProviderTurnRequestIdentity | undefined;
+  } = {},
 ) {
   const inputTokens =
     usage.input_tokens +
     (usage.cache_creation_input_tokens ?? 0) +
     (usage.cache_read_input_tokens ?? 0);
   const outputTokens = usage.output_tokens;
-  const promptCacheTtlMs = claudePromptCacheTtlMs(usage.cache_creation);
+  const promptCacheTtlMs =
+    claudePromptCacheTtlMs(usage.cache_creation) ?? context.carriedPromptCacheTtlMs;
   return {
     usedTokens: inputTokens + outputTokens,
     maxTokens: claudeContextWindow(modelSelection),
@@ -214,6 +255,7 @@ export function claudeProviderTurnTokenUsage(
     outputTokens,
     reasoningOutputTokens: 0,
     ...(promptCacheTtlMs === undefined ? {} : { promptCacheTtlMs }),
+    ...(context.requestIdentity === undefined ? {} : { requestIdentity: context.requestIdentity }),
     updatedAt,
   };
 }
@@ -3336,6 +3378,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     BUNDLED_CLAUDE_MODEL_CATALOG,
     adapterOptions.settings.customModels,
   );
+  // Last prompt-cache TTL a top-level report named, per provider thread. A
+  // response that only read cache names none, so its report carries this one
+  // forward. The TTL is the account's cache tier (1h or 5m), so it stays valid
+  // across turns, sessions and compactions; it is lost on a server restart
+  // until the next response writes cache.
+  const promptCacheTtlMsByProviderThread = new Map<ProviderThreadId, number>();
   const continuationRequests = adapterOptions.continuationRequests ?? {
     offer: () => Effect.void,
   };
@@ -6940,6 +6988,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message.message.usage !== undefined &&
               message.message.model !== "<synthetic>"
             ) {
+              const providerThreadId = context.input.providerThread.id;
+              const tokenUsage = claudeProviderTurnTokenUsage(
+                message.message.usage,
+                context.input.modelSelection,
+                DateTime.formatIso(now),
+                {
+                  carriedPromptCacheTtlMs: promptCacheTtlMsByProviderThread.get(providerThreadId),
+                  requestIdentity: claudeRequestIdentity(
+                    subagentModelCatalog,
+                    message.message.model,
+                    context.input.modelSelection,
+                  ),
+                },
+              );
+              if (tokenUsage.promptCacheTtlMs !== undefined) {
+                promptCacheTtlMsByProviderThread.set(providerThreadId, tokenUsage.promptCacheTtlMs);
+              }
               yield* emitProviderEvent({
                 type: "provider_turn.updated",
                 driver: CLAUDE_PROVIDER,
@@ -6958,11 +7023,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   status: "running",
                   startedAt: context.startedAt,
                   completedAt: null,
-                  tokenUsage: claudeProviderTurnTokenUsage(
-                    message.message.usage,
-                    context.input.modelSelection,
-                    DateTime.formatIso(now),
-                  ),
+                  tokenUsage,
                 },
               });
             }
