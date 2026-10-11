@@ -13775,6 +13775,71 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     ),
   );
+
+  it.effect.each(["task_progress", "task_notification"] as const)(
+    "never reports a subagent's %s usage as the thread's context",
+    (subtype) =>
+      Effect.gen(function* () {
+        const TASK = "task-usage-regression";
+        const TOOL_USE = "toolu_usage_regression";
+        const HUGE = { total_tokens: 1_000_000, tool_uses: 12, duration_ms: 60_000 };
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-usage-regression-${subtype}`),
+            text: "Delegate.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          makeAssistantTextFrame({ uuid: usageUuid("e01"), text: "Delegating." }),
+          makeSubagentTaskStartedFrame({
+            taskId: TASK,
+            toolUseId: TOOL_USE,
+            uuid: usageUuid("e02"),
+          }),
+          subtype === "task_progress"
+            ? claudeSdkFrame({
+                type: "system",
+                subtype: "task_progress",
+                task_id: TASK,
+                tool_use_id: TOOL_USE,
+                description: "Reading files",
+                usage: HUGE,
+                uuid: usageUuid("e03"),
+                session_id: WAKE_NATIVE_SESSION,
+              })
+            : claudeSdkFrame({
+                ...makeSubagentNotificationFrame({
+                  taskId: TASK,
+                  toolUseId: TOOL_USE,
+                  summary: "Done.",
+                  uuid: usageUuid("e03"),
+                }),
+                usage: HUGE,
+              }),
+          makeResultFrame({ uuid: usageUuid("e04"), result: "Delegated." }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        // The backgrounded subagent may outlive the root turn; wait on the root.
+        yield* Queue.take(harness.terminalReceipts);
+
+        const reported = reportedUsage(harness.events);
+        assert.deepEqual(
+          reported.map((usage) => usage.usedTokens),
+          [2],
+        );
+        for (const usage of reported) assert.strictEqual(usage.maxTokens, 200_000);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 });
 
 describe("ClaudeAdapterV2 query message stream", () => {
