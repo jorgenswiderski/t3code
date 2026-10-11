@@ -16,6 +16,10 @@ import {
   contextFraction,
   contextTier,
   formatBurn,
+  formatClockTime,
+  formatCountdown,
+  formatResetLabel,
+  formatTokenCount,
   formatWorkHours,
   parseWorkHours,
   resolveWorkSchedule,
@@ -718,5 +722,94 @@ describe("computeWeeklyBurn", () => {
       expect(swing(sweep(ALL_DAY, from, to))).toBeGreaterThan(8);
       expect(swing(sweep(WORK_HOURS, from, to))).toBeLessThan(5);
     });
+  });
+});
+
+// ---- clocks and formatters ----------------------------------------------------------
+
+describe("formatClockTime", () => {
+  const at = (h: number, m: number) => new Date(2026, 6, 6, h, m).getTime();
+
+  it.each([
+    [14, 40, "2:40pm", "14:40"],
+    [0, 5, "12:05am", "00:05"],
+    [12, 0, "12:00pm", "12:00"],
+    [9, 5, "9:05am", "09:05"],
+    [23, 59, "11:59pm", "23:59"],
+  ])("%s:%s renders as %s / %s", (h, m, twelve, twentyFour) => {
+    expect(formatClockTime(at(h, m), "12-hour")).toBe(twelve);
+    expect(formatClockTime(at(h, m), "24-hour")).toBe(twentyFour);
+  });
+
+  it("returns an empty string for a non-finite instant", () => {
+    expect(formatClockTime(Number.NaN, "12-hour")).toBe("");
+  });
+
+  it("resolves locale to one of the two styles, consistently", () => {
+    const result = formatClockTime(at(14, 40), "locale");
+    expect(["2:40pm", "14:40"]).toContain(result);
+    expect(formatClockTime(at(14, 40), "locale")).toBe(result);
+  });
+});
+
+describe("formatResetLabel", () => {
+  const thu = (h: number, m: number) => new Date(2026, 6, 9, h, m).getTime();
+
+  it.each([
+    [14, 40, 300, "12-hour", "2:40pm"],
+    [14, 40, 1440, "12-hour", "2:40pm"],
+    [9, 0, 10080, "12-hour", "Thu 9am"],
+    [9, 30, 10080, "12-hour", "Thu 9:30am"],
+    [12, 0, 10080, "12-hour", "Thu 12pm"],
+    [0, 0, 10080, "12-hour", "Thu 12am"],
+    [9, 0, 10080, "24-hour", "Thu 09:00"],
+    [9, 0, 1441, "12-hour", "Thu 9am"],
+    [9, 0, undefined, "12-hour", "Thu 9am"],
+    [9, 0, 0, "12-hour", "Thu 9am"],
+    [14, 40, 300, "24-hour", "14:40"],
+  ] as const)("%s:%s with %s mins in %s is %s", (h, m, mins, format, expected) => {
+    expect(formatResetLabel(thu(h, m), mins, format)).toBe(expected);
+  });
+});
+
+describe("formatCountdown", () => {
+  it.each([
+    [0, "now"],
+    [-5, "now"],
+    [Number.NaN, "now"],
+    [30_000, "in <1m"],
+    [59_999, "in <1m"],
+    [60_000, "in 1m"],
+    [4 * 60_000, "in 4m"],
+    [(1 * 60 + 52) * 60_000, "in 1h 52m"],
+    [(3 * 24 + 21) * 3_600_000, "in 3d 21h"],
+  ])("%s ms is %s", (ms, expected) => {
+    expect(formatCountdown(ms)).toBe(expected);
+  });
+});
+
+describe("formatTokenCount", () => {
+  it.each([
+    [0, "0"],
+    [-1, "0"],
+    [Number.NaN, "0"],
+    [950, "950"],
+    [999, "999"],
+    [1000, "1k"],
+    [1049, "1k"],
+    [9500, "9.5k"],
+    [9999, "10k"],
+    [10_000, "10k"],
+    [199_999, "200k"],
+    [200_000, "200k"],
+    [380_000, "380k"],
+    [999_499, "999k"],
+    [999_500, "1M"],
+    [1_000_000, "1M"],
+    [1_500_000, "1.5M"],
+    [9_960_000, "10M"],
+    [10_000_000, "10M"],
+  ])("%s is %s", (tokens, expected) => {
+    expect(formatTokenCount(tokens)).toBe(expected);
   });
 });

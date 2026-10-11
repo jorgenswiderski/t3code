@@ -7,6 +7,10 @@
  * @module usagePacing
  */
 
+import type { TimestampFormat } from "@t3tools/contracts";
+
+import { formatDuration } from "./usageLimits.ts";
+
 // ---- burn colour ladder -----------------------------------------------------------
 
 export type PaceTier = 0 | 1 | 2 | 3;
@@ -332,4 +336,71 @@ export function computeWeeklyBurn(input: {
   const burn = roundBurn(input.usedPercent / 100 / frac);
   if (!(burn > 0)) return null;
   return { burn, tier: burnTier(burn) };
+}
+
+// ---- clocks and formatters ---------------------------------------------------------
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+let localeUses12Hour: boolean | undefined;
+
+// Intl decides only 12 vs 24: the spec's examples read `2:40pm`, not Intl's `2:40 PM`. The hour
+// cycle depends on the locale alone, so it is resolved once.
+function uses12HourClock(format: TimestampFormat): boolean {
+  if (format !== "locale") return format === "12-hour";
+  localeUses12Hour ??=
+    new Intl.DateTimeFormat(undefined, { hour: "numeric" }).resolvedOptions().hour12 === true;
+  return localeUses12Hour;
+}
+
+/** Clock time in local time: "2:40pm" (12-hour, lowercase, always minutes) or "14:40" (24-hour). */
+export function formatClockTime(ms: number, timestampFormat: TimestampFormat): string {
+  if (!Number.isFinite(ms)) return "";
+  const date = new Date(ms);
+  const h = date.getHours();
+  const m = date.getMinutes();
+  return uses12HourClock(timestampFormat)
+    ? `${h % 12 || 12}:${pad2(m)}${h < 12 ? "am" : "pm"}`
+    : `${pad2(h)}:${pad2(m)}`;
+}
+
+/**
+ * windowDurationMins <= 1440 -> formatClockTime; otherwise weekday + hour: "Thu 9am" /
+ * "Thu 9:30am" (12-hour), "Thu 09:00" (24-hour). Unknown (undefined or 0) counts as > 1 day.
+ */
+export function formatResetLabel(
+  resetsAtMs: number,
+  windowDurationMins: number | undefined,
+  timestampFormat: TimestampFormat,
+): string {
+  if (windowDurationMins !== undefined && windowDurationMins > 0 && windowDurationMins <= 1440) {
+    return formatClockTime(resetsAtMs, timestampFormat);
+  }
+  if (!Number.isFinite(resetsAtMs)) return "";
+  const date = new Date(resetsAtMs);
+  const weekday = WEEKDAYS[date.getDay()]!;
+  const h = date.getHours();
+  const m = date.getMinutes();
+  if (!uses12HourClock(timestampFormat)) return `${weekday} ${pad2(h)}:${pad2(m)}`;
+  const minutes = m === 0 ? "" : `:${pad2(m)}`;
+  return `${weekday} ${h % 12 || 12}${minutes}${h < 12 ? "am" : "pm"}`;
+}
+
+/** "in " + formatDuration(ms): "in 1h 52m", "in 3d 21h", "in 4m"; ms <= 0 (or non-finite) -> "now"; 0 < ms < 60 s -> "in <1m". */
+export function formatCountdown(msRemaining: number): string {
+  if (!Number.isFinite(msRemaining) || msRemaining <= 0) return "now";
+  if (msRemaining < 60_000) return "in <1m";
+  return `in ${formatDuration(msRemaining)}`;
+}
+
+function compactUnit(value: number): string {
+  return value < 10 ? value.toFixed(1).replace(/\.0$/, "") : String(Math.round(value));
+}
+
+/** "950", "9.5k", "380k", "1M", "1.5M" (uppercase M; 999_500 must not print "1000k"). */
+export function formatTokenCount(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens <= 0) return "0";
+  if (tokens < 1000) return String(Math.round(tokens));
+  if (tokens < 999_500) return `${compactUnit(tokens / 1000)}k`;
+  return `${compactUnit(tokens / 1_000_000)}M`;
 }
