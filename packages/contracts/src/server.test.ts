@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { ServerProviderUsageWindow } from "./providerUsageLimits.ts";
 import {
   OtlpEndpointCheckInput,
   resolveEnvironmentMachineKind,
@@ -14,6 +15,8 @@ import {
 import { ServerSettings } from "./settings.ts";
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
+const decodeServerProviderUsageWindow = Schema.decodeUnknownSync(ServerProviderUsageWindow);
+const encodeServerProviderUsageWindow = Schema.encodeSync(ServerProviderUsageWindow);
 const decodeServerProviders = Schema.decodeUnknownSync(ServerProviders);
 const decodeServerObservability = Schema.decodeUnknownSync(ServerObservability);
 const decodeUpsertKeybindingResult = Schema.decodeUnknownSync(ServerUpsertKeybindingResult);
@@ -194,6 +197,59 @@ describe("server config forward compatibility", () => {
     expect(parsed.usageLimits?.windows).toEqual([
       { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
     ]);
+  });
+
+  it("decodes a session window with and without usage history", () => {
+    const history = [
+      { at: "2026-10-11T10:00:00.000Z", usedPercent: 10 },
+      { at: "2026-10-11T10:05:00.000Z", usedPercent: 12 },
+    ];
+    const sessionWindow = {
+      id: "five_hour",
+      kind: "session",
+      label: "Session",
+      usedPercent: 12,
+      history,
+    };
+    const weeklyWindow = { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 20 };
+
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      usageLimits: {
+        checkedAt: "2026-10-11T10:05:00.000Z",
+        windows: [sessionWindow, weeklyWindow],
+      },
+    });
+
+    const decodedWindows = parsed.usageLimits?.windows ?? [];
+    expect(decodedWindows.find((window) => window.id === "five_hour")?.history).toEqual(history);
+    const decodedWeekly = decodedWindows.find((window) => window.id === "seven_day");
+    expect(decodedWeekly).toEqual(weeklyWindow);
+    expect(decodedWeekly).not.toHaveProperty("history");
+    expect(encodeServerProviderUsageWindow(decodeServerProviderUsageWindow(sessionWindow))).toEqual(
+      sessionWindow,
+    );
+  });
+
+  it("drops a session window whose history sample is out of range without dropping its siblings", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      usageLimits: {
+        checkedAt: "2026-10-11T10:05:00.000Z",
+        windows: [
+          {
+            id: "five_hour",
+            kind: "session",
+            label: "Session",
+            usedPercent: 12,
+            history: [{ at: "2026-10-11T10:00:00.000Z", usedPercent: 120 }],
+          },
+          { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 20 },
+        ],
+      },
+    });
+
+    expect(parsed.usageLimits?.windows.map((window) => window.id)).toEqual(["seven_day"]);
   });
 });
 
