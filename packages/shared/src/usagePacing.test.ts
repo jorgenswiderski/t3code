@@ -1202,6 +1202,8 @@ describe("pace window roles and labels", () => {
     [win("other", "Overall", undefined), "other", "Overall", "Overall"],
     [win("session", "Session", 45), "session", "45m", "Session \u00b7 45m"],
     [win("session", "Session", 1440), "session", "1d", "Session \u00b7 1d"],
+    [win("session", "Gemini \u00b7 5-hour", 300), "session", "Gemini 5h", "Gemini \u00b7 5-hour"],
+    [win("weekly", "Gemini \u00b7 Weekly", 10080), "weekly", "Gemini 7d", "Gemini \u00b7 Weekly"],
   ] as const)("%j", (window, role, short, title) => {
     expect(paceWindowRole(window)).toBe(role);
     expect(paceWindowShortLabel(window)).toBe(short);
