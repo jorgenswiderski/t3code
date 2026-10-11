@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   MessageId,
   NodeId,
+  OrchestrationV2ProviderTurnTokenUsage,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -74,6 +75,25 @@ describe("V2 client presentation", () => {
     expect(shell.createdAt).toBe("2026-06-20T00:00:00.000Z");
     expect(shell.runtime).toBeNull();
     expect(shell.source).toBe(v2ThreadShell);
+  });
+
+  it("presents the active provider thread's latest token usage", () => {
+    const usage = {
+      usedTokens: 380000,
+      maxTokens: 1000000,
+      promptCacheTtlMs: 3600000,
+      updatedAt: "2026-10-11T10:00:00.000Z",
+    } satisfies OrchestrationV2ProviderTurnTokenUsage;
+
+    expect(presentThreadShell(environmentId, v2ThreadShell).latestTokenUsage).toBeNull();
+    expect(
+      presentThreadShell(environmentId, { ...v2ThreadShell, latestTokenUsage: null })
+        .latestTokenUsage,
+    ).toBeNull();
+    expect(
+      presentThreadShell(environmentId, { ...v2ThreadShell, latestTokenUsage: usage })
+        .latestTokenUsage,
+    ).toBe(usage);
   });
 
   it("preserves active ordering and both pull-request sources", () => {

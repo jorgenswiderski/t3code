@@ -1053,6 +1053,15 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
 });
 export type OrchestrationV2ContextHandoff = typeof OrchestrationV2ContextHandoff.Type;
 
+/** What a request targeted, for prompt-cache identity checks. Absent fields are unknown, not mismatches. */
+export const OrchestrationV2ProviderTurnRequestIdentity = Schema.Struct({
+  model: Schema.optional(TrimmedNonEmptyString),
+  effort: Schema.optional(TrimmedNonEmptyString),
+  fastMode: Schema.optional(Schema.Boolean),
+});
+export type OrchestrationV2ProviderTurnRequestIdentity =
+  typeof OrchestrationV2ProviderTurnRequestIdentity.Type;
+
 /** Live context usage reported by the provider mid-turn (#8144). */
 export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
   usedTokens: NonNegativeInt,
@@ -1064,6 +1073,8 @@ export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
   /** Prompt cache lifetime the provider wrote with this report. Clients treat
       the cache as cold once `updatedAt` is this old. */
   promptCacheTtlMs: Schema.optional(PositiveInt),
+  /** Claude's top-level reports only: model, effort and fast mode the request ran with. */
+  requestIdentity: Schema.optional(OrchestrationV2ProviderTurnRequestIdentity),
   /** ISO timestamp of the provider's report; string so wire encoding is stable. */
   updatedAt: Schema.String,
 });
@@ -1983,6 +1994,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   ),
   /** Native goal on the active provider thread; omitted by servers without goals. */
   goal: Schema.optional(Schema.NullOr(OrchestrationV2ProviderGoal)),
+  /** Newest top-level token usage on the active provider thread; omitted by servers that predate it. */
+  latestTokenUsage: Schema.optional(Schema.NullOr(OrchestrationV2ProviderTurnTokenUsage)),
   itemCount: NonNegativeInt,
   visibleItemCount: NonNegativeInt,
   createdAt: Schema.DateTimeUtc,
