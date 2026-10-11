@@ -77,7 +77,8 @@ export function ContextWindowMeter(props: {
             aria-label={formatGlyphTooltip(model, timestampFormat)}
           >
             <span className="flex size-5 items-center justify-center">
-              <ThreadContextGlyph size={18} model={model} />
+              {/* mx-0! cancels Button's descendant-svg -mx-0.5 so the ring stays centred. */}
+              <ThreadContextGlyph size={18} model={model} className="mx-0!" />
             </span>
           </Button>
         }

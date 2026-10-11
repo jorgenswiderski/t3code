@@ -47,7 +47,7 @@ export function ThreadContextGlyph({
       data-size={size}
       data-cache-state={model.cacheState}
       data-context-tier={model.tier}
-      className={cn("mx-0! shrink-0", SIZE_CLASS[size], className)}
+      className={cn("shrink-0", SIZE_CLASS[size], className)}
     >
       <circle
         cx={g.center}
