@@ -221,7 +221,7 @@ The ring beside the send button, and on every thread in the sidebar, shows how
 full the thread's context is. It turns yellow, orange and red as the context
 grows. A small dot means the thread's prompt cache is still warm; it turns amber
 shortly before the cache expires and disappears once it has. Hover the ring for
-the exact numbers. Turn the composer's ring off in **Settings > Usage pacing**;
+the exact numbers. Turn the composer's ring off in **Settings → Usage pacing**;
 the sidebar always shows it. Web and desktop also offer compaction from the
 composer's ring.
 

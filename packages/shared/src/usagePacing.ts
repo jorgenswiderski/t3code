@@ -617,6 +617,7 @@ export type PaceWindowRole = "session" | "weekly" | "modelScoped" | "other";
 
 // Claude's scoped windows are labelled "Weekly · <display name>" (claudeUsageLimits.ts scopedWindow).
 const MODEL_SCOPED_PREFIX = "Weekly \u00b7 ";
+const FAMILY_SEPARATOR = " \u00b7 ";
 
 /**
  * kind "session" -> "session"; kind "weekly" whose label starts with "Weekly · " ->
@@ -635,7 +636,8 @@ export function paceWindowRole(window: {
 
 /**
  * Header label: modelScoped -> display name ("Fable"); else from windowDurationMins:
- * < 60 -> "<m>m", < 1440 -> "<h>h" ("5h"), else "<d>d" ("7d"); no duration (or 0) -> window.label.
+ * < 60 -> "<m>m", < 1440 -> "<h>h" ("5h"), else "<d>d" ("7d"), prefixed with the family when the
+ * label is "<family> · <period>" ("Gemini 5h"); no duration (or 0) -> window.label.
  */
 export function paceWindowShortLabel(window: {
   readonly kind: PaceWindowInput["kind"];
@@ -647,20 +649,31 @@ export function paceWindowShortLabel(window: {
   }
   const mins = window.windowDurationMins;
   if (mins === undefined || !Number.isFinite(mins) || mins <= 0) return window.label;
-  if (mins < 60) return `${mins}m`;
-  if (mins < 1440) return `${Math.round(mins / 60)}h`;
-  return `${Math.round(mins / 1440)}d`;
+  const duration =
+    mins < 60
+      ? `${mins}m`
+      : mins < 1440
+        ? `${Math.round(mins / 60)}h`
+        : `${Math.round(mins / 1440)}d`;
+  // Providers reporting one window per model family label them "<family> · <period>"
+  // (Antigravity); keep the family so same-duration rows stay distinguishable.
+  const separator = window.label.indexOf(FAMILY_SEPARATOR);
+  return separator > 0 ? `${window.label.slice(0, separator)} ${duration}` : duration;
 }
 
-/** Popover title: session with a known duration -> "Session · <short>" (else window.label); weekly -> "Weekly · all models"; modelScoped and other -> window.label. */
+/**
+ * Popover title: the plain "Session" window with a known duration -> "Session · <short>";
+ * the plain "Weekly" window -> "Weekly · all models"; any other label (modelScoped, other,
+ * or a provider's own per-family label such as "Gemini · Weekly") -> window.label.
+ */
 export function paceWindowTitle(window: {
   readonly kind: PaceWindowInput["kind"];
   readonly label: string;
   readonly windowDurationMins?: number | undefined;
 }): string {
   const role = paceWindowRole(window);
-  if (role === "weekly") return "Weekly \u00b7 all models";
-  if (role === "session") {
+  if (role === "weekly" && window.label === "Weekly") return "Weekly \u00b7 all models";
+  if (role === "session" && window.label === "Session") {
     const short = paceWindowShortLabel(window);
     return short === window.label ? window.label : `Session \u00b7 ${short}`;
   }
