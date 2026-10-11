@@ -193,16 +193,23 @@ export function recordUsageSamples(input: {
         : undefined;
     const last = entry?.samples.at(-1);
     const lastMs = last === undefined ? Number.NEGATIVE_INFINITY : Date.parse(last.at);
+    // Usage never falls within one reset period. A lower reading is a source
+    // that lags (probe and runtime events round differently), so the list
+    // stays monotonic and the burn does not jitter.
+    const usedPercent =
+      last !== undefined && window.resetsAt !== undefined
+        ? Math.max(last.usedPercent, window.usedPercent)
+        : window.usedPercent;
     if (
       last !== undefined &&
-      last.usedPercent === window.usedPercent &&
+      last.usedPercent === usedPercent &&
       atMs - lastMs < USAGE_HISTORY_HEARTBEAT_MS
     ) {
       continue;
     }
     const sample = {
       at: last !== undefined && lastMs > atMs ? last.at : at,
-      usedPercent: window.usedPercent,
+      usedPercent,
     };
     edit().set(window.id, {
       resetsAt: window.resetsAt,
@@ -214,8 +221,9 @@ export function recordUsageSamples(input: {
 
 /**
  * Publish `history` on the session windows of `limits`, and strip it from any
- * window that should not carry it. Returns `limits` itself when no window
- * changes.
+ * window that should not carry it. A session reading below the newest sample
+ * of the same reset period is raised to it, so the published value always
+ * equals the newest sample. Returns `limits` itself when no window changes.
  */
 export function attachUsageHistory(
   limits: ServerProviderUsageLimits | undefined,
@@ -224,12 +232,23 @@ export function attachUsageHistory(
   if (limits === undefined) return limits;
   let changed = false;
   const windows = limits.windows.map((window) => {
-    const samples = window.kind === "session" ? history.get(window.id)?.samples : undefined;
+    const entry = window.kind === "session" ? history.get(window.id) : undefined;
+    const samples = entry?.samples;
     const wanted = samples !== undefined && samples.length > 0 ? samples : undefined;
-    if (window.history === wanted) return window;
+    const newest = wanted?.at(-1)?.usedPercent;
+    const usedPercent =
+      newest !== undefined &&
+      newest > window.usedPercent &&
+      window.resetsAt !== undefined &&
+      sameWindowReset(entry?.resetsAt, window.resetsAt)
+        ? newest
+        : window.usedPercent;
+    if (window.history === wanted && window.usedPercent === usedPercent) return window;
     changed = true;
     const { history: _stale, ...rest } = window;
-    return wanted === undefined ? rest : { ...rest, history: wanted };
+    return wanted === undefined
+      ? { ...rest, usedPercent }
+      : { ...rest, usedPercent, history: wanted };
   });
   return changed ? { ...limits, windows } : limits;
 }
