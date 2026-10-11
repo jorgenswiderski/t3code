@@ -170,6 +170,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
+import { sameWorkDays } from "./usagePacingSettings.logic";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -623,6 +624,25 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
         ? ["Context window indicator"]
         : []),
+      ...(settings.usagePacingShowSession !== DEFAULT_UNIFIED_SETTINGS.usagePacingShowSession
+        ? ["Show session window"]
+        : []),
+      ...(settings.usagePacingShowWeekly !== DEFAULT_UNIFIED_SETTINGS.usagePacingShowWeekly
+        ? ["Show weekly window"]
+        : []),
+      ...(settings.usagePacingShowModelScoped !==
+      DEFAULT_UNIFIED_SETTINGS.usagePacingShowModelScoped
+        ? ["Show model-scoped weekly windows"]
+        : []),
+      ...(settings.usagePacingWorkHours !== DEFAULT_UNIFIED_SETTINGS.usagePacingWorkHours
+        ? ["Work hours"]
+        : []),
+      ...(!sameWorkDays(settings.usagePacingWorkDays, DEFAULT_UNIFIED_SETTINGS.usagePacingWorkDays)
+        ? ["Work days"]
+        : []),
+      ...(settings.usagePacingOffHoursWeight !== DEFAULT_UNIFIED_SETTINGS.usagePacingOffHoursWeight
+        ? ["Off-hours weight"]
+        : []),
       ...(settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode
         ? ["Response streaming"]
         : []),
@@ -693,6 +713,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.proactivePanelsEnabled,
       settings.environmentIdentificationMode,
       settings.contextWindowMeterEnabled,
+      settings.usagePacingShowSession,
+      settings.usagePacingShowWeekly,
+      settings.usagePacingShowModelScoped,
+      settings.usagePacingWorkHours,
+      settings.usagePacingWorkDays,
+      settings.usagePacingOffHoursWeight,
       settings.fontFamilyCode,
       settings.fontFamilyComposer,
       settings.fontFamilySans,
@@ -807,6 +833,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
+      usagePacingShowSession: DEFAULT_UNIFIED_SETTINGS.usagePacingShowSession,
+      usagePacingShowWeekly: DEFAULT_UNIFIED_SETTINGS.usagePacingShowWeekly,
+      usagePacingShowModelScoped: DEFAULT_UNIFIED_SETTINGS.usagePacingShowModelScoped,
+      usagePacingWorkHours: DEFAULT_UNIFIED_SETTINGS.usagePacingWorkHours,
+      usagePacingWorkDays: DEFAULT_UNIFIED_SETTINGS.usagePacingWorkDays,
+      usagePacingOffHoursWeight: DEFAULT_UNIFIED_SETTINGS.usagePacingOffHoursWeight,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,

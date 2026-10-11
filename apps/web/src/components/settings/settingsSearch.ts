@@ -23,6 +23,7 @@ export type SettingsPath =
   | "/settings/providers"
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
+  | "/settings/usage-pacing"
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
@@ -102,6 +103,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
+  "/settings/usage-pacing": "Usage pacing",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
@@ -660,6 +662,42 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "snap-shot-enabled",
   },
   {
+    id: "usage-pacing-show-session",
+    title: "Show session window",
+    to: "/settings/usage-pacing",
+    searchTerms: ["5h five hour limit header pace burn usage"],
+  },
+  {
+    id: "usage-pacing-show-weekly",
+    title: "Show weekly window",
+    to: "/settings/usage-pacing",
+    searchTerms: ["7d week limit header pace burn usage"],
+  },
+  {
+    id: "usage-pacing-show-model-scoped",
+    title: "Show model-scoped weekly windows",
+    to: "/settings/usage-pacing",
+    searchTerms: ["Fable Opus Sonnet per model weekly limit header"],
+  },
+  {
+    id: "usage-pacing-work-hours",
+    title: "Work hours",
+    to: "/settings/usage-pacing",
+    searchTerms: ["schedule pace weekly start end shift night hours"],
+  },
+  {
+    id: "usage-pacing-work-days",
+    title: "Work days",
+    to: "/settings/usage-pacing",
+    searchTerms: ["weekdays schedule weekend monday friday pace weekly"],
+  },
+  {
+    id: "usage-pacing-off-hours-weight",
+    title: "Off-hours weight",
+    to: "/settings/usage-pacing",
+    searchTerms: ["outside work hours counts less pace weekly"],
+  },
+  {
     id: "providers",
     title: "Providers",
     to: "/settings/providers",
@@ -1029,6 +1067,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
   "/settings/scheduled-tasks": null,
+  "/settings/usage-pacing": null,
   "/settings/archived": "project-defaults",
 };
 

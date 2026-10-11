@@ -78,6 +78,32 @@ describe("restoring V2 settings", () => {
     expect(state.update.mock.calls[0]?.[0][key]).toBe(DEFAULT_UNIFIED_SETTINGS[key]);
   });
 
+  it.each([
+    ["usagePacingShowSession", false, "Show session window", true],
+    ["usagePacingShowWeekly", false, "Show weekly window", true],
+    ["usagePacingShowModelScoped", false, "Show model-scoped weekly windows", true],
+    ["usagePacingWorkHours", "20:00-02:00", "Work hours", "09:00-17:00"],
+    ["usagePacingWorkDays", [0, 6], "Work days", [1, 2, 3, 4, 5]],
+    ["usagePacingOffHoursWeight", 0.5, "Off-hours weight", 0.2],
+  ] as const)("restores usage pacing %s", async (key, value, label, expected) => {
+    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, [key]: value };
+    hooks.beginRender();
+    const restore = useSettingsRestore();
+
+    expect(restore.changedSettingLabels).toEqual([label]);
+    await restore.restoreDefaults();
+
+    expect(state.update).toHaveBeenCalledOnce();
+    expect(state.update.mock.calls[0]?.[0][key]).toEqual(expected);
+  });
+
+  it("does not treat reordered work days as changed", () => {
+    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, usagePacingWorkDays: [5, 4, 3, 2, 1] };
+    hooks.beginRender();
+
+    expect(useSettingsRestore().changedSettingLabels).toEqual([]);
+  });
+
   it("does not reset settings after cancellation", async () => {
     state.settings = { ...DEFAULT_UNIFIED_SETTINGS, autoResumeLimitedThreads: true };
     state.confirm.mockResolvedValue(false);
