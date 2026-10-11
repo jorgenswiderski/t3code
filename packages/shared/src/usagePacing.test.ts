@@ -7,6 +7,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 
 import { createModelSelection } from "./model.ts";
+import * as UsagePacing from "./usagePacing.ts";
 
 import {
   BURN_TIER_COLORS,
@@ -1235,5 +1236,48 @@ describe("contract conformance", () => {
     const asContext: Parameters<typeof contextTier>[0] =
       {} as OrchestrationV2ProviderTurnTokenUsage;
     expect([asInput, asUsage, asContext]).toHaveLength(3);
+  });
+});
+
+describe("public surface", () => {
+  it("exports exactly the shared contract", () => {
+    expect(Object.keys(UsagePacing).sort()).toEqual(
+      [
+        "BURN_TIER_COLORS",
+        "BURN_TIER_ORANGE",
+        "BURN_TIER_YELLOW",
+        "CACHE_WARN_MS",
+        "CONTEXT_TIER_COLORS",
+        "DEFAULT_OFF_HOURS_WEIGHT",
+        "DEFAULT_WORK_DAYS",
+        "DEFAULT_WORK_HOURS",
+        "burnTier",
+        "cacheExpiresAtMs",
+        "cacheWarmth",
+        "computeSessionBurn",
+        "computeWeeklyBurn",
+        "computeWindowPace",
+        "contextFraction",
+        "contextTier",
+        "formatBurn",
+        "formatClockTime",
+        "formatCountdown",
+        "formatResetLabel",
+        "formatThreadContextTooltip",
+        "formatTokenCount",
+        "formatWorkHours",
+        "orderPaceWindows",
+        "paceWindowRole",
+        "paceWindowShortLabel",
+        "paceWindowTitle",
+        "parseWorkHours",
+        "requestIdentityFromModelSelection",
+        "resolveWorkSchedule",
+        "roundBurn",
+        "sameRequestIdentity",
+        "scheduleWeight",
+        "weeklyElapsedFraction",
+      ].sort(),
+    );
   });
 });
