@@ -9,13 +9,21 @@ import {
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 
+/** One observation of a session window, recorded by the server on every usage update. */
+export const ServerProviderUsageSample = Schema.Struct({
+  at: IsoDateTime,
+  usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+});
+export type ServerProviderUsageSample = typeof ServerProviderUsageSample.Type;
+
 /**
  * One rolling quota window a subscription provider reports for the signed-in
  * account, e.g. Claude's five-hour session or Codex's weekly allowance.
  *
  * `id` is stable per provider (`five_hour`, `seven_day_opus`, `primary`) so a
  * sparse turn-driven update lands on the same row a full probe produced.
- * `kind` only orders and labels the bar.
+ * `kind` only orders and labels the bar. `history` is how clients project a
+ * burn rate for a session window; other kinds never carry it.
  */
 export const ServerProviderUsageWindow = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -24,6 +32,8 @@ export const ServerProviderUsageWindow = Schema.Struct({
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
+  /** Session windows only: samples of the current window, oldest first. Omitted when empty. */
+  history: Schema.optional(Schema.Array(ServerProviderUsageSample)),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 
