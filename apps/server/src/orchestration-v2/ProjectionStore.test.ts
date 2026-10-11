@@ -9,6 +9,7 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurnTokenUsage,
   type OrchestrationV2ThreadShellSnapshot,
   NodeId,
   ProjectId,
@@ -2011,6 +2012,318 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       // A handoff moves the conversation; the previous provider's goal stays behind.
       yield* applyProviderThread("second", null, 1);
       assert.isNull(yield* shellGoal);
+    }),
+  );
+
+  it.effect("puts the active provider thread's newest token usage on the shell", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:latest-usage");
+      const nodeId = NodeId.make("node:latest-usage");
+      yield* projectionStore.apply({
+        id: EventId.make("event:latest-usage:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:latest-usage"),
+          title: "Latest usage",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const providerThreadId = (suffix: string) =>
+        ProviderThreadId.make(`provider-thread:latest-usage:${suffix}`);
+      const applyProviderThread = (suffix: string, seconds: number) =>
+        projectionStore.apply({
+          id: EventId.make(`event:latest-usage:provider-thread:${suffix}:${seconds}`),
+          type: "provider-thread.updated",
+          threadId,
+          driver,
+          occurredAt: DateTime.add(now, { seconds }),
+          payload: {
+            id: providerThreadId(suffix),
+            driver,
+            providerInstanceId,
+            providerSessionId: null,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: null,
+            lastRunOrdinal: null,
+            handoffIds: [],
+            forkedFrom: null,
+            goal: null,
+            createdAt: now,
+            updatedAt: DateTime.add(now, { seconds }),
+          },
+        });
+      const usage = (
+        usedTokens: number,
+        seconds: number,
+        extra: Partial<OrchestrationV2ProviderTurnTokenUsage> = {},
+      ): OrchestrationV2ProviderTurnTokenUsage => ({
+        usedTokens,
+        maxTokens: 200_000,
+        updatedAt: DateTime.formatIso(DateTime.add(now, { seconds })),
+        ...extra,
+      });
+      let eventIndex = 0;
+      const applyTurn = (input: {
+        readonly providerThread: string;
+        readonly turn: string;
+        readonly ordinal: number;
+        readonly status: "running" | "completed";
+        readonly seconds: number;
+        readonly usage?: OrchestrationV2ProviderTurnTokenUsage;
+      }) =>
+        projectionStore.apply({
+          id: EventId.make(`event:latest-usage:turn:${eventIndex++}`),
+          type: "provider-turn.updated",
+          threadId,
+          nodeId,
+          driver,
+          occurredAt: DateTime.add(now, { seconds: input.seconds }),
+          payload: {
+            id: ProviderTurnId.make(`provider-turn:latest-usage:${input.turn}`),
+            providerThreadId: providerThreadId(input.providerThread),
+            nodeId,
+            runAttemptId: null,
+            nativeTurnRef: null,
+            ordinal: input.ordinal,
+            status: input.status,
+            startedAt: now,
+            completedAt: input.status === "completed" ? now : null,
+            ...(input.usage === undefined ? {} : { tokenUsage: input.usage }),
+          },
+        });
+      const expectLatest = (expected: OrchestrationV2ProviderTurnTokenUsage | null) =>
+        Effect.gen(function* () {
+          const snapshot = (yield* projectionStore.getShellSnapshot()).threads.find(
+            (thread) => thread.id === threadId,
+          )?.latestTokenUsage;
+          const shell = (yield* projectionStore.getThreadShell(threadId))?.latestTokenUsage;
+          const memory = ProjectionStore.threadShellFromProjection(
+            yield* projectionStore.getThreadProjection(threadId),
+          ).latestTokenUsage;
+          assert.deepEqual(snapshot, expected, "shell snapshot");
+          assert.deepEqual(shell, expected, "thread shell");
+          assert.deepEqual(memory, expected, "in-memory shell");
+        });
+
+      yield* expectLatest(null);
+      yield* applyProviderThread("first", 0);
+      yield* expectLatest(null);
+
+      const u1 = usage(40_000, 10);
+      yield* applyTurn({
+        providerThread: "first",
+        turn: "t1",
+        ordinal: 1,
+        status: "running",
+        seconds: 10,
+        usage: u1,
+      });
+      yield* expectLatest(u1);
+
+      const u2 = usage(55_000, 20, {
+        promptCacheTtlMs: 3_600_000,
+        requestIdentity: { model: "claude-sonnet-4-6", effort: "high" },
+      });
+      yield* applyTurn({
+        providerThread: "first",
+        turn: "t2",
+        ordinal: 2,
+        status: "running",
+        seconds: 20,
+        usage: u2,
+      });
+      yield* expectLatest(u2);
+
+      // A terminal update without usage keeps the stored usage.
+      yield* applyTurn({
+        providerThread: "first",
+        turn: "t2",
+        ordinal: 2,
+        status: "completed",
+        seconds: 25,
+      });
+      yield* expectLatest(u2);
+
+      // An older turn reporting later wins on report time, not ordinal.
+      const u1b = usage(41_000, 30);
+      yield* applyTurn({
+        providerThread: "first",
+        turn: "t1",
+        ordinal: 1,
+        status: "running",
+        seconds: 30,
+        usage: u1b,
+      });
+      yield* expectLatest(u1b);
+
+      // Same report time: the higher ordinal wins.
+      const u3 = usage(60_000, 30);
+      yield* applyTurn({
+        providerThread: "first",
+        turn: "t3",
+        ordinal: 3,
+        status: "running",
+        seconds: 30,
+        usage: u3,
+      });
+      yield* expectLatest(u3);
+
+      // A provider thread that never became active never counts.
+      yield* applyTurn({
+        providerThread: "subagent",
+        turn: "t9",
+        ordinal: 1,
+        status: "running",
+        seconds: 60,
+        usage: usage(999_000, 60),
+      });
+      yield* expectLatest(u3);
+
+      // A handoff hides the previous provider's usage.
+      yield* applyProviderThread("second", 70);
+      yield* expectLatest(null);
+
+      const u4 = usage(5_000, 80);
+      yield* applyTurn({
+        providerThread: "second",
+        turn: "t4",
+        ordinal: 1,
+        status: "running",
+        seconds: 80,
+        usage: u4,
+      });
+      yield* expectLatest(u4);
+    }),
+  );
+
+  it.effect("seeks the latest token usage through a provider-turn index", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:latest-usage-plan");
+      const nodeId = NodeId.make("node:latest-usage-plan");
+      const providerThreadId = ProviderThreadId.make("provider-thread:latest-usage-plan");
+      yield* projectionStore.apply({
+        id: EventId.make("event:latest-usage-plan:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:latest-usage-plan"),
+          title: "Latest usage plan",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:latest-usage-plan:provider-thread"),
+        type: "provider-thread.updated",
+        threadId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          goal: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:latest-usage-plan:turn"),
+        type: "provider-turn.updated",
+        threadId,
+        nodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: ProviderTurnId.make("provider-turn:latest-usage-plan"),
+          providerThreadId,
+          nodeId,
+          runAttemptId: null,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+          tokenUsage: { usedTokens: 1_000, maxTokens: 200_000, updatedAt: DateTime.formatIso(now) },
+        },
+      });
+
+      const { statements, tracer } = traceSqlStatements();
+      yield* projectionStore.getShellSnapshot().pipe(Effect.withTracer(tracer));
+      const statement = statements.find((query) => query.includes("AS latest_token_usage_json"));
+      assert.isDefined(statement);
+      const plan = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${statement}`,
+      )).map((row) => row.detail);
+      assert.isTrue(
+        plan.some((detail) =>
+          /^SEARCH turn USING (COVERING )?INDEX orchestration_v2_projection_provider_turns_/.test(
+            detail,
+          ),
+        ),
+        plan.join("\n"),
+      );
+      assert.isFalse(
+        plan.some((detail) => detail.startsWith("SCAN turn")),
+        plan.join("\n"),
+      );
     }),
   );
 
