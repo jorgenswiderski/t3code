@@ -1,16 +1,24 @@
 // @effect-diagnostics globalDate:off -- Fixtures build local-time instants to exercise DST and zone handling.
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+
+import { createModelSelection } from "./model.ts";
 
 import {
   BURN_TIER_COLORS,
   BURN_TIER_ORANGE,
+  CACHE_WARN_MS,
   BURN_TIER_YELLOW,
   CONTEXT_TIER_COLORS,
   DEFAULT_OFF_HOURS_WEIGHT,
   DEFAULT_WORK_DAYS,
   DEFAULT_WORK_HOURS,
+  type CacheUsageInput,
+  type RequestIdentity,
   type WorkSchedule,
   burnTier,
+  cacheExpiresAtMs,
+  cacheWarmth,
   computeSessionBurn,
   computeWeeklyBurn,
   contextFraction,
@@ -19,11 +27,14 @@ import {
   formatClockTime,
   formatCountdown,
   formatResetLabel,
+  formatThreadContextTooltip,
   formatTokenCount,
   formatWorkHours,
   parseWorkHours,
+  requestIdentityFromModelSelection,
   resolveWorkSchedule,
   roundBurn,
+  sameRequestIdentity,
   scheduleWeight,
   weeklyElapsedFraction,
 } from "./usagePacing.ts";
@@ -811,5 +822,140 @@ describe("formatTokenCount", () => {
     [10_000_000, "10M"],
   ])("%s is %s", (tokens, expected) => {
     expect(formatTokenCount(tokens)).toBe(expected);
+  });
+});
+
+// ---- request identity, cache warmth, tooltip ----------------------------------------
+
+describe("request identity", () => {
+  const selection = (options?: Parameters<typeof createModelSelection>[2]) =>
+    createModelSelection(ProviderInstanceId.make("claude"), "claude-opus-5", options);
+
+  it.each([
+    ["null", null, null],
+    ["undefined", undefined, null],
+    ["no options", selection(), { model: "claude-opus-5" }],
+    [
+      "effort and fast mode",
+      selection([
+        { id: "effort", value: "high" },
+        { id: "fastMode", value: true },
+      ]),
+      { model: "claude-opus-5", effort: "high", fastMode: true },
+    ],
+    [
+      "a wrongly typed option",
+      selection([{ id: "effort", value: true }]),
+      { model: "claude-opus-5" },
+    ],
+  ])("requestIdentityFromModelSelection: %s", (_name, input, expected) => {
+    expect(requestIdentityFromModelSelection(input)).toStrictEqual(expected);
+  });
+
+  it.each([
+    [{ model: "claude-opus-5" }, { model: "claude-opus-5[1m]" }, true],
+    [{ model: "claude-opus-5[1m]" }, { model: "claude-opus-5" }, true],
+    [{ model: "claude-opus-5[1m]" }, { model: "claude-sonnet-5" }, false],
+    [{ fastMode: false }, {}, true],
+    [{}, { fastMode: true }, true],
+    [{ effort: "xhigh", fastMode: false }, { effort: "xhigh" }, true],
+    [{ effort: "" }, { effort: "xhigh" }, true],
+    [{ fastMode: false }, { fastMode: true }, false],
+    [{}, {}, true],
+  ] as ReadonlyArray<readonly [RequestIdentity, RequestIdentity, boolean]>)(
+    "sameRequestIdentity(%j, %j) = %s",
+    (a, b, expected) => {
+      expect(sameRequestIdentity(a, b)).toBe(expected);
+    },
+  );
+});
+
+describe("cache warmth", () => {
+  const NOW = 1_750_000_000_000;
+  const usage = (overrides: Partial<CacheUsageInput> = {}): CacheUsageInput => ({
+    updatedAt: new Date(NOW - 60_000).toISOString(),
+    promptCacheTtlMs: 3_600_000,
+    requestIdentity: { model: "claude-opus-5", effort: "xhigh", fastMode: false },
+    ...overrides,
+  });
+  const next = (overrides: RequestIdentity = {}): RequestIdentity => ({
+    model: "claude-opus-5[1m]",
+    effort: "xhigh",
+    fastMode: false,
+    ...overrides,
+  });
+  const updatedAt = (ms: number) => new Date(ms).toISOString();
+
+  it("exposes the warn window", () => {
+    expect(CACHE_WARN_MS).toBe(600_000);
+  });
+
+  it("computes the expiry", () => {
+    expect(cacheExpiresAtMs(usage())).toBe(NOW - 60_000 + 3_600_000);
+    expect(cacheExpiresAtMs(usage({ promptCacheTtlMs: undefined }))).toBeNull();
+    expect(cacheExpiresAtMs(usage({ promptCacheTtlMs: 0 }))).toBeNull();
+    expect(cacheExpiresAtMs(usage({ updatedAt: "garbage" }))).toBeNull();
+    expect(cacheExpiresAtMs(null)).toBeNull();
+  });
+
+  it.each([
+    ["null usage", null, next(), "unknown"],
+    ["undefined usage", undefined, next(), "unknown"],
+    ["no TTL", usage({ promptCacheTtlMs: undefined }), next(), "unknown"],
+    ["bad timestamp", usage({ updatedAt: "garbage" }), next(), "unknown"],
+    ["baseline", usage(), next(), "warm"],
+    ["no next identity", usage({ requestIdentity: { model: "other" } }), null, "warm"],
+    ["no recorded identity", usage({ requestIdentity: undefined }), next({ model: "x" }), "warm"],
+    ["model changed", usage(), next({ model: "claude-sonnet-5" }), "cold"],
+    ["effort changed", usage(), next({ effort: "low" }), "cold"],
+    ["fast mode toggled", usage(), next({ fastMode: true }), "cold"],
+    ["next fields absent", usage(), next({ effort: undefined, fastMode: undefined }), "warm"],
+  ] as const)("%s is %s", (_name, input, nextIdentity, expected) => {
+    expect(cacheWarmth(input, nextIdentity, NOW)).toBe(expected);
+  });
+
+  it("is cold exactly at expiry and expiring just before", () => {
+    const expiredNow = usage({ updatedAt: updatedAt(NOW - 3_600_000) });
+    expect(cacheWarmth(expiredNow, next(), NOW)).toBe("cold");
+    expect(cacheWarmth(expiredNow, next(), NOW - 1000)).toBe("expiring");
+  });
+
+  it("is expiring at exactly the warn edge", () => {
+    const edge = usage({ updatedAt: updatedAt(NOW + 600_000 - 3_600_000) });
+    expect(cacheWarmth(edge, next(), NOW)).toBe("expiring");
+    expect(cacheWarmth(edge, next(), NOW - 1000)).toBe("warm");
+  });
+
+  it("warns at a quarter of a short TTL", () => {
+    const short = usage({ updatedAt: updatedAt(NOW), promptCacheTtlMs: 300_000 });
+    expect(cacheWarmth(short, next(), NOW)).toBe("warm");
+    expect(cacheWarmth(short, next(), NOW + 224_000)).toBe("warm");
+    expect(cacheWarmth(short, next(), NOW + 225_000)).toBe("expiring");
+  });
+});
+
+describe("formatThreadContextTooltip", () => {
+  const expiresAtMs = new Date(2026, 6, 6, 15, 12).getTime();
+  const base = {
+    usedTokens: 380_000,
+    maxTokens: 1_000_000,
+    warmth: "warm",
+    expiresAtMs,
+    timestampFormat: "12-hour",
+  } as const;
+
+  it.each([
+    [{}, "Context 380k / 1M (38%) \u00b7 Cache warm, expires 3:12pm"],
+    [{ warmth: "expiring" }, "Context 380k / 1M (38%) \u00b7 Cache expiring 3:12pm"],
+    [{ warmth: "cold" }, "Context 380k / 1M (38%) \u00b7 Cache cold"],
+    [{ warmth: "unknown" }, "Context 380k / 1M (38%)"],
+    [{ maxTokens: null }, "Context 380k \u00b7 Cache warm, expires 3:12pm"],
+    [{ maxTokens: 0, warmth: "unknown" }, "Context 380k"],
+    [{ timestampFormat: "24-hour" }, "Context 380k / 1M (38%) \u00b7 Cache warm, expires 15:12"],
+    [{ usedTokens: 199_999 }, "Context 200k / 1M (20%) \u00b7 Cache warm, expires 3:12pm"],
+    [{ expiresAtMs: null }, "Context 380k / 1M (38%) \u00b7 Cache warm"],
+    [{ expiresAtMs: null, warmth: "expiring" }, "Context 380k / 1M (38%) \u00b7 Cache expiring"],
+  ] as const)("%j", (overrides, expected) => {
+    expect(formatThreadContextTooltip({ ...base, ...overrides })).toBe(expected);
   });
 });

@@ -7,8 +7,12 @@
  * @module usagePacing
  */
 
-import type { TimestampFormat } from "@t3tools/contracts";
+import type { ModelSelection, TimestampFormat } from "@t3tools/contracts";
 
+import {
+  getModelSelectionBooleanOptionValue,
+  getModelSelectionStringOptionValue,
+} from "./model.ts";
 import { formatDuration } from "./usageLimits.ts";
 
 // ---- burn colour ladder -----------------------------------------------------------
@@ -403,4 +407,115 @@ export function formatTokenCount(tokens: number): string {
   if (tokens < 1000) return String(Math.round(tokens));
   if (tokens < 999_500) return `${compactUnit(tokens / 1000)}k`;
   return `${compactUnit(tokens / 1_000_000)}M`;
+}
+
+// ---- request identity and cache warmth -----------------------------------------------
+
+export interface RequestIdentity {
+  readonly model?: string | undefined;
+  readonly effort?: string | undefined;
+  readonly fastMode?: boolean | undefined;
+}
+
+export interface CacheUsageInput {
+  readonly updatedAt: string;
+  readonly promptCacheTtlMs?: number | undefined;
+  readonly requestIdentity?: RequestIdentity | undefined;
+}
+
+export type CacheWarmth = "unknown" | "cold" | "expiring" | "warm";
+
+export const CACHE_WARN_MS = 600_000;
+
+/**
+ * The identity the next request would carry: model = selection.model; effort / fastMode are
+ * the raw option values (no default resolution); a field is omitted when unset.
+ */
+export function requestIdentityFromModelSelection(
+  selection: ModelSelection | null | undefined,
+): RequestIdentity | null {
+  if (!selection) return null;
+  const effort = getModelSelectionStringOptionValue(selection, "effort");
+  const fastMode = getModelSelectionBooleanOptionValue(selection, "fastMode");
+  return {
+    model: selection.model,
+    ...(effort !== undefined ? { effort } : {}),
+    ...(fastMode !== undefined ? { fastMode } : {}),
+  };
+}
+
+function sameWhenPresent<T extends string | boolean>(
+  a: T | undefined,
+  b: T | undefined,
+  normalize: (value: T) => T = (value) => value,
+): boolean {
+  if (a === undefined || b === undefined || a === "" || b === "") return true;
+  return normalize(a) === normalize(b);
+}
+
+const stripModelVariant = (model: string) => model.replace(/\[.*$/, "");
+
+/** Field absent (or empty string) on either side is skipped; model compares with a trailing "[...]" stripped. */
+export function sameRequestIdentity(a: RequestIdentity, b: RequestIdentity): boolean {
+  return (
+    sameWhenPresent(a.model, b.model, stripModelVariant) &&
+    sameWhenPresent(a.effort, b.effort) &&
+    sameWhenPresent(a.fastMode, b.fastMode)
+  );
+}
+
+/** Date.parse(updatedAt) + promptCacheTtlMs; null when either is missing/unparseable. */
+export function cacheExpiresAtMs(usage: CacheUsageInput | null | undefined): number | null {
+  const ttl = usage?.promptCacheTtlMs;
+  if (!usage || ttl === undefined || !Number.isFinite(ttl) || ttl <= 0) return null;
+  const updatedAt = Date.parse(usage.updatedAt);
+  return Number.isFinite(updatedAt) ? updatedAt + ttl : null;
+}
+
+/**
+ * unknown: no usage, no TTL, or unparseable updatedAt.
+ * cold: identity mismatch (skipped when next is null), or nowMs >= expiry.
+ * expiring: expiry - nowMs <= min(CACHE_WARN_MS, ttl / 4).
+ * warm: otherwise.
+ */
+export function cacheWarmth(
+  usage: CacheUsageInput | null | undefined,
+  next: RequestIdentity | null | undefined,
+  nowMs: number,
+): CacheWarmth {
+  const expiry = cacheExpiresAtMs(usage);
+  if (usage === null || usage === undefined || expiry === null) return "unknown";
+  if (next && !sameRequestIdentity(usage.requestIdentity ?? {}, next)) return "cold";
+  if (nowMs >= expiry) return "cold";
+  const warn = Math.min(CACHE_WARN_MS, (usage.promptCacheTtlMs ?? 0) / 4);
+  return expiry - nowMs <= warn ? "expiring" : "warm";
+}
+
+/**
+ * "Context 380k / 1M (38%) · Cache warm, expires 3:12pm"; no maxTokens -> "Context 380k";
+ * expiring -> "· Cache expiring 3:12pm"; cold -> "· Cache cold"; unknown -> clause omitted.
+ * Percent = Math.round(used / max * 100). Clock via formatClockTime.
+ */
+export function formatThreadContextTooltip(input: {
+  readonly usedTokens: number;
+  readonly maxTokens?: number | null | undefined;
+  readonly warmth: CacheWarmth;
+  readonly expiresAtMs: number | null;
+  readonly timestampFormat: TimestampFormat;
+}): string {
+  const { usedTokens, maxTokens, warmth, expiresAtMs, timestampFormat } = input;
+  const context =
+    maxTokens !== null && maxTokens !== undefined && maxTokens > 0
+      ? `Context ${formatTokenCount(usedTokens)} / ${formatTokenCount(maxTokens)} (${Math.round((usedTokens / maxTokens) * 100)}%)`
+      : `Context ${formatTokenCount(usedTokens)}`;
+  const clock = expiresAtMs === null ? "" : ` ${formatClockTime(expiresAtMs, timestampFormat)}`;
+  const cache =
+    warmth === "warm"
+      ? `Cache warm${clock === "" ? "" : `, expires${clock}`}`
+      : warmth === "expiring"
+        ? `Cache expiring${clock}`
+        : warmth === "cold"
+          ? "Cache cold"
+          : null;
+  return cache === null ? context : `${context} \u00b7 ${cache}`;
 }
