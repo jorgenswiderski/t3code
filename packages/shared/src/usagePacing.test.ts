@@ -1,5 +1,9 @@
 // @effect-diagnostics globalDate:off -- Fixtures build local-time instants to exercise DST and zone handling.
-import { ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  type OrchestrationV2ProviderTurnTokenUsage,
+  type ServerProviderUsageWindow,
+} from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 
 import { createModelSelection } from "./model.ts";
@@ -14,6 +18,7 @@ import {
   DEFAULT_WORK_DAYS,
   DEFAULT_WORK_HOURS,
   type CacheUsageInput,
+  type PaceWindowInput,
   type RequestIdentity,
   type WorkSchedule,
   burnTier,
@@ -21,6 +26,7 @@ import {
   cacheWarmth,
   computeSessionBurn,
   computeWeeklyBurn,
+  computeWindowPace,
   contextFraction,
   contextTier,
   formatBurn,
@@ -30,6 +36,10 @@ import {
   formatThreadContextTooltip,
   formatTokenCount,
   formatWorkHours,
+  orderPaceWindows,
+  paceWindowRole,
+  paceWindowShortLabel,
+  paceWindowTitle,
   parseWorkHours,
   requestIdentityFromModelSelection,
   resolveWorkSchedule,
@@ -957,5 +967,273 @@ describe("formatThreadContextTooltip", () => {
     [{ expiresAtMs: null, warmth: "expiring" }, "Context 380k / 1M (38%) \u00b7 Cache expiring"],
   ] as const)("%j", (overrides, expected) => {
     expect(formatThreadContextTooltip({ ...base, ...overrides })).toBe(expected);
+  });
+});
+
+// ---- per-window pace, roles and labels ------------------------------------------------
+
+describe("computeWindowPace", () => {
+  const T = new Date(2026, 6, 6, 12).getTime();
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const schedule = (overrides: Partial<Parameters<typeof resolveWorkSchedule>[0]> = {}) =>
+    resolveWorkSchedule({
+      workHours: "09:00-17:00",
+      workDays: [1, 2, 3, 4, 5],
+      offHoursWeight: 0.2,
+      ...overrides,
+    });
+  const ALL_DAY_SCHEDULE = resolveWorkSchedule({
+    workHours: "00:00-24:00",
+    workDays: [1, 2, 3, 4, 5],
+    offHoursWeight: 0,
+  });
+  const DEFAULT_SCHEDULE = schedule();
+  const WED = new Date(2026, 6, 8).getTime();
+  const WED_NOON = new Date(2026, 6, 8, 12).getTime();
+  const NEXT_MON_ISO = iso(new Date(2026, 6, 13).getTime());
+  const SESSION_RESET = iso(T + 9_000_000);
+
+  const history = Array.from({ length: 11 }, (_, i) => ({
+    at: iso(T - (10 - i) * 60_000),
+    usedPercent: 10 + i,
+  }));
+
+  it("projects a session from its history", () => {
+    const pace = computeWindowPace(
+      {
+        kind: "session",
+        usedPercent: 20,
+        windowDurationMins: 300,
+        resetsAt: SESSION_RESET,
+        history,
+      },
+      { nowMs: T, schedule: DEFAULT_SCHEDULE },
+    );
+    expect(pace).toMatchObject({
+      usedPercent: 20,
+      burn: 1.7,
+      burnTier: 3,
+      resetsAtMs: T + 9_000_000,
+    });
+    expect(pace.paceFraction).toBeCloseTo(0.5, 9);
+  });
+
+  it.each([
+    ["history undefined", undefined],
+    ["empty history", []],
+  ])("falls back to the linear projection with %s", (_name, noHistory) => {
+    const pace = computeWindowPace(
+      {
+        kind: "session",
+        usedPercent: 30,
+        windowDurationMins: 300,
+        resetsAt: SESSION_RESET,
+        history: noHistory,
+      },
+      { nowMs: T, schedule: DEFAULT_SCHEDULE },
+    );
+    expect(pace).toMatchObject({ burn: 0.6, burnTier: 0 });
+    expect(pace.paceFraction).toBeCloseTo(0.5, 9);
+  });
+
+  it("keeps the tick but blanks the burn early in a session", () => {
+    const pace = computeWindowPace(
+      { kind: "session", usedPercent: 5, windowDurationMins: 300, resetsAt: iso(T + 17_880_000) },
+      { nowMs: T, schedule: DEFAULT_SCHEDULE },
+    );
+    expect(pace.burn).toBeNull();
+    expect(pace.burnTier).toBeNull();
+    expect(pace.paceFraction).toBeCloseTo(120 / 18000, 9);
+  });
+
+  it("defaults a session to 5 hours without a duration", () => {
+    const pace = computeWindowPace(
+      { kind: "session", usedPercent: 30, resetsAt: SESSION_RESET },
+      { nowMs: T, schedule: DEFAULT_SCHEDULE },
+    );
+    expect(pace).toMatchObject({ burn: 0.6 });
+    expect(pace.paceFraction).toBeCloseTo(0.5, 9);
+  });
+
+  it("schedules a weekly window by work days", () => {
+    const pace = computeWindowPace(
+      { kind: "weekly", usedPercent: 20, windowDurationMins: 10080, resetsAt: NEXT_MON_ISO },
+      { nowMs: WED, schedule: ALL_DAY_SCHEDULE },
+    );
+    expect(pace).toMatchObject({ burn: 0.5, burnTier: 0 });
+    expect(pace.paceFraction).toBeCloseTo(0.4, 9);
+  });
+
+  it("schedules a weekly window with the default work hours", () => {
+    const pace = computeWindowPace(
+      { kind: "weekly", usedPercent: 40, windowDurationMins: 10080, resetsAt: NEXT_MON_ISO },
+      { nowMs: WED_NOON, schedule: DEFAULT_SCHEDULE },
+    );
+    expect(pace).toMatchObject({ burn: 0.8, burnTier: 0 });
+    expect(pace.paceFraction).toBeCloseTo(0.4857142857, 9);
+  });
+
+  it("draws the weekly tick while the minimum-elapsed floor blanks the burn", () => {
+    const pace = computeWindowPace(
+      { kind: "weekly", usedPercent: 5, windowDurationMins: 10080, resetsAt: NEXT_MON_ISO },
+      { nowMs: new Date(2026, 6, 6, 1).getTime(), schedule: ALL_DAY_SCHEDULE },
+    );
+    expect(pace.burn).toBeNull();
+    expect(pace.burnTier).toBeNull();
+    expect(pace.paceFraction).toBeCloseTo(1 / 120, 9);
+  });
+
+  it("blanks burn and tick with no work days", () => {
+    const pace = computeWindowPace(
+      { kind: "weekly", usedPercent: 20, windowDurationMins: 10080, resetsAt: NEXT_MON_ISO },
+      { nowMs: WED, schedule: schedule({ workDays: [] }) },
+    );
+    expect(pace.burn).toBeNull();
+    expect(pace.paceFraction).toBeNull();
+    expect(pace.resetsAtMs).toBe(Date.parse(NEXT_MON_ISO));
+  });
+
+  it("defaults a weekly window to 7 days without a duration", () => {
+    const pace = computeWindowPace(
+      { kind: "weekly", usedPercent: 20, resetsAt: NEXT_MON_ISO },
+      { nowMs: WED, schedule: ALL_DAY_SCHEDULE },
+    );
+    expect(pace.burn).toBe(0.5);
+  });
+
+  it("uses the wall clock for a monthly window and ignores the schedule", () => {
+    const pace = computeWindowPace(
+      {
+        kind: "monthly",
+        usedPercent: 30,
+        windowDurationMins: 43200,
+        resetsAt: iso(T + 15 * 86_400_000),
+      },
+      { nowMs: T, schedule: DEFAULT_SCHEDULE },
+    );
+    expect(pace).toMatchObject({ burn: 0.6, burnTier: 0 });
+    expect(pace.paceFraction).toBeCloseTo(0.5, 9);
+  });
+
+  it("uses a 7-day wall clock for an unknown window kind without a duration", () => {
+    const pace = computeWindowPace(
+      { kind: "other", usedPercent: 30, resetsAt: iso(T + 3.5 * 86_400_000) },
+      { nowMs: T, schedule: DEFAULT_SCHEDULE },
+    );
+    expect(pace.burn).toBe(0.6);
+    expect(pace.paceFraction).toBeCloseTo(0.5, 9);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["garbage", "not a date"],
+  ])("returns blanks when resetsAt is %s", (_name, resetsAt) => {
+    expect(
+      computeWindowPace(
+        { kind: "weekly", usedPercent: 42, resetsAt },
+        { nowMs: T, schedule: DEFAULT_SCHEDULE },
+      ),
+    ).toEqual({
+      usedPercent: 42,
+      burn: null,
+      burnTier: null,
+      paceFraction: null,
+      resetsAtMs: null,
+    });
+  });
+
+  it("blanks burn and tick for a stale snapshot but keeps the reset clock", () => {
+    expect(
+      computeWindowPace(
+        { kind: "session", usedPercent: 40, windowDurationMins: 300, resetsAt: iso(T - 1000) },
+        { nowMs: T, schedule: DEFAULT_SCHEDULE },
+      ),
+    ).toEqual({
+      usedPercent: 40,
+      burn: null,
+      burnTier: null,
+      paceFraction: null,
+      resetsAtMs: T - 1000,
+    });
+  });
+
+  it.each([
+    [120, 100],
+    [-5, 0],
+    [Number.NaN, 0],
+  ])("clamps used percent %s to %s", (usedPercent, expected) => {
+    expect(
+      computeWindowPace(
+        { kind: "session", usedPercent, windowDurationMins: 300, resetsAt: SESSION_RESET },
+        { nowMs: T, schedule: DEFAULT_SCHEDULE },
+      ).usedPercent,
+    ).toBe(expected);
+  });
+
+  it.each([100_000_000, 0, Number.NaN])(
+    "falls back to the default length for an absurd duration %s",
+    (windowDurationMins) => {
+      const pace = computeWindowPace(
+        { kind: "weekly", usedPercent: 20, windowDurationMins, resetsAt: NEXT_MON_ISO },
+        { nowMs: WED, schedule: ALL_DAY_SCHEDULE },
+      );
+      expect(pace.burn).toBe(0.5);
+      expect(pace.paceFraction).toBeCloseTo(0.4, 9);
+    },
+  );
+});
+
+describe("pace window roles and labels", () => {
+  const win = (kind: PaceWindowInput["kind"], label: string, windowDurationMins?: number) => ({
+    kind,
+    label,
+    windowDurationMins,
+  });
+
+  it.each([
+    [win("session", "Session", 300), "session", "5h", "Session \u00b7 5h"],
+    [win("session", "Session", undefined), "session", "Session", "Session"],
+    [win("session", "Session", 0), "session", "Session", "Session"],
+    [win("weekly", "Weekly", 10080), "weekly", "7d", "Weekly \u00b7 all models"],
+    [win("weekly", "Weekly \u00b7 Fable", 10080), "modelScoped", "Fable", "Weekly \u00b7 Fable"],
+    [win("weekly", "Weekly", undefined), "weekly", "Weekly", "Weekly \u00b7 all models"],
+    [win("monthly", "Monthly", 43200), "other", "30d", "Monthly"],
+    [win("other", "Overall", undefined), "other", "Overall", "Overall"],
+    [win("session", "Session", 45), "session", "45m", "Session \u00b7 45m"],
+    [win("session", "Session", 1440), "session", "1d", "Session \u00b7 1d"],
+  ] as const)("%j", (window, role, short, title) => {
+    expect(paceWindowRole(window)).toBe(role);
+    expect(paceWindowShortLabel(window)).toBe(short);
+    expect(paceWindowTitle(window)).toBe(title);
+  });
+
+  it("orders windows by role, then id, without mutating the input", () => {
+    const input = [
+      { id: "extra", kind: "monthly", label: "Extra" },
+      { id: "seven_day_fable", kind: "weekly", label: "Weekly \u00b7 Fable" },
+      { id: "seven_day", kind: "weekly", label: "Weekly" },
+      { id: "five_hour", kind: "session", label: "Session" },
+      { id: "a_session", kind: "session", label: "Session" },
+    ] as const;
+    const snapshot = [...input];
+    expect(orderPaceWindows(input).map((w) => w.id)).toEqual([
+      "a_session",
+      "five_hour",
+      "seven_day",
+      "seven_day_fable",
+      "extra",
+    ]);
+    expect([...input]).toEqual(snapshot);
+    expect(orderPaceWindows([])).toEqual([]);
+  });
+});
+
+describe("contract conformance", () => {
+  it("keeps the wire types assignable to the structural inputs", () => {
+    const asInput: PaceWindowInput = {} as ServerProviderUsageWindow;
+    const asUsage: CacheUsageInput = {} as OrchestrationV2ProviderTurnTokenUsage;
+    const asContext: Parameters<typeof contextTier>[0] =
+      {} as OrchestrationV2ProviderTurnTokenUsage;
+    expect([asInput, asUsage, asContext]).toHaveLength(3);
   });
 });

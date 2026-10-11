@@ -9,6 +9,7 @@
 
 import type { ModelSelection, TimestampFormat } from "@t3tools/contracts";
 
+import { copySorted } from "./Array.ts";
 import {
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
@@ -518,4 +519,168 @@ export function formatThreadContextTooltip(input: {
           ? "Cache cold"
           : null;
   return cache === null ? context : `${context} \u00b7 ${cache}`;
+}
+
+// ---- per-window pace --------------------------------------------------------------
+
+export interface PaceWindowInput {
+  readonly kind: "session" | "weekly" | "monthly" | "other";
+  readonly usedPercent: number;
+  readonly resetsAt?: string | undefined;
+  readonly windowDurationMins?: number | undefined;
+  readonly history?:
+    | ReadonlyArray<{ readonly at: string; readonly usedPercent: number }>
+    | undefined;
+}
+
+export interface WindowPace {
+  /** Clamped 0..100: the bar fill. */
+  readonly usedPercent: number;
+  /** Null = blank burn column. */
+  readonly burn: number | null;
+  /** Null exactly when burn is null. */
+  readonly burnTier: PaceTier | null;
+  /** 0..1 tick position; null when resetsAt is missing/unparseable or now is outside the window. */
+  readonly paceFraction: number | null;
+  /** Null when resetsAt is missing/unparseable. */
+  readonly resetsAtMs: number | null;
+}
+
+// scheduleWeight walks one iteration per local day of the window, so a bogus huge duration
+// would stall the UI thread.
+const MAX_WINDOW_SEC = 400 * 86_400;
+
+function windowLengthSec(kind: PaceWindowInput["kind"], mins: number | undefined): number {
+  const fallback = kind === "session" ? 18_000 : 604_800;
+  if (mins === undefined || !Number.isFinite(mins) || mins <= 0) return fallback;
+  const sec = mins * 60;
+  return sec > MAX_WINDOW_SEC ? fallback : sec;
+}
+
+function toSamples(
+  history: PaceWindowInput["history"],
+): Array<{ atSec: number; usedPercent: number }> {
+  const samples: Array<{ atSec: number; usedPercent: number }> = [];
+  for (const entry of history ?? []) {
+    const atMs = Date.parse(entry.at);
+    if (Number.isFinite(atMs)) samples.push({ atSec: atMs / 1000, usedPercent: entry.usedPercent });
+  }
+  return samples;
+}
+
+/**
+ * session -> computeSessionBurn over history, tick = wall-clock elapsed fraction;
+ * weekly -> computeWeeklyBurn with the schedule, tick = schedule-weighted fraction (the tick is
+ *           drawn even while the 0.02 floor suppresses the burn);
+ * monthly / other -> computeWeeklyBurn with schedule null, tick = wall-clock fraction.
+ * Window length: windowDurationMins * 60, falling back to 18000 (session) or 604800 (others) when
+ * the duration is missing, 0, non-finite or above 400 days.
+ */
+export function computeWindowPace(
+  window: PaceWindowInput,
+  input: { readonly nowMs: number; readonly schedule: WorkSchedule },
+): WindowPace {
+  const used = Number.isFinite(window.usedPercent) ? Math.max(0, window.usedPercent) : 0;
+  const usedPercent = Math.min(100, used);
+  const resetsAtMs = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
+  if (!Number.isFinite(resetsAtMs)) {
+    return { usedPercent, burn: null, burnTier: null, paceFraction: null, resetsAtMs: null };
+  }
+  const nowSec = input.nowMs / 1000;
+  const resetsAtSec = resetsAtMs / 1000;
+  const windowSec = windowLengthSec(window.kind, window.windowDurationMins);
+  // Only the weekly window follows the user's work schedule; the session window is wall-clock.
+  const schedule = window.kind === "weekly" ? input.schedule : null;
+  const paceFraction = weeklyElapsedFraction({ nowSec, resetsAtSec, windowSec, schedule });
+  const result =
+    window.kind === "session"
+      ? computeSessionBurn({
+          nowSec,
+          usedPercent: used,
+          resetsAtSec,
+          windowSec,
+          samples: toSamples(window.history),
+        })
+      : computeWeeklyBurn({ nowSec, usedPercent: used, resetsAtSec, windowSec, schedule });
+  return {
+    usedPercent,
+    burn: result?.burn ?? null,
+    burnTier: result?.tier ?? null,
+    paceFraction,
+    resetsAtMs,
+  };
+}
+
+// ---- roles and labels -------------------------------------------------------------
+
+export type PaceWindowRole = "session" | "weekly" | "modelScoped" | "other";
+
+// Claude's scoped windows are labelled "Weekly · <display name>" (claudeUsageLimits.ts scopedWindow).
+const MODEL_SCOPED_PREFIX = "Weekly \u00b7 ";
+
+/**
+ * kind "session" -> "session"; kind "weekly" whose label starts with "Weekly · " ->
+ * "modelScoped"; other kind "weekly" -> "weekly"; monthly/other -> "other".
+ */
+export function paceWindowRole(window: {
+  readonly kind: PaceWindowInput["kind"];
+  readonly label: string;
+}): PaceWindowRole {
+  if (window.kind === "session") return "session";
+  if (window.kind === "weekly") {
+    return window.label.startsWith(MODEL_SCOPED_PREFIX) ? "modelScoped" : "weekly";
+  }
+  return "other";
+}
+
+/**
+ * Header label: modelScoped -> display name ("Fable"); else from windowDurationMins:
+ * < 60 -> "<m>m", < 1440 -> "<h>h" ("5h"), else "<d>d" ("7d"); no duration (or 0) -> window.label.
+ */
+export function paceWindowShortLabel(window: {
+  readonly kind: PaceWindowInput["kind"];
+  readonly label: string;
+  readonly windowDurationMins?: number | undefined;
+}): string {
+  if (paceWindowRole(window) === "modelScoped") {
+    return window.label.slice(MODEL_SCOPED_PREFIX.length);
+  }
+  const mins = window.windowDurationMins;
+  if (mins === undefined || !Number.isFinite(mins) || mins <= 0) return window.label;
+  if (mins < 60) return `${mins}m`;
+  if (mins < 1440) return `${Math.round(mins / 60)}h`;
+  return `${Math.round(mins / 1440)}d`;
+}
+
+/** Popover title: session with a known duration -> "Session · <short>" (else window.label); weekly -> "Weekly · all models"; modelScoped and other -> window.label. */
+export function paceWindowTitle(window: {
+  readonly kind: PaceWindowInput["kind"];
+  readonly label: string;
+  readonly windowDurationMins?: number | undefined;
+}): string {
+  const role = paceWindowRole(window);
+  if (role === "weekly") return "Weekly \u00b7 all models";
+  if (role === "session") {
+    const short = paceWindowShortLabel(window);
+    return short === window.label ? window.label : `Session \u00b7 ${short}`;
+  }
+  return window.label;
+}
+
+const ROLE_RANK: Readonly<Record<PaceWindowRole, number>> = {
+  session: 0,
+  weekly: 1,
+  modelScoped: 2,
+  other: 3,
+};
+
+/** Stable order: session, weekly, modelScoped, other; ties by id. */
+export function orderPaceWindows<
+  T extends { readonly id: string; readonly kind: PaceWindowInput["kind"]; readonly label: string },
+>(windows: ReadonlyArray<T>): ReadonlyArray<T> {
+  return copySorted(windows, (a, b) => {
+    const byRole = ROLE_RANK[paceWindowRole(a)] - ROLE_RANK[paceWindowRole(b)];
+    if (byRole !== 0) return byRole;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
 }
