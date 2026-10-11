@@ -620,6 +620,20 @@ describe("skipUnchangedThreadShells", () => {
     }),
   );
 
+  it.effect("sends a shell whose latest token usage changed", () =>
+    Effect.gen(function* () {
+      const A = { usedTokens: 40_000, maxTokens: 200_000, updatedAt: "2026-10-01T00:00:00.000Z" };
+      const B = { ...A, usedTokens: 41_000, updatedAt: "2026-10-01T00:00:01.000Z" };
+      const sent = yield* run([
+        updated(1, shell("a", { latestTokenUsage: A })),
+        updated(2, shell("a", { updatedAt: at(100), latestTokenUsage: A })),
+        updated(3, shell("a", { updatedAt: at(200), latestTokenUsage: B })),
+        updated(4, shell("a", { updatedAt: at(300), latestTokenUsage: B })),
+      ]);
+      expect(sent).toEqual([1, 3]);
+    }),
+  );
+
   it.effect("sends the next update after a removal", () =>
     Effect.gen(function* () {
       const sent = yield* run([
