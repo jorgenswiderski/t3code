@@ -351,6 +351,10 @@
       "types": "./src/usageLimits.ts",
       "import": "./src/usageLimits.ts"
     },
+    "./usagePacing": {
+      "types": "./src/usagePacing.ts",
+      "import": "./src/usagePacing.ts"
+    },
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",
       "import": "./src/desktopAppControl.ts"
