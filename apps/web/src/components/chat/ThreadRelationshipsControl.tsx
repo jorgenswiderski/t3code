@@ -59,6 +59,7 @@ import {
   useThreadShells,
 } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
+import { lineageGroupKey, useUiStateStore } from "../../uiStateStore";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentElapsed } from "./AgentElapsed";
@@ -127,12 +128,18 @@ export function ThreadLineageRowList(props: {
 }
 
 function ThreadLineageGroup(props: {
+  readonly threadKey: string;
+  readonly id: string;
   readonly label: string | null;
   readonly rows: ReadonlyArray<ThreadRelationshipWalkRow>;
   readonly expanded: boolean;
   readonly children: (rows: ReadonlyArray<ThreadRelationshipWalkRow>) => ReactNode;
 }) {
-  const [expanded, setExpanded] = useState(props.expanded);
+  // Only an explicit toggle is stored; absence means the group's default.
+  const expansionKey = lineageGroupKey(props.threadKey, props.id);
+  const expanded =
+    useUiStateStore((store) => store.lineageExpandedByKey[expansionKey]) ?? props.expanded;
+  const setLineageExpanded = useUiStateStore((store) => store.setLineageExpanded);
   const [visibleCount, setVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
   const { visibleRows, hiddenCount } = resolveThreadLineageWindow(props.rows, visibleCount);
   const failedCount = props.rows.filter(
@@ -145,7 +152,7 @@ function ThreadLineageGroup(props: {
         <CollapsibleSectionHeader
           variant="panel"
           expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
+          onClick={() => setLineageExpanded(expansionKey, !expanded)}
           accessory={
             failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null
           }
@@ -438,7 +445,11 @@ export function ThreadRelationshipsPanel(props: {
       }
     >
       {groups.map((group) => (
-        <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
+        <ThreadLineageGroup
+          key={`${scopedThreadKey(ref)}:${group.id}`}
+          threadKey={scopedThreadKey(ref)}
+          {...group}
+        >
           {(visibleRows) =>
             visibleRows.map(({ threadId, edge }) => {
               const node = graph.nodes.get(threadId);
@@ -585,6 +596,7 @@ export function ThreadRelationshipsPanel(props: {
                 return (
                   <ThreadLineageWorkflowRow
                     key={threadId}
+                    environmentId={props.environmentId}
                     group={workflowGroup}
                     providerInstanceId={agent.providerInstanceId}
                     provider={provider}

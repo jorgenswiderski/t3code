@@ -10,6 +10,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
+import { useUiStateStore } from "../../uiStateStore";
+
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   navigate: vi.fn(),
@@ -74,6 +76,8 @@ afterEach(async () => {
   state.workflowCommand.mockReset().mockResolvedValue({ _tag: "Success" });
   state.toast.mockClear();
   state.projection = null;
+  // Expansion choices live in a module-level store, so they must not leak across tests.
+  useUiStateStore.setState({ lineageExpandedByKey: {} });
 });
 
 it("stops the entire native workflow through its parent without changing state before acknowledgement", async () => {
@@ -473,7 +477,8 @@ it("groups and counts a workflow by its run status instead of its coordinator ch
   await act(async () =>
     renderer.root.findByProps({ type: "button", "aria-expanded": false }).props.onClick(),
   );
-  expect(renderer.root.findByProps({ "aria-label": "Expand Checkout review" })).toBeDefined();
+  // The workflow keeps the expansion the user chose while it was active.
+  expect(renderer.root.findByProps({ "aria-label": "Collapse Checkout review" })).toBeDefined();
   expect(text()).toContain("Workflow checks complete");
   expect(text()).toContain("10m");
 });
