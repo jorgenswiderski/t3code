@@ -6,9 +6,11 @@ import {
   pacingAriaLabel,
   pacingLayoutForHeaderWidth,
   pacingReservePx,
-  pacingRowGapClass,
+  pacingRowSpacing,
   PACING_POPOVER_CLOSED,
+  PACING_ROW_SPACING,
   reducePacingPopover,
+  resolvePacingHeaderPosition,
   resolvePacingPlacement,
   type PacingPopoverState,
   type PacingSettings,
@@ -227,10 +229,10 @@ describe("pacingLayoutForHeaderWidth", () => {
   it.each([
     [null, "hidden"],
     [0, "hidden"],
-    [419.9, "hidden"],
-    [420, "compact"],
-    [559.9, "compact"],
-    [560, "full"],
+    [489.9, "hidden"],
+    [490, "compact"],
+    [649.9, "compact"],
+    [650, "full"],
     [1400, "full"],
   ] as const)("%s -> %s", (width, layout) => {
     expect(pacingLayoutForHeaderWidth(width)).toBe(layout);
@@ -265,15 +267,78 @@ describe("resolvePacingPlacement", () => {
   });
 });
 
-describe("pacingRowGapClass", () => {
+describe("resolvePacingHeaderPosition", () => {
+  // 1200px header, 20px paddings, toggles' left edge at 1084px, full-layout widget.
+  const geometry = {
+    headerWidthPx: 1200,
+    headerPaddingLeftPx: 20,
+    headerPaddingRightPx: 20,
+    controlsLeftPx: 1084,
+    widgetWidthPx: 324,
+  };
+
+  it("centers when the breadcrumb and the toggles both keep their room", () => {
+    // Left edge (1200 - 324) / 2 = 438; the breadcrumb ends at 1200 - 20 - 96 - 662 = 422 = 438 - 16.
+    expect(resolvePacingHeaderPosition(geometry)).toEqual({
+      alignment: "center",
+      leftPx: 438,
+      reservePx: 662,
+    });
+  });
+
+  it("falls back right when centering would squeeze the breadcrumb", () => {
+    // A 240px collapsed-sidebar inset leaves 438 - 16 - 240 = 182px of title (< 240).
+    expect(resolvePacingHeaderPosition({ ...geometry, headerPaddingLeftPx: 240 })).toEqual({
+      alignment: "right",
+      leftPx: 1084 - 12 - 324,
+      reservePx: 1200 - 20 - 96 - (748 - 16),
+    });
+  });
+
+  it("falls back right when the centered widget would reach the toggles", () => {
+    // Centered right edge 438 + 324 = 762, within 16px of toggles starting at 770.
+    const position = resolvePacingHeaderPosition({ ...geometry, controlsLeftPx: 770 });
+    expect(position.alignment).toBe("right");
+    expect(position.leftPx).toBe(770 - 12 - 324);
+    // The breadcrumb still ends 16px before the widget.
+    expect(1200 - 20 - 96 - position.reservePx).toBe(position.leftPx - 16);
+  });
+
+  it("centers at the smallest header that leaves the title its minimum", () => {
+    // (W - 324) / 2 - 16 - 20 >= 240 -> W >= 876.
+    const at = (headerWidthPx: number) =>
+      resolvePacingHeaderPosition({
+        ...geometry,
+        headerWidthPx,
+        controlsLeftPx: headerWidthPx - 116,
+      }).alignment;
+    expect(at(876)).toBe("center");
+    expect(at(874)).toBe("right");
+  });
+
+  it.each([null, 0, 489])("is hidden for a %s px header", (headerWidthPx) => {
+    expect(resolvePacingHeaderPosition({ ...geometry, headerWidthPx })).toEqual({
+      alignment: "hidden",
+      leftPx: 0,
+      reservePx: 0,
+    });
+  });
+
+  it("never publishes a negative reserve", () => {
+    const position = resolvePacingHeaderPosition({ ...geometry, controlsLeftPx: 1300 });
+    expect(position.reservePx).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("pacingRowSpacing", () => {
   it.each([
-    [0, "gap-1.25"],
-    [1, "gap-1.25"],
-    [2, "gap-1.25"],
-    [3, "gap-px"],
-    [4, "gap-px"],
-  ])("%s rows -> %s", (count, className) => {
-    expect(pacingRowGapClass(count)).toBe(className);
+    [0, PACING_ROW_SPACING.spacious],
+    [1, PACING_ROW_SPACING.spacious],
+    [2, PACING_ROW_SPACING.spacious],
+    [3, PACING_ROW_SPACING.tight],
+    [4, PACING_ROW_SPACING.tight],
+  ])("%s rows", (count, spacing) => {
+    expect(pacingRowSpacing(count)).toBe(spacing);
   });
 });
 

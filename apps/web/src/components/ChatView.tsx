@@ -1942,6 +1942,7 @@ export default function ChatView(props: ChatViewProps) {
   const isMobileViewport = useMediaQuery("max-sm");
   const [workspaceLayoutElement, setWorkspaceLayoutElement] = useState<HTMLDivElement | null>(null);
   const threadPanelPopoverAnchorRef = useRef<HTMLElement | null>(null);
+  const panelToggleControlsRef = useRef<HTMLDivElement | null>(null);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
   // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
@@ -11257,13 +11258,22 @@ export default function ChatView(props: ChatViewProps) {
     rightPanelControlsAtRoot,
     rightPanelControlsInPanel,
   });
-  const pacingWidget = (
+  // Panel header: in flow beside the thread-details toggle. Cluster: a direct child of the chat
+  // header that centers itself, measuring the cluster's toggles so it never reaches them.
+  const panelHeaderPacingWidget = (
     <div className="pointer-events-auto flex h-full items-center">
       <PacingWidget
         usageLimits={activeProviderStatus?.usageLimits}
         headerRef={threadPanelPopoverAnchorRef}
       />
     </div>
+  );
+  const clusterPacingWidget = (
+    <PacingWidget
+      usageLimits={activeProviderStatus?.usageLimits}
+      headerRef={threadPanelPopoverAnchorRef}
+      controlsRef={panelToggleControlsRef}
+    />
   );
   const threadPanelHeaderControl = (
     <div
@@ -11272,7 +11282,7 @@ export default function ChatView(props: ChatViewProps) {
       className="absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
-      {pacingWidgetPlacement === "panel-header" ? pacingWidget : null}
+      {pacingWidgetPlacement === "panel-header" ? panelHeaderPacingWidget : null}
       <PanelLayoutControls
         {...panelToggleControlProps}
         showTerminalControl={false}
@@ -11289,7 +11299,6 @@ export default function ChatView(props: ChatViewProps) {
       )}
       data-workspace-titlebar-controls
     >
-      {pacingWidgetPlacement === "cluster" ? pacingWidget : null}
       {!shouldUsePlanSidebarSheet ? (
         <span
           aria-hidden={!rightPanelOpen}
@@ -11312,7 +11321,9 @@ export default function ChatView(props: ChatViewProps) {
           />
         </span>
       ) : null}
-      <div className="pointer-events-auto flex h-full items-center">{panelToggleControls}</div>
+      <div ref={panelToggleControlsRef} className="pointer-events-auto flex h-full items-center">
+        {panelToggleControls}
+      </div>
     </div>
   );
   const workspaceFileDropHandlers = makeWorkspaceFileDropHandlers({
@@ -11381,6 +11392,7 @@ export default function ChatView(props: ChatViewProps) {
             />
           ) : null}
           {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
+          {pacingWidgetPlacement === "cluster" ? clusterPacingWidget : null}
           {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
           <ChatHeader
             activeThreadEnvironmentId={activeThread.environmentId}
