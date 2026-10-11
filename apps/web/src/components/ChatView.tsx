@@ -502,6 +502,7 @@ import {
 } from "./chat/ContextWindowMeter.logic";
 import {
   deriveLatestContextWindowSnapshot,
+  contextWindowLiveReport,
   latestProviderTurnTokenUsage,
 } from "../lib/contextWindow";
 import {
@@ -1723,15 +1724,13 @@ export default function ChatView(props: ChatViewProps) {
   });
   const threadDetailLoading = threadSyncPhase === "loading";
   // Latest provider-reported context usage (#8144): the newest report wins;
-  // stale turns keep the meter alive between turns. The windowed detail only
-  // loads recent provider turns, so fall back to the shell's newest usage (the
-  // same value the sidebar ring shows) when none of them reported any.
-  const shellLatestTokenUsage = serverThread?.latestTokenUsage ?? null;
-  const activeThreadLiveTokenUsage = useMemo(
-    () =>
-      latestProviderTurnTokenUsage(serverProjection?.providerTurns ?? []) ?? shellLatestTokenUsage,
-    [serverProjection?.providerTurns, shellLatestTokenUsage],
+  // stale turns keep the meter alive between turns. Only the windowed detail's
+  // turns; the shell's report is the lowest-ranked fallback (activeContextWindow).
+  const activeThreadWindowTokenUsage = useMemo(
+    () => latestProviderTurnTokenUsage(serverProjection?.providerTurns ?? []),
+    [serverProjection?.providerTurns],
   );
+  const shellLatestTokenUsage = serverThread?.latestTokenUsage ?? null;
   const serverVisibleTurnItems = useThreadVisibleTurnItems(routeThreadDetailRef);
   const serverThreadHistory = useThreadHistory(routeThreadDetailRef);
   const threadHistoryControls = useMemo<MessagesTimelineHistoryControls | undefined>(() => {
@@ -3625,16 +3624,38 @@ export default function ChatView(props: ChatViewProps) {
     isConnecting ||
     isCompacting ||
     runlessWorkStartedAt !== null;
+  const activeProviderThreadContext = useMemo(
+    () =>
+      serverProjection?.providerThreads.find(
+        (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
+      ),
+    [serverProjection],
+  );
   const activeContextWindow = useMemo(
     () =>
       deriveLatestContextWindowSnapshot(
         serverVisibleTurnItems ?? [],
-        activeThreadLiveTokenUsage,
-        serverProjection?.providerThreads.find(
-          (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
-        ),
+        activeThreadWindowTokenUsage,
+        activeProviderThreadContext,
+        shellLatestTokenUsage,
       ),
-    [activeThreadLiveTokenUsage, serverVisibleTurnItems, serverProjection],
+    [
+      activeThreadWindowTokenUsage,
+      serverVisibleTurnItems,
+      activeProviderThreadContext,
+      shellLatestTokenUsage,
+    ],
+  );
+  // The report activeContextWindow was built from (null for contextUsage or a
+  // compaction item), so its cache fields describe the same reading.
+  const activeThreadLiveTokenUsage = useMemo(
+    () =>
+      contextWindowLiveReport(
+        activeThreadWindowTokenUsage,
+        activeProviderThreadContext,
+        shellLatestTokenUsage,
+      ),
+    [activeThreadWindowTokenUsage, activeProviderThreadContext, shellLatestTokenUsage],
   );
   const pendingBackgroundTasks = useMemo(() => {
     if (serverProjection === null || serverProjection === undefined) {

@@ -17,11 +17,8 @@ import {
   PACING_RESERVE_CSS_VAR,
   resolvePacingHeaderPosition,
   type PacingHeaderPosition,
+  type PacingLayout,
 } from "./pacingRows.logic";
-
-function samePosition(a: PacingHeaderPosition | null, b: PacingHeaderPosition): boolean {
-  return a?.alignment === b.alignment && a.leftPx === b.leftPx && a.reservePx === b.reservePx;
-}
 
 /**
  * Chat header usage pacing rows for the thread's provider. `headerRef` is `<header
@@ -30,7 +27,9 @@ function samePosition(a: PacingHeaderPosition | null, b: PacingHeaderPosition): 
  *
  * With `controlsRef` (the header's right-side toggles) the widget must be a direct child of the
  * header and positions itself there: centered, or against the toggles when centering does not fit
- * (resolvePacingHeaderPosition). Without it, it sits in flow at the right.
+ * (resolvePacingHeaderPosition), or right-aligned if the toggles are not mounted. Without it, it
+ * sits in flow at the right. Pixel offsets go straight to the DOM, so a header width animation
+ * re-renders nothing unless the layout or alignment changes.
  */
 export const PacingWidget = memo(function PacingWidget(props: {
   readonly usageLimits: ServerProviderUsageLimits | undefined;
@@ -68,21 +67,25 @@ export const PacingWidget = memo(function PacingWidget(props: {
     ],
   );
 
-  const [headerWidth, setHeaderWidth] = useState<number | null>(null);
+  // Only the derived layout is state: an unchanged layout bails out of rendering.
+  const [layout, setLayout] = useState<PacingLayout>("hidden");
   useEffect(() => {
     const header = headerRef.current;
     if (!header) return;
     return observeResize(header, (entries) => {
       const entry = entries.at(-1);
-      if (entry) setHeaderWidth(entry.borderBoxSize?.[0]?.inlineSize ?? header.offsetWidth);
+      if (!entry) return;
+      setLayout(
+        pacingLayoutForHeaderWidth(entry.borderBoxSize?.[0]?.inlineSize ?? header.offsetWidth),
+      );
     });
   }, [headerRef]);
 
-  const layout = pacingLayoutForHeaderWidth(headerWidth);
   const rendered = layout !== "hidden" && model.headerRows.length > 0;
+  const positioned = controlsRef !== undefined;
 
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState<PacingHeaderPosition | null>(null);
+  const [alignment, setAlignment] = useState<PacingHeaderPosition["alignment"] | null>(null);
   // Writes to <header>, which React does not own here, so it must clean up on unmount/hide.
   // A layout effect, so a positioned widget is placed before its first paint.
   useLayoutEffect(() => {
@@ -93,49 +96,59 @@ export const PacingWidget = memo(function PacingWidget(props: {
     const measure = () => {
       const widgetWidthPx = root.getBoundingClientRect().width;
       let reservePx = pacingReservePx(widgetWidthPx);
-      if (controls !== null) {
+      if (positioned) {
         const headerRect = header.getBoundingClientRect();
         const style = getComputedStyle(header);
-        const next = resolvePacingHeaderPosition({
-          headerWidthPx: headerRect.width,
-          headerPaddingLeftPx: Number.parseFloat(style.paddingLeft) || 0,
-          headerPaddingRightPx: Number.parseFloat(style.paddingRight) || 0,
-          controlsLeftPx: controls.getBoundingClientRect().left - headerRect.left,
-          widgetWidthPx,
-        });
-        setPosition((previous) => (samePosition(previous, next) ? previous : next));
+        const headerPaddingRightPx = Number.parseFloat(style.paddingRight) || 0;
+        const next: PacingHeaderPosition =
+          controls === null
+            ? {
+                alignment: "right",
+                leftPx: Math.round(headerRect.width - headerPaddingRightPx - widgetWidthPx),
+                reservePx,
+              }
+            : resolvePacingHeaderPosition({
+                headerWidthPx: headerRect.width,
+                headerPaddingLeftPx: Number.parseFloat(style.paddingLeft) || 0,
+                headerPaddingRightPx,
+                controlsLeftPx: controls.getBoundingClientRect().left - headerRect.left,
+                widgetWidthPx,
+              });
+        root.style.left = `${next.leftPx}px`;
         reservePx = next.reservePx;
+        setAlignment(next.alignment);
       }
       header.style.setProperty(PACING_RESERVE_CSS_VAR, `${reservePx}px`);
     };
     measure();
     // Header padding (collapsed-sidebar inset) and the toggles' width also move the widget.
-    const stop = observeResize(controls === null ? [root] : [header, root, controls], measure);
+    const stop = observeResize(
+      positioned ? [header, root, ...(controls === null ? [] : [controls])] : [root],
+      measure,
+    );
     return () => {
       stop();
       header.style.removeProperty(PACING_RESERVE_CSS_VAR);
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Showing or relaying out the widget replaces the root.
-  }, [headerRef, controlsRef, rendered, layout]);
+  }, [headerRef, controlsRef, positioned, rendered, layout]);
 
   if (!rendered) return null;
 
-  const positioned = controlsRef !== undefined;
   const spacing = pacingRowSpacing(model.headerRows.length);
   return (
     <div
       ref={rootRef}
       data-pacing-widget
-      data-pacing-alignment={positioned ? (position?.alignment ?? "measuring") : "right"}
+      data-pacing-alignment={positioned ? (alignment ?? "measuring") : "right"}
       className={
         positioned
           ? cn(
               "absolute top-0 flex h-full w-max items-center [-webkit-app-region:no-drag]",
-              (position === null || position.alignment === "hidden") && "invisible",
+              (alignment === null || alignment === "hidden") && "invisible",
             )
           : "mr-2"
       }
-      style={positioned ? { left: position?.leftPx ?? 0 } : undefined}
     >
       <PacingPopover
         sections={model.popoverSections}

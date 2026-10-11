@@ -6,9 +6,7 @@ import {
   pacingAriaLabel,
   pacingLayoutForHeaderWidth,
   pacingReservePx,
-  pacingRowSpacing,
   PACING_POPOVER_CLOSED,
-  PACING_ROW_SPACING,
   reducePacingPopover,
   resolvePacingHeaderPosition,
   resolvePacingPlacement,
@@ -327,18 +325,6 @@ describe("resolvePacingHeaderPosition", () => {
   it("never publishes a negative reserve", () => {
     const position = resolvePacingHeaderPosition({ ...geometry, controlsLeftPx: 1300 });
     expect(position.reservePx).toBeGreaterThanOrEqual(0);
-  });
-});
-
-describe("pacingRowSpacing", () => {
-  it.each([
-    [0, PACING_ROW_SPACING.spacious],
-    [1, PACING_ROW_SPACING.spacious],
-    [2, PACING_ROW_SPACING.spacious],
-    [3, PACING_ROW_SPACING.tight],
-    [4, PACING_ROW_SPACING.tight],
-  ])("%s rows", (count, spacing) => {
-    expect(pacingRowSpacing(count)).toBe(spacing);
   });
 });
 

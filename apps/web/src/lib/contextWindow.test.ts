@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import {
+  contextWindowLiveReport,
   deriveLatestContextWindowSnapshot,
   formatContextWindowTokens,
   latestProviderTurnTokenUsage,
@@ -83,6 +84,47 @@ describe("live provider-turn usage (#8144)", () => {
     });
     expect(snapshot?.maxTokens).toBeNull();
     expect(snapshot?.usedPercentage).toBeNull();
+  });
+});
+
+describe("shell usage fallback", () => {
+  const windowReport = {
+    usedTokens: 50_000,
+    maxTokens: 200_000,
+    updatedAt: "2026-08-27T02:00:00.000Z",
+  };
+  const shellReport = {
+    usedTokens: 30_000,
+    maxTokens: 200_000,
+    promptCacheTtlMs: 300_000,
+    updatedAt: "2026-08-27T01:00:00.000Z",
+  };
+  // Refreshed after a model change on the same provider thread: a bigger window.
+  const providerThread = {
+    contextUsage: { usedTokens: 30_000, maxTokens: 1_000_000 },
+    updatedAt: DateTime.makeUnsafe("2026-08-27T03:00:00.000Z"),
+  };
+
+  it("ranks the windowed report first", () => {
+    expect(contextWindowLiveReport(windowReport, providerThread, shellReport)).toBe(windowReport);
+    expect(
+      deriveLatestContextWindowSnapshot([], windowReport, providerThread, shellReport)?.usedTokens,
+    ).toBe(50_000);
+  });
+
+  it("ranks the provider thread's contextUsage above the shell report", () => {
+    expect(contextWindowLiveReport(null, providerThread, shellReport)).toBeNull();
+    expect(
+      deriveLatestContextWindowSnapshot([], null, providerThread, shellReport)?.maxTokens,
+    ).toBe(1_000_000);
+  });
+
+  it("falls back to the shell report when nothing newer is loaded", () => {
+    expect(contextWindowLiveReport(null, null, shellReport)).toBe(shellReport);
+    expect(deriveLatestContextWindowSnapshot([], null, null, shellReport)).toMatchObject({
+      usedTokens: 30_000,
+      maxTokens: 200_000,
+    });
   });
 });
 

@@ -40,15 +40,35 @@ export function latestProviderTurnTokenUsage(
   return latest;
 }
 
-/** Prefers the provider's live usage report (#8144); falls back to the last compaction item. */
+type ProviderThreadContext = Pick<OrchestrationV2ProviderThread, "contextUsage" | "updatedAt">;
+
+/**
+ * The live report the context window is built from, or null when it comes from the provider
+ * thread's contextUsage or a compaction item. Ranking: the windowed turns' report, then
+ * contextUsage, then the shell's newest report (`shellUsage`, which outlives the detail window).
+ * Cache fields shown beside the window must come from this same report.
+ */
+export function contextWindowLiveReport(
+  liveUsage: OrchestrationV2ProviderTurnTokenUsage | null | undefined,
+  providerThread: ProviderThreadContext | null | undefined,
+  shellUsage: OrchestrationV2ProviderTurnTokenUsage | null | undefined,
+): OrchestrationV2ProviderTurnTokenUsage | null {
+  if (liveUsage != null) return liveUsage;
+  if (providerThread?.contextUsage != null && providerThread.updatedAt !== undefined) return null;
+  return shellUsage ?? null;
+}
+
+/** Ranked as contextWindowLiveReport; falls back to the last compaction item. */
 export function deriveLatestContextWindowSnapshot(
   entries: ReadonlyArray<{
     readonly item: OrchestrationV2TurnItem;
   }>,
-  liveUsage?: OrchestrationV2ProviderTurnTokenUsage | null,
-  providerThread?: Pick<OrchestrationV2ProviderThread, "contextUsage" | "updatedAt"> | null,
+  windowUsage?: OrchestrationV2ProviderTurnTokenUsage | null,
+  providerThread?: ProviderThreadContext | null,
+  shellUsage?: OrchestrationV2ProviderTurnTokenUsage | null,
 ): ContextWindowSnapshot | null {
-  if (liveUsage != null) {
+  const liveUsage = contextWindowLiveReport(windowUsage, providerThread, shellUsage);
+  if (liveUsage !== null) {
     const usedTokens = Math.max(0, liveUsage.usedTokens);
     const maxTokens = liveUsage.maxTokens ?? null;
     const usedPercentage =
