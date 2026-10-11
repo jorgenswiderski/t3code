@@ -25,6 +25,7 @@ import type {
   ChatFileAttachment,
   EnvironmentId,
   ModelSelection,
+  OrchestrationV2ProviderTurnTokenUsage,
   ProjectId,
   PullRequestListInput,
   PreviewAnnotationPayload,
@@ -38,6 +39,7 @@ import type {
   ServerProvider,
   ThreadId,
   SnapShotSource,
+  TimestampFormat,
 } from "@t3tools/contracts";
 import {
   AuthOrchestrationOperateScope,
@@ -1357,6 +1359,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   compact: boolean;
   canOperateThread: boolean;
   activeContextWindow: ContextWindowSnapshot | null;
+  activeThreadLiveTokenUsage: OrchestrationV2ProviderTurnTokenUsage | null;
+  nextModelSelection: ModelSelection;
+  timestampFormat: TimestampFormat;
   reserveContextWindowMeter: boolean;
   activeThreadModelDisplayName: string | null;
   isPreparingWorktree: boolean;
@@ -1398,6 +1403,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
       {props.activeContextWindow ? (
         <ContextWindowMeter
           usage={props.activeContextWindow}
+          liveUsage={props.activeThreadLiveTokenUsage}
+          nextModelSelection={props.nextModelSelection}
+          timestampFormat={props.timestampFormat}
           modelDisplayName={props.activeThreadModelDisplayName}
           onCompact={props.onCompactContext}
           compactDisabled={props.compactDisabled}
@@ -1610,6 +1618,7 @@ export interface ChatComposerProps {
 
   // Context window
   activeContextWindow: ContextWindowSnapshot | null;
+  activeThreadLiveTokenUsage: OrchestrationV2ProviderTurnTokenUsage | null;
   compactThreadUnavailable: boolean;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
@@ -1757,6 +1766,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadModelSelection,
     reportedModelSelection,
     activeContextWindow,
+    activeThreadLiveTokenUsage,
     compactThreadUnavailable,
     compactDisabled,
     compactDisabledReason,
@@ -7668,6 +7678,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     activeContextWindow={
                       settings.composerContextRingEnabled ? activeContextWindow : null
                     }
+                    activeThreadLiveTokenUsage={activeThreadLiveTokenUsage}
+                    nextModelSelection={selectedModelSelection}
+                    timestampFormat={settings.timestampFormat}
                     reserveContextWindowMeter={reserveContextWindowMeter}
                     activeThreadModelDisplayName={activeThreadModelDisplayName}
                     pendingAction={pendingPrimaryAction}

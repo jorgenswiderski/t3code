@@ -66,7 +66,7 @@ export function resolveThreadContextGlyph(
 export function composerGlyphUsage(
   snapshot: {
     readonly usedTokens: number;
-    readonly maxTokens: number | null;
+    readonly maxTokens?: number | null | undefined;
     readonly updatedAt: string;
   },
   live:
@@ -79,7 +79,7 @@ export function composerGlyphUsage(
 ): ThreadContextUsage {
   return {
     usedTokens: snapshot.usedTokens,
-    maxTokens: snapshot.maxTokens,
+    maxTokens: snapshot.maxTokens ?? null,
     updatedAt: snapshot.updatedAt,
     ...(live?.promptCacheTtlMs !== undefined ? { promptCacheTtlMs: live.promptCacheTtlMs } : {}),
     ...(live?.requestIdentity !== undefined ? { requestIdentity: live.requestIdentity } : {}),
