@@ -1,6 +1,7 @@
 import type {
   ProviderUsageLimitsUpdate,
   ServerProviderUsageLimits,
+  ServerProviderUsageSample,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 
@@ -131,4 +132,104 @@ export function resolveUsageLimitsAfterProbe(input: {
     return published;
   }
   return probed;
+}
+
+const USAGE_HISTORY_MAX_SAMPLES = 400;
+const USAGE_HISTORY_HEARTBEAT_MS = 60_000;
+/** The probe reports reset times as ISO strings, events as whole epoch seconds. */
+const USAGE_HISTORY_RESET_TOLERANCE_MS = 60_000;
+
+interface UsageHistoryEntry {
+  readonly resetsAt: string | undefined;
+  readonly samples: ReadonlyArray<ServerProviderUsageSample>;
+}
+/** Samples of each session window's current reset period, keyed by window id. */
+export type UsageHistory = ReadonlyMap<string, UsageHistoryEntry>;
+export const EMPTY_USAGE_HISTORY: UsageHistory = new Map();
+
+function sameWindowReset(a: string | undefined, b: string | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  const left = Date.parse(a);
+  const right = Date.parse(b);
+  if (Number.isNaN(left) || Number.isNaN(right)) return a === b;
+  return Math.abs(left - right) <= USAGE_HISTORY_RESET_TOLERANCE_MS;
+}
+
+/**
+ * Add one sample per session window to `history`, from the merged `limits`
+ * that were just published. A runtime update passes the ids it carried; a
+ * probe passes `undefined`, a full read that also drops lists of session
+ * windows `limits` no longer reports. Returns `history` itself when nothing
+ * changed, so callers can skip a publish. `applyUsageLimitsUpdate` stays
+ * history-agnostic: `usageWindowEquals` deliberately ignores `history`, and
+ * callers re-attach it with `attachUsageHistory`.
+ */
+export function recordUsageSamples(input: {
+  readonly history: UsageHistory;
+  readonly limits: ServerProviderUsageLimits | undefined;
+  readonly windowIds: ReadonlySet<string> | undefined;
+  readonly at: string;
+}): UsageHistory {
+  const { history, limits, windowIds, at } = input;
+  const sessionWindows = (limits?.windows ?? []).filter((window) => window.kind === "session");
+  let next: Map<string, UsageHistoryEntry> | undefined;
+  const edit = () => (next ??= new Map(history));
+
+  if (windowIds === undefined) {
+    const present = new Set(sessionWindows.map((window) => window.id));
+    for (const id of history.keys()) {
+      if (!present.has(id)) edit().delete(id);
+    }
+  }
+  const atMs = Date.parse(at);
+  if (Number.isNaN(atMs)) return next ?? history;
+
+  for (const window of sessionWindows) {
+    if (windowIds !== undefined && !windowIds.has(window.id)) continue;
+    const previous = history.get(window.id);
+    const entry =
+      previous !== undefined && sameWindowReset(previous.resetsAt, window.resetsAt)
+        ? previous
+        : undefined;
+    const last = entry?.samples.at(-1);
+    const lastMs = last === undefined ? Number.NEGATIVE_INFINITY : Date.parse(last.at);
+    if (
+      last !== undefined &&
+      last.usedPercent === window.usedPercent &&
+      atMs - lastMs < USAGE_HISTORY_HEARTBEAT_MS
+    ) {
+      continue;
+    }
+    const sample = {
+      at: last !== undefined && lastMs > atMs ? last.at : at,
+      usedPercent: window.usedPercent,
+    };
+    edit().set(window.id, {
+      resetsAt: window.resetsAt,
+      samples: [...(entry?.samples ?? []), sample].slice(-USAGE_HISTORY_MAX_SAMPLES),
+    });
+  }
+  return next ?? history;
+}
+
+/**
+ * Publish `history` on the session windows of `limits`, and strip it from any
+ * window that should not carry it. Returns `limits` itself when no window
+ * changes.
+ */
+export function attachUsageHistory(
+  limits: ServerProviderUsageLimits | undefined,
+  history: UsageHistory,
+): ServerProviderUsageLimits | undefined {
+  if (limits === undefined) return limits;
+  let changed = false;
+  const windows = limits.windows.map((window) => {
+    const samples = window.kind === "session" ? history.get(window.id)?.samples : undefined;
+    const wanted = samples !== undefined && samples.length > 0 ? samples : undefined;
+    if (window.history === wanted) return window;
+    changed = true;
+    const { history: _stale, ...rest } = window;
+    return wanted === undefined ? rest : { ...rest, history: wanted };
+  });
+  return changed ? { ...limits, windows } : limits;
 }

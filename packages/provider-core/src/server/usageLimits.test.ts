@@ -1,6 +1,15 @@
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./usageLimits.ts";
+import type { ServerProviderUsageLimits, ServerProviderUsageWindow } from "@t3tools/contracts";
+
+import {
+  EMPTY_USAGE_HISTORY,
+  applyUsageLimitsUpdate,
+  attachUsageHistory,
+  recordUsageSamples,
+  resolveUsageLimitsAfterProbe,
+} from "./usageLimits.ts";
 
 const checkedAt = "2026-09-03T12:00:00.000Z";
 const session = {
@@ -85,5 +94,237 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(resolveUsageLimitsAfterProbe({ published, probed: failed })).toBe(published);
     expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
     expect(resolveUsageLimitsAfterProbe({ published: undefined, probed: failed })).toBe(failed);
+  });
+});
+
+describe("usage history", () => {
+  const R1 = "2026-09-03T14:00:00.000Z";
+  const T0 = "2026-09-03T12:00:00.000Z";
+  const at = (seconds: number) =>
+    DateTime.formatIso(DateTime.makeUnsafe(Date.parse(T0) + seconds * 1000));
+  const sessionWindow = (
+    usedPercent: number,
+    resetsAt: string | null = R1,
+    id = "five_hour",
+  ): ServerProviderUsageWindow => ({
+    id,
+    kind: "session",
+    label: id,
+    usedPercent,
+    windowDurationMins: 300,
+    ...(resetsAt === null ? {} : { resetsAt }),
+  });
+  const limitsOf = (...windows: ServerProviderUsageWindow[]): ServerProviderUsageLimits => ({
+    checkedAt: T0,
+    windows,
+  });
+  const ids = (...values: string[]) => new Set(values);
+  const record = (
+    history: ReturnType<typeof recordUsageSamples>,
+    window: ServerProviderUsageWindow,
+    when: string,
+  ) =>
+    recordUsageSamples({
+      history,
+      limits: limitsOf(window),
+      windowIds: ids(window.id),
+      at: when,
+    });
+  const samplesOf = (history: ReturnType<typeof recordUsageSamples>, id = "five_hour") =>
+    history.get(id)?.samples;
+
+  describe("recordUsageSamples", () => {
+    it("starts a list for a session window without touching the input history", () => {
+      const next = record(EMPTY_USAGE_HISTORY, sessionWindow(40), T0);
+      expect(next.get("five_hour")).toEqual({
+        resetsAt: R1,
+        samples: [{ at: T0, usedPercent: 40 }],
+      });
+      expect(EMPTY_USAGE_HISTORY.size).toBe(0);
+    });
+
+    it("skips an unchanged value inside the heartbeat and appends it from 60 s on", () => {
+      const first = record(EMPTY_USAGE_HISTORY, sessionWindow(40), T0);
+      expect(record(first, sessionWindow(40), at(30))).toBe(first);
+      expect(record(first, sessionWindow(40), at(59.999))).toBe(first);
+      expect(samplesOf(record(first, sessionWindow(40), at(60)))).toHaveLength(2);
+    });
+
+    it("appends a changed value regardless of the heartbeat", () => {
+      const first = record(EMPTY_USAGE_HISTORY, sessionWindow(40), T0);
+      expect(samplesOf(record(first, sessionWindow(41), at(5)))).toEqual([
+        { at: T0, usedPercent: 40 },
+        { at: at(5), usedPercent: 41 },
+      ]);
+    });
+
+    it("restarts the list when the reset moves to a new window", () => {
+      const first = record(EMPTY_USAGE_HISTORY, sessionWindow(40), T0);
+      const next = record(first, sessionWindow(41, "2026-09-03T19:00:00.000Z"), at(5));
+      expect(next.get("five_hour")).toEqual({
+        resetsAt: "2026-09-03T19:00:00.000Z",
+        samples: [{ at: at(5), usedPercent: 41 }],
+      });
+    });
+
+    it.each([
+      ["2026-09-03T14:00:00.500Z", 2],
+      ["2026-09-03T14:00:59.000Z", 2],
+      ["2026-09-03T14:01:01.000Z", 1],
+    ])("treats a reset of %s as %i sample(s) of history", (resetsAt, length) => {
+      const first = record(EMPTY_USAGE_HISTORY, sessionWindow(40), T0);
+      expect(samplesOf(record(first, sessionWindow(41, resetsAt), at(5)))).toHaveLength(length);
+    });
+
+    it("records session windows only", () => {
+      const next = recordUsageSamples({
+        history: EMPTY_USAGE_HISTORY,
+        limits: limitsOf(sessionWindow(40), weekly),
+        windowIds: ids("five_hour", "seven_day"),
+        at: T0,
+      });
+      expect([...next.keys()]).toEqual(["five_hour"]);
+    });
+
+    it("records only the carried ids and leaves other entries alone", () => {
+      const both = limitsOf(sessionWindow(40), sessionWindow(10, R1, "other_session"));
+      const seeded = recordUsageSamples({
+        history: EMPTY_USAGE_HISTORY,
+        limits: both,
+        windowIds: ids("five_hour", "other_session"),
+        at: T0,
+      });
+      const next = recordUsageSamples({
+        history: seeded,
+        limits: limitsOf(sessionWindow(45), sessionWindow(11, R1, "other_session")),
+        windowIds: ids("five_hour"),
+        at: at(10),
+      });
+      expect(samplesOf(next)).toHaveLength(2);
+      expect(next.get("other_session")).toBe(seeded.get("other_session"));
+    });
+
+    it("drops lists of windows a full read no longer reports", () => {
+      const seeded = recordUsageSamples({
+        history: EMPTY_USAGE_HISTORY,
+        limits: limitsOf(sessionWindow(40), sessionWindow(10, R1, "gone")),
+        windowIds: ids("five_hour", "gone"),
+        at: T0,
+      });
+      const next = recordUsageSamples({
+        history: seeded,
+        limits: limitsOf(sessionWindow(42)),
+        windowIds: undefined,
+        at: at(10),
+      });
+      expect([...next.keys()]).toEqual(["five_hour"]);
+      expect(samplesOf(next)).toHaveLength(2);
+      expect(
+        recordUsageSamples({
+          history: seeded,
+          limits: undefined,
+          windowIds: undefined,
+          at: at(10),
+        }).size,
+      ).toBe(0);
+    });
+
+    it("keeps the newest 400 samples", () => {
+      let history = EMPTY_USAGE_HISTORY;
+      for (let index = 0; index < 405; index += 1) {
+        history = record(history, sessionWindow(10 + (index % 2)), at(index * 61));
+      }
+      const samples = samplesOf(history)!;
+      expect(samples).toHaveLength(400);
+      expect(samples[0]?.at).toBe(at(5 * 61));
+      expect(samples.at(-1)?.at).toBe(at(404 * 61));
+    });
+
+    it("stamps a late sample with the last sample's time so the list stays ascending", () => {
+      const first = record(EMPTY_USAGE_HISTORY, sessionWindow(40), T0);
+      expect(samplesOf(record(first, sessionWindow(41), at(-10)))).toEqual([
+        { at: T0, usedPercent: 40 },
+        { at: T0, usedPercent: 41 },
+      ]);
+    });
+
+    it("ignores an unparseable time but still prunes on a full read", () => {
+      const first = record(EMPTY_USAGE_HISTORY, sessionWindow(40), T0);
+      expect(record(first, sessionWindow(41), "not a date")).toBe(first);
+      const pruned = recordUsageSamples({
+        history: first,
+        limits: limitsOf(weekly),
+        windowIds: undefined,
+        at: "not a date",
+      });
+      expect(pruned.size).toBe(0);
+    });
+
+    it("treats a missing reset as one window until a reset appears", () => {
+      const first = record(EMPTY_USAGE_HISTORY, sessionWindow(40, null), T0);
+      const second = record(first, sessionWindow(41, null), at(5));
+      expect(samplesOf(second)).toHaveLength(2);
+      expect(samplesOf(record(second, sessionWindow(42, R1), at(10)))).toHaveLength(1);
+    });
+
+    it("returns the same history for an empty id set", () => {
+      const first = record(EMPTY_USAGE_HISTORY, sessionWindow(40), T0);
+      expect(
+        recordUsageSamples({
+          history: first,
+          limits: limitsOf(sessionWindow(50)),
+          windowIds: new Set(),
+          at: at(10),
+        }),
+      ).toBe(first);
+    });
+  });
+
+  describe("attachUsageHistory", () => {
+    const seeded = record(EMPTY_USAGE_HISTORY, sessionWindow(40), T0);
+    const samples = samplesOf(seeded)!;
+
+    it("attaches the entry's samples to session windows only", () => {
+      const limits = limitsOf(sessionWindow(40), weekly);
+      const next = attachUsageHistory(limits, seeded)!;
+      expect(next.windows[0]?.history).toBe(samples);
+      expect(next.windows[1]).toBe(weekly);
+      expect("history" in next.windows[1]!).toBe(false);
+    });
+
+    it("returns the same object when nothing changes", () => {
+      const noEntry = limitsOf(sessionWindow(40));
+      expect(attachUsageHistory(noEntry, EMPTY_USAGE_HISTORY)).toBe(noEntry);
+      const attached = limitsOf({ ...sessionWindow(40), history: samples });
+      expect(attachUsageHistory(attached, seeded)).toBe(attached);
+    });
+
+    it("removes stale history from session and non-session windows", () => {
+      const stale = [{ at: T0, usedPercent: 1 }];
+      const next = attachUsageHistory(
+        limitsOf({ ...sessionWindow(40), history: stale }, { ...weekly, history: stale }),
+        EMPTY_USAGE_HISTORY,
+      )!;
+      expect(next.windows.some((window) => "history" in window)).toBe(false);
+    });
+
+    it("preserves the other limits fields", () => {
+      const limits: ServerProviderUsageLimits = {
+        ...limitsOf(sessionWindow(40)),
+        credentialFingerprint: "fp",
+        resetCredits: { availableCount: 1 },
+        unavailable: { reason: "probeFailed" },
+      };
+      const next = attachUsageHistory(limits, seeded)!;
+      expect(next).toMatchObject({
+        credentialFingerprint: "fp",
+        resetCredits: { availableCount: 1 },
+        unavailable: { reason: "probeFailed" },
+      });
+    });
+
+    it("passes undefined through", () => {
+      expect(attachUsageHistory(undefined, seeded)).toBeUndefined();
+    });
   });
 });
