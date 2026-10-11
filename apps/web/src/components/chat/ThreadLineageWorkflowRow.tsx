@@ -2,15 +2,21 @@ import type {
   SubagentWorkflowGroup,
   RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import type { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ServerProvider,
+} from "@t3tools/contracts";
 import { ChevronDownIcon, LoaderCircleIcon, SquareIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { AgentElapsed } from "./AgentElapsed";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
 import { cn } from "../../lib/utils";
+import { lineageWorkflowKey, lineageWorkflowPhaseKey, useUiStateStore } from "../../uiStateStore";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -116,7 +122,78 @@ function WorkflowMemberRow({
   );
 }
 
+/**
+ * One phase's collapsible member list. The running phase opens itself until the
+ * user picks a side, so only an explicit choice is stored under `phaseKey`.
+ */
+function WorkflowPhaseSection({
+  phaseKey,
+  phase,
+  providerInstanceId,
+  provider,
+  providers,
+  driver,
+  onOpen,
+  isThreadAvailable,
+}: {
+  phaseKey: string;
+  phase: SubagentWorkflowGroup["phases"][number];
+  providerInstanceId: ProviderInstanceId;
+  provider: ServerProvider | undefined;
+  providers: ReadonlyArray<ServerProvider> | undefined;
+  driver: ProviderDriverKind | undefined;
+  onOpen: (threadId: string) => void;
+  isThreadAvailable: (threadId: string) => boolean;
+}) {
+  const open =
+    useUiStateStore((store) => store.lineageExpandedByKey[phaseKey]) ?? phase.state === "running";
+  const setLineageExpanded = useUiStateStore((store) => store.setLineageExpanded);
+  const status = phaseStatusLabel(phase);
+  return (
+    <li>
+      <CollapsibleSectionHeader
+        variant="panel"
+        tone={phase.state === "running" ? "emphasized" : "muted"}
+        expanded={open}
+        aria-label={`${open ? "Collapse" : "Expand"} ${phase.title} phase, ${status}`}
+        onClick={() => setLineageExpanded(phaseKey, !open)}
+        accessory={
+          <>
+            {status === "failed" ? <SectionHeaderStatus>Failed</SectionHeaderStatus> : null}
+            <span className="shrink-0 text-2xs font-normal tabular-nums">
+              {phase.settledCount}/{phase.members.length}{" "}
+              {phase.members.length === 1 ? "agent" : "agents"}
+            </span>
+            <span className="shrink-0 text-2xs font-normal tabular-nums empty:hidden">
+              <AgentElapsed agent={phaseElapsed(phase)} />
+            </span>
+          </>
+        }
+      >
+        {phase.title}
+      </CollapsibleSectionHeader>
+      {open ? (
+        <ul className="m-0 list-none p-0">
+          {phase.members.map((member) => (
+            <WorkflowMemberRow
+              key={member.id}
+              member={member}
+              providerInstanceId={providerInstanceId}
+              provider={provider}
+              providers={providers}
+              driver={driver}
+              onOpen={onOpen}
+              isThreadAvailable={isThreadAvailable}
+            />
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
 export function ThreadLineageWorkflowRow({
+  environmentId,
   group,
   header,
   providerInstanceId,
@@ -129,6 +206,7 @@ export function ThreadLineageWorkflowRow({
   stopping,
   stopDisabled,
 }: {
+  readonly environmentId: EnvironmentId;
   readonly group: SubagentWorkflowGroup;
   readonly header: ReactNode;
   readonly providerInstanceId: ProviderInstanceId;
@@ -141,9 +219,11 @@ export function ThreadLineageWorkflowRow({
   readonly stopping: boolean;
   readonly stopDisabled: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  // The running phase opens itself until the user picks a side for it.
-  const [phaseOpen, setPhaseOpen] = useState<ReadonlyMap<number, boolean>>(() => new Map());
+  // Keyed by the workflow itself so the choice outlives this panel remounting
+  // for another thread.
+  const workflowKey = lineageWorkflowKey(environmentId, group.workflow.id);
+  const expanded = useUiStateStore((store) => store.lineageExpandedByKey[workflowKey]) ?? false;
+  const setLineageExpanded = useUiStateStore((store) => store.setLineageExpanded);
   const label = group.workflow.workflowName ?? group.workflow.title;
   const phases = group.phases.filter((phase) => phase.members.length > 0);
   return (
@@ -184,7 +264,7 @@ export function ThreadLineageWorkflowRow({
           part="secondary"
           aria-expanded={expanded}
           aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`}
-          onClick={() => setExpanded((value) => !value)}
+          onClick={() => setLineageExpanded(workflowKey, !expanded)}
         >
           <ChevronDownIcon
             aria-hidden
@@ -197,53 +277,19 @@ export function ThreadLineageWorkflowRow({
       </div>
       {expanded ? (
         <ul className="m-0 list-none p-0 ps-6.5">
-          {phases.map((phase) => {
-            const open = phaseOpen.get(phase.index) ?? phase.state === "running";
-            const status = phaseStatusLabel(phase);
-            return (
-              <li key={phase.index}>
-                <CollapsibleSectionHeader
-                  variant="panel"
-                  tone={phase.state === "running" ? "emphasized" : "muted"}
-                  expanded={open}
-                  aria-label={`${open ? "Collapse" : "Expand"} ${phase.title} phase, ${status}`}
-                  onClick={() => setPhaseOpen((phases) => new Map(phases).set(phase.index, !open))}
-                  accessory={
-                    <>
-                      {status === "failed" ? (
-                        <SectionHeaderStatus>Failed</SectionHeaderStatus>
-                      ) : null}
-                      <span className="shrink-0 text-2xs font-normal tabular-nums">
-                        {phase.settledCount}/{phase.members.length}{" "}
-                        {phase.members.length === 1 ? "agent" : "agents"}
-                      </span>
-                      <span className="shrink-0 text-2xs font-normal tabular-nums empty:hidden">
-                        <AgentElapsed agent={phaseElapsed(phase)} />
-                      </span>
-                    </>
-                  }
-                >
-                  {phase.title}
-                </CollapsibleSectionHeader>
-                {open ? (
-                  <ul className="m-0 list-none p-0">
-                    {phase.members.map((member) => (
-                      <WorkflowMemberRow
-                        key={member.id}
-                        member={member}
-                        providerInstanceId={providerInstanceId}
-                        provider={provider}
-                        providers={providers}
-                        driver={driver}
-                        onOpen={onOpenThread}
-                        isThreadAvailable={isThreadAvailable}
-                      />
-                    ))}
-                  </ul>
-                ) : null}
-              </li>
-            );
-          })}
+          {phases.map((phase) => (
+            <WorkflowPhaseSection
+              key={phase.index}
+              phaseKey={lineageWorkflowPhaseKey(environmentId, group.workflow.id, phase.index)}
+              phase={phase}
+              providerInstanceId={providerInstanceId}
+              provider={provider}
+              providers={providers}
+              driver={driver}
+              onOpen={onOpenThread}
+              isThreadAvailable={isThreadAvailable}
+            />
+          ))}
           {group.unphasedMembers.map((member) => (
             <WorkflowMemberRow
               key={member.id}

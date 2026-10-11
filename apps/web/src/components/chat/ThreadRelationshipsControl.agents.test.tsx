@@ -10,6 +10,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
+import { useUiStateStore } from "../../uiStateStore";
+
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   navigate: vi.fn(),
@@ -74,6 +76,8 @@ afterEach(async () => {
   state.workflowCommand.mockReset().mockResolvedValue({ _tag: "Success" });
   state.toast.mockClear();
   state.projection = null;
+  // Expansion choices live in a module-level store, so they must not leak across tests.
+  useUiStateStore.setState({ lineageExpandedByKey: {} });
 });
 
 it("stops the entire native workflow through its parent without changing state before acknowledgement", async () => {
@@ -473,9 +477,71 @@ it("groups and counts a workflow by its run status instead of its coordinator ch
   await act(async () =>
     renderer.root.findByProps({ type: "button", "aria-expanded": false }).props.onClick(),
   );
-  expect(renderer.root.findByProps({ "aria-label": "Expand Checkout review" })).toBeDefined();
+  // The workflow keeps the expansion the user chose while it was active.
+  expect(renderer.root.findByProps({ "aria-label": "Collapse Checkout review" })).toBeDefined();
   expect(text()).toContain("Workflow checks complete");
   expect(text()).toContain("10m");
+});
+
+it("keeps a workflow expanded when the panel remounts, as switching threads does", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  state.projection = {
+    thread: { id: "parent", lineage: { relationshipToParent: null } },
+    runs: [],
+    providerThreads: [],
+    providerSessions: [],
+    contextTransfers: [],
+    subagents: [
+      {
+        id: "workflow",
+        driver: "claudeAgent",
+        providerInstanceId: "claudeAgent",
+        childThreadId: "workflow-chat",
+        title: "Checkout review",
+        status: "running",
+        startedAt: DateTime.makeUnsafe("2026-09-21T12:00:00Z"),
+        completedAt: null,
+        updatedAt: DateTime.makeUnsafe("2026-09-21T12:00:00Z"),
+        workflow: {
+          name: "Checkout review",
+          phases: [{ index: 0, title: "Inspect" }],
+          agents: [{ index: 0, label: "Checker", state: "running", phaseIndex: 0 }],
+        },
+      },
+    ],
+  };
+  state.shells = [
+    {
+      environmentId: "test",
+      source: {
+        id: "workflow-chat",
+        title: "Coordinator chat",
+        lineage: { parentThreadId: "parent", relationshipToParent: "subagent" },
+        status: "running",
+        activityRunStatus: "running",
+      },
+    },
+  ];
+  const panel = () => (
+    <ThreadRelationshipsPanel
+      environmentId={EnvironmentId.make("test")}
+      threadId={ThreadId.make("parent")}
+    />
+  );
+  await act(async () => {
+    renderer = create(panel());
+  });
+  await act(async () =>
+    renderer.root.findByProps({ "aria-label": "Expand Checkout review" }).props.onClick(),
+  );
+  expect(renderer.root.findByProps({ "aria-label": "Collapse Checkout review" })).toBeDefined();
+
+  await act(async () => renderer.unmount());
+  await act(async () => {
+    renderer = create(panel());
+  });
+  expect(renderer.root.findByProps({ "aria-label": "Collapse Checkout review" })).toBeDefined();
+  expect(renderer.root.findByProps({ "aria-label": "Open Checker chat" })).toBeDefined();
 });
 
 it.each([

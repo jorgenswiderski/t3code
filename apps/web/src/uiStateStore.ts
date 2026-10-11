@@ -45,6 +45,11 @@ export interface UiProjectState {
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
+  // Explicit Lineage expand/collapse choices (see `lineageWorkflowKey`,
+  // `lineageWorkflowPhaseKey`, `lineageGroupKey`); absent means the row's
+  // default. Session memory only: unbounded per workflow, and never persisted
+  // because the aim is surviving thread switches, not reloads.
+  lineageExpandedByKey: Record<string, boolean>;
 }
 
 export interface UiEndpointState {
@@ -64,6 +69,7 @@ const initialState: UiState = {
   sidebarProjectScopeKey: null,
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
+  lineageExpandedByKey: {},
   defaultAdvertisedEndpointKey: null,
   pullRequestMergeMethod: "merge",
 };
@@ -153,6 +159,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
         : {},
+    lineageExpandedByKey: {},
     defaultAdvertisedEndpointKey: sanitizeOptionalKey(parsed.defaultAdvertisedEndpointKey),
     sidebarProjectScopeKey: sanitizeOptionalKey(parsed.sidebarProjectScopeKey),
     pullRequestMergeMethod: isPullRequestMergeMethod(parsed.pullRequestMergeMethod)
@@ -318,6 +325,37 @@ export function setThreadChangedFilesExpanded(
   };
 }
 
+/**
+ * A workflow is keyed by its own identity, not the viewed thread, so its tree
+ * stays open when you move to one of its child threads and back.
+ */
+export function lineageWorkflowKey(environmentId: string, workflowId: string): string {
+  return `workflow:${environmentId}:${workflowId}`;
+}
+
+export function lineageWorkflowPhaseKey(
+  environmentId: string,
+  workflowId: string,
+  phaseIndex: number,
+): string {
+  return `${lineageWorkflowKey(environmentId, workflowId)}:phase:${phaseIndex}`;
+}
+
+/** Lineage groups are per viewed thread; `threadKey` is the scoped thread key. */
+export function lineageGroupKey(threadKey: string, groupId: string): string {
+  return `group:${threadKey}:${groupId}`;
+}
+
+export function setLineageExpanded(state: UiState, key: string, expanded: boolean): UiState {
+  if (state.lineageExpandedByKey[key] === expanded) {
+    return state;
+  }
+  return {
+    ...state,
+    lineageExpandedByKey: { ...state.lineageExpandedByKey, [key]: expanded },
+  };
+}
+
 export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | null): UiState {
   const nextKey = key && key.length > 0 ? key : null;
   if (state.defaultAdvertisedEndpointKey === nextKey) {
@@ -427,6 +465,7 @@ interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
+  setLineageExpanded: (key: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setSidebarProjectScopeKey: (projectKey: string | null) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
@@ -446,6 +485,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
+  setLineageExpanded: (key, expanded) => set((state) => setLineageExpanded(state, key, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setSidebarProjectScopeKey: (projectKey) =>

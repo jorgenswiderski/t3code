@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   legacyProjectCwdPreferenceKey,
+  lineageGroupKey,
+  lineageWorkflowKey,
+  lineageWorkflowPhaseKey,
   markThreadUnread,
   markThreadVisited,
   parsePersistedState,
@@ -12,6 +15,7 @@ import {
   reorderProjects,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
+  setLineageExpanded,
   setProjectExpanded,
   setSidebarProjectScopeKey,
   setThreadChangedFilesExpanded,
@@ -25,6 +29,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     sidebarProjectScopeKey: null,
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    lineageExpandedByKey: {},
     defaultAdvertisedEndpointKey: null,
     pullRequestMergeMethod: "merge",
     ...overrides,
@@ -119,6 +124,36 @@ describe("uiStateStore pure functions", () => {
     );
   });
 
+  it("stores explicit lineage expansion choices and toggles them back", () => {
+    const key = lineageWorkflowKey("env-1", "workflow-1");
+    const expanded = setLineageExpanded(makeUiState(), key, true);
+
+    expect(expanded.lineageExpandedByKey).toEqual({ [key]: true });
+    expect(setLineageExpanded(expanded, key, false).lineageExpandedByKey).toEqual({ [key]: false });
+  });
+
+  it("returns the same state when a lineage choice does not change", () => {
+    const key = lineageGroupKey("env-1:thread-1", "previous");
+    const state = setLineageExpanded(makeUiState(), key, false);
+
+    expect(setLineageExpanded(state, key, false)).toBe(state);
+  });
+
+  it("keeps lineage choices separate per workflow, phase, environment, and thread", () => {
+    const keys = [
+      lineageWorkflowKey("env-1", "workflow-1"),
+      lineageWorkflowKey("env-2", "workflow-1"),
+      lineageWorkflowPhaseKey("env-1", "workflow-1", 0),
+      lineageWorkflowPhaseKey("env-1", "workflow-1", 1),
+      lineageGroupKey("env-1:thread-1", "previous"),
+      lineageGroupKey("env-1:thread-2", "previous"),
+    ];
+
+    expect(new Set(keys).size).toBe(keys.length);
+    const state = setLineageExpanded(makeUiState(), keys[2]!, true);
+    expect(state.lineageExpandedByKey[keys[3]!]).toBeUndefined();
+  });
+
   it("stores explicit changed-file expansion choices", () => {
     const threadId = ThreadId.make("thread-1");
     const collapsed = setThreadChangedFilesExpanded(makeUiState(), threadId, "turn-1", false);
@@ -203,6 +238,7 @@ describe("parsePersistedState", () => {
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
       pullRequestMergeMethod: "merge",
+      lineageExpandedByKey: {},
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -336,6 +372,24 @@ describe("uiStateStore persistence", () => {
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
     });
+  });
+
+  it("does not persist or restore lineage expansion", () => {
+    const state = setLineageExpanded(
+      makeUiState(),
+      lineageWorkflowKey("env-1", "workflow-1"),
+      true,
+    );
+
+    persistState(state);
+
+    const raw = localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}";
+    expect(raw).not.toContain("lineage");
+    expect(raw).not.toContain("workflow-1");
+    expect(
+      parsePersistedState({ lineageExpandedByKey: { a: true } } as PersistedUiState)
+        .lineageExpandedByKey,
+    ).toEqual({});
   });
 
   it("restores the sidebar project scope across reloads", () => {
