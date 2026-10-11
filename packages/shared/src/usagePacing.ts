@@ -93,3 +93,123 @@ export function contextFraction(usage: {
   const used = Number.isFinite(usage.usedTokens) && usage.usedTokens > 0 ? usage.usedTokens : 0;
   return Math.min(1, used / max);
 }
+
+// ---- work schedule ----------------------------------------------------------------
+
+export interface WorkHours {
+  /** Minutes past local midnight, 0..1439. */
+  readonly startMin: number;
+  /** Exclusive end, 1..1440 (1440 = midnight). endMin <= startMin wraps past midnight. */
+  readonly endMin: number;
+}
+
+export interface WorkSchedule extends WorkHours {
+  /** Weekday ints, 0 = Sunday .. 6 = Saturday (matches scheduledTask.ts weekdays). */
+  readonly workDays: ReadonlyArray<number>;
+  /** Weight of a work-day second outside work hours, 0..1. Non-work days weigh 0. */
+  readonly offHoursWeight: number;
+}
+
+export const DEFAULT_WORK_HOURS = "09:00-17:00";
+export const DEFAULT_WORK_DAYS: ReadonlyArray<number> = [1, 2, 3, 4, 5];
+export const DEFAULT_OFF_HOURS_WEIGHT = 0.2;
+
+// What DEFAULT_WORK_HOURS parses to; a test keeps the two in agreement.
+const DEFAULT_WORK_HOURS_PARSED: WorkHours = { startMin: 540, endMin: 1020 };
+
+const WORK_HOURS_PATTERN = /^(\d{1,2})(?::([0-5]\d))?-(\d{1,2})(?::([0-5]\d))?$/;
+
+/**
+ * "HH:MM-HH:MM", minutes optional ("9-17"), "24:00" legal as an end; an end of "00:00"
+ * normalises to 1440; a start of "24:00" or any value > 1440 is null; null when malformed.
+ */
+export function parseWorkHours(value: string): WorkHours | null {
+  const match = WORK_HOURS_PATTERN.exec(value.trim());
+  if (!match) return null;
+  const startMin = Number(match[1]) * 60 + Number(match[2] ?? 0);
+  const rawEndMin = Number(match[3]) * 60 + Number(match[4] ?? 0);
+  if (startMin >= 1440 || rawEndMin > 1440) return null;
+  // "22:00-00:00" means "until midnight"; under the wrap rule it covers the same seconds as 1440.
+  return { startMin, endMin: rawEndMin === 0 ? 1440 : rawEndMin };
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+/** Inverse of parseWorkHours, zero-padded "HH:MM-HH:MM"; endMin 1440 prints "24:00". */
+export function formatWorkHours(hours: WorkHours): string {
+  const clock = (min: number) => `${pad2(Math.floor(min / 60))}:${pad2(min % 60)}`;
+  return `${clock(hours.startMin)}-${clock(hours.endMin)}`;
+}
+
+/**
+ * Settings -> schedule. Malformed workHours falls back to 09:00-17:00 for that field alone;
+ * workDays keeps unique integers 0..6; offHoursWeight is clamped to 0..1 (NaN -> 0.2).
+ */
+export function resolveWorkSchedule(settings: {
+  readonly workHours: string;
+  readonly workDays: ReadonlyArray<number>;
+  readonly offHoursWeight: number;
+}): WorkSchedule {
+  const hours = parseWorkHours(settings.workHours) ?? DEFAULT_WORK_HOURS_PARSED;
+  const workDays = [
+    ...new Set(settings.workDays.filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)),
+  ].sort((a, b) => a - b);
+  const weight = settings.offHoursWeight;
+  const offHoursWeight = Number.isNaN(weight)
+    ? DEFAULT_OFF_HOURS_WEIGHT
+    : Math.min(1, Math.max(0, weight));
+  return { startMin: hours.startMin, endMin: hours.endMin, workDays, offHoursWeight };
+}
+
+// Minutes past local midnight on a local calendar day, as epoch seconds. The Date constructor
+// normalises an out-of-range minute (1440 = next local midnight) BEFORE resolving the zone,
+// which keeps 23- and 25-hour DST days correct.
+function localMin(y: number, m: number, d: number, min: number): number {
+  return new Date(y, m, d, 0, min, 0, 0).getTime() / 1000;
+}
+
+function overlap(aFrom: number, aTo: number, bFrom: number, bTo: number): number {
+  return Math.max(0, Math.min(aTo, bTo) - Math.max(aFrom, bFrom));
+}
+
+/**
+ * Weighted seconds in [fromSec, toSec), local time, walking local calendar days (DST-safe).
+ * Do not simplify to `cursor += 86400`: DST days are 23 or 25 hours long.
+ */
+export function scheduleWeight(fromSec: number, toSec: number, schedule: WorkSchedule): number {
+  if (!(toSec > fromSec)) return 0;
+  let total = 0;
+  let cursor = fromSec;
+  while (cursor < toSec) {
+    const d = new Date(cursor * 1000);
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    const day = d.getDate();
+    const segEnd = Math.min(localMin(y, m, day, 1440), toSec);
+    if (schedule.workDays.includes(d.getDay())) {
+      // Every work-day second earns offHoursWeight; work-hours seconds earn the remainder on
+      // top, so only the work-hours overlap is needed, not its complement.
+      const active =
+        schedule.endMin > schedule.startMin
+          ? overlap(
+              cursor,
+              segEnd,
+              localMin(y, m, day, schedule.startMin),
+              localMin(y, m, day, schedule.endMin),
+            )
+          : // wraps past midnight (20:00-02:00): this calendar day's head and tail
+            overlap(cursor, segEnd, localMin(y, m, day, 0), localMin(y, m, day, schedule.endMin)) +
+            overlap(
+              cursor,
+              segEnd,
+              localMin(y, m, day, schedule.startMin),
+              localMin(y, m, day, 1440),
+            );
+      total += schedule.offHoursWeight * (segEnd - cursor) + (1 - schedule.offHoursWeight) * active;
+    }
+    cursor = segEnd;
+  }
+  return total;
+}
