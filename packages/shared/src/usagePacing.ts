@@ -636,7 +636,7 @@ export function paceWindowRole(window: {
 
 /**
  * Header label: modelScoped -> display name ("Fable"); else from windowDurationMins:
- *  * < 60 -> "<m>m", < 1440 -> "<h>h" ("5h"), else "<d>d" ("7d"), prefixed with the family when the
+ * < 60 -> "<m>m", < 1440 -> "<h>h" ("5h"), else "<d>d" ("7d"), prefixed with the family when the
  * label is "<family> · <period>" ("Gemini 5h"); no duration (or 0) -> window.label.
  */
 export function paceWindowShortLabel(window: {
