@@ -240,12 +240,13 @@ export function reducePacingPopover(
 }
 
 /**
- * Row stack spacing for 12px text in the 40px desktop title bar (52px on the web): two rows are
- * 16 + 4 + 16 = 36px, three are 3 x 13 = 39px. Full literal class strings so Tailwind emits them.
+ * Row stack spacing for 12px text. Two rows are 16 + 4 + 16 = 36px. Three rows are 3 x 16 = 48px
+ * in the 52px web header, tightened to 3 x 13 = 39px in the 40px desktop title bar (`wco:`).
+ * Full literal class strings so Tailwind emits them.
  */
 export const PACING_ROW_SPACING = {
   spacious: { stack: "gap-1", row: "leading-4" },
-  tight: { stack: "gap-0", row: "leading-3.25" },
+  tight: { stack: "gap-0", row: "leading-4 wco:leading-3.25" },
 } as const;
 
 export function pacingRowSpacing(rowCount: number): {

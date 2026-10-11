@@ -160,7 +160,8 @@ export const PacingWidget = memo(function PacingWidget(props: {
               key={row.id}
               data-pacing-row={row.id}
               className={cn(
-                "flex items-center gap-x-2 text-xs tabular-nums whitespace-nowrap",
+                // The popover trigger is a button, which centers text by default.
+                "flex items-center gap-x-2 text-left text-xs tabular-nums whitespace-nowrap",
                 spacing.row,
               )}
             >
