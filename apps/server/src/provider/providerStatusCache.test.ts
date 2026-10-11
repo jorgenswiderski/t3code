@@ -121,6 +121,49 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     }),
   );
 
+  it.effect("does not persist session usage history", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-" });
+      const filePath = yield* resolveProviderStatusCachePath({
+        cacheDir: tempDir,
+        instanceId: defaultInstanceIdForDriver(ProviderDriverKind.make("claudeAgent")),
+      });
+      const session = {
+        id: "five_hour",
+        kind: "session",
+        label: "Session",
+        usedPercent: 12,
+        resetsAt: "2026-10-11T15:00:00.000Z",
+      } as const;
+      const weekly = { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 20 } as const;
+      const provider = makeProvider(CLAUDE_AGENT_DRIVER, {
+        usageLimits: {
+          checkedAt: "2026-10-11T10:05:00.000Z",
+          windows: [
+            {
+              ...session,
+              history: [
+                { at: "2026-10-11T10:00:00.000Z", usedPercent: 10 },
+                { at: "2026-10-11T10:05:00.000Z", usedPercent: 12 },
+              ],
+            },
+            weekly,
+          ],
+        },
+      });
+
+      yield* writeProviderStatusCache({ filePath, provider });
+
+      assert.deepStrictEqual((yield* readProviderStatusCache(filePath))?.usageLimits?.windows, [
+        session,
+        weekly,
+      ]);
+      assert.ok(!(yield* fs.readFileString(filePath)).includes('"history"'));
+      assert.ok(provider.usageLimits?.windows[0]?.history !== undefined);
+    }),
+  );
+
   it("hydrates cached provider status while preserving current settings-derived models", () => {
     const cachedCodex = makeProvider(CODEX_DRIVER, {
       checkedAt: "2026-04-10T12:00:00.000Z",
