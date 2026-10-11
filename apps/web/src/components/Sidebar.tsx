@@ -1,5 +1,6 @@
 import { type EnvironmentId } from "@t3tools/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
+import { ThreadContextGlyphBadge, ThreadContextTooltipLine } from "./pacing/ThreadContextGlyph";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
 import { setThreadChangeRequestSnapshot } from "./ThreadStatusIndicators";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
@@ -529,6 +530,7 @@ function SidebarThreadTooltip({
             </div>
           </div>
         ) : null}
+        <ThreadContextTooltipLine thread={thread} />
         {previousProviderNames.length > 0 ? (
           <div className="flex min-w-0 items-center gap-2">
             <ArrowRightLeftIcon className="size-3 shrink-0 stroke-muted-foreground" />
@@ -1858,10 +1860,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               >
                 <span
                   className={cn(
-                    "inline-flex justify-end tabular-nums text-secondary-label transition-opacity",
+                    "inline-flex items-center justify-end tabular-nums text-secondary-label transition-opacity",
                     !isWoke && "group-any-hover/sidebar-row:opacity-0",
                   )}
                 >
+                  <ThreadContextGlyphBadge thread={thread} className="mr-1.5" />
                   {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                     // Snoozed rows show when they come BACK, not when they were
                     // last touched — the return ticket is the row's whole story.
@@ -2032,6 +2035,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                     )}
                   >
+                    <ThreadContextGlyphBadge thread={thread} className="mr-1.5" />
                     {topStatus ? (
                       isWokeStatus ? (
                         <Tooltip>
