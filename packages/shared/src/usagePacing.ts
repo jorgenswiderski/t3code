@@ -213,3 +213,123 @@ export function scheduleWeight(fromSec: number, toSec: number, schedule: WorkSch
   }
   return total;
 }
+
+// ---- session and weekly burn (epoch seconds) ---------------------------------------
+
+export interface BurnResult {
+  /** Rounded to one decimal (roundBurn). */
+  readonly burn: number;
+  readonly tier: PaceTier;
+}
+
+const HALF_LIFE_SEC = 1800;
+const IDLE_CAP_SEC = 3600;
+const MIN_OBS_SEC = 90;
+const FALLBACK_MIN_ELAPSED_SEC = 1800;
+
+/**
+ * Port of the statusline's computeBurn: an exponentially recency-weighted rate over the
+ * recent samples, falling back to the whole-window average. Deviations from the original:
+ * zero samples fall through to the linear used/elapsed fallback instead of null (upstream
+ * servers send no history); there is no upper `t <= now` sample filter (a sample's age is
+ * clamped >= 0 so client clock skew cannot drop the newest sample); non-finite used -> null.
+ */
+export function computeSessionBurn(input: {
+  readonly nowSec: number;
+  readonly usedPercent: number;
+  readonly resetsAtSec: number;
+  /** Window length. */
+  readonly windowSec: number;
+  /** Ascending by atSec; already limited to this window by the server. */
+  readonly samples: ReadonlyArray<{ readonly atSec: number; readonly usedPercent: number }>;
+}): BurnResult | null {
+  const { nowSec, usedPercent: u, windowSec } = input;
+  if (!Number.isFinite(u)) return null;
+  const rem = input.resetsAtSec - nowSec;
+  if (!(rem > 0)) return null;
+
+  const rows = input.samples.filter((s) => s.atSec >= nowSec - windowSec);
+  const n = rows.length;
+  const elapsed = Math.max(windowSec - rem, 1);
+  let sumWdu = 0;
+  let sumWdt = 0;
+  let obs = 0;
+  let iv = 0;
+  for (let i = n - 1; i >= 1; i--) {
+    const cur = rows[i]!;
+    const prev = rows[i - 1]!;
+    let dt = cur.atSec - prev.atSec;
+    const du = cur.usedPercent - prev.usedPercent;
+    if (du < -0.1) break; // window boundary or torn read
+    if (dt > IDLE_CAP_SEC) break; // no-data gap
+    if (dt < 1) dt = 1;
+    const age = Math.max(0, nowSec - cur.atSec);
+    const w = Math.exp((-Math.log(2) * age) / HALF_LIFE_SEC);
+    sumWdu += w * du;
+    sumWdt += w * dt;
+    obs += dt;
+    iv++;
+  }
+  // current reading below the newest sample: the samples describe a prior window
+  if (n > 0 && u < rows[n - 1]!.usedPercent - 0.1) {
+    iv = 0;
+    obs = 0;
+  }
+
+  let rate: number;
+  if (iv >= 2 && obs >= MIN_OBS_SEC && sumWdt > 0) rate = sumWdu / sumWdt;
+  else if (elapsed >= FALLBACK_MIN_ELAPSED_SEC) rate = u / elapsed;
+  else return null;
+  if (rate < 0) rate = 0;
+
+  const burnx = (u + rate * rem) / 100;
+  if (!(burnx > 0)) return null;
+
+  const remFrac = Math.min(1, Math.max(0, rem / windowSec));
+  const greenCut = 1.0 + 0.1 * remFrac;
+  const exponent = 1.0 + 2.0 * (1.0 - 10 / (rem / elapsed + 10));
+  // Round first, then tier off the value actually displayed (see burnTier).
+  const burn = roundBurn(burnx);
+  return { burn, tier: burnTier(burn, greenCut, exponent) };
+}
+
+/**
+ * Elapsed fraction of [resetsAt - windowSec, resetsAt) at now; schedule null = wall clock.
+ * Null when now is outside the window or the window weighs 0. May return 0 (window just
+ * started inside a non-work stretch); computeWeeklyBurn applies the minimum guard.
+ */
+export function weeklyElapsedFraction(input: {
+  readonly nowSec: number;
+  readonly resetsAtSec: number;
+  readonly windowSec: number;
+  readonly schedule: WorkSchedule | null;
+}): number | null {
+  const { nowSec, resetsAtSec, windowSec, schedule } = input;
+  const start = resetsAtSec - windowSec;
+  if (!(resetsAtSec > nowSec && nowSec > start)) return null;
+  if (schedule) {
+    const denom = scheduleWeight(start, resetsAtSec, schedule);
+    if (!(denom > 0)) return null;
+    return scheduleWeight(start, nowSec, schedule) / denom;
+  }
+  return (nowSec - start) / windowSec;
+}
+
+/** Port of the statusline's computeWeeklyBurn: roundBurn((used/100)/frac), null when frac < minElapsedFrac (default 0.02). */
+export function computeWeeklyBurn(input: {
+  readonly nowSec: number;
+  readonly usedPercent: number;
+  readonly resetsAtSec: number;
+  readonly windowSec: number;
+  readonly schedule: WorkSchedule | null;
+  readonly minElapsedFrac?: number | undefined;
+}): BurnResult | null {
+  if (!Number.isFinite(input.usedPercent)) return null;
+  const frac = weeklyElapsedFraction(input);
+  if (frac === null || !(frac > 0) || frac < (input.minElapsedFrac ?? 0.02)) return null;
+  // Zero usage blanks the burn. This model has no early-window correction, so it takes
+  // burnTier's default ladder.
+  const burn = roundBurn(input.usedPercent / 100 / frac);
+  if (!(burn > 0)) return null;
+  return { burn, tier: burnTier(burn) };
+}
