@@ -445,9 +445,11 @@ export const ClientSettingsSchema = Schema.Struct({
   // default UI; this beta flag restores it (plus the /plan and /default slash
   // commands) for users who still rely on the old workflow.
   planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  // Legacy context window meter. The composer hides it by default; users who
-  // still want the old usage indicator can restore it from Settings.
-  contextWindowMeterEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Composer context ring (spec: usage pacing 3.3/3.4). A fresh key rather than
+  // a flipped default: client settings persist as one full object, so every
+  // install that ever saved settings has the retired `contextWindowMeterEnabled:
+  // false` stored; decoding drops that key and the new default reaches them too.
+  composerContextRingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // Usage pacing (header widget). Device-local. Work hours stay a plain string: client settings
   // persist as one object, so a strict pattern that ever failed would discard every setting.
   // Malformed values are repaired by shared/usagePacing's resolveWorkSchedule, not here.
@@ -1678,7 +1680,7 @@ export const ClientSettingsPatch = Schema.Struct({
     Schema.Record(TrimmedNonEmptyString, PullRequestMergeMethod),
   ),
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
-  contextWindowMeterEnabled: Schema.optionalKey(Schema.Boolean),
+  composerContextRingEnabled: Schema.optionalKey(Schema.Boolean),
   usagePacingShowSession: Schema.optionalKey(Schema.Boolean),
   usagePacingShowWeekly: Schema.optionalKey(Schema.Boolean),
   usagePacingShowModelScoped: Schema.optionalKey(Schema.Boolean),
