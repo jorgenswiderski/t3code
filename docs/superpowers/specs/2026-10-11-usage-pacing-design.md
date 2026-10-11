@@ -60,8 +60,10 @@ tiers follow §4.4.
   - When the burn can't be computed yet (§4), the row keeps its bar and reset time and
     leaves the burn column blank.
 - **Narrow headers:** below 560 px of header width, the reset column is dropped. Below
-  420 px, the widget is hidden. This is a container query on the header, not on the
-  viewport.
+  420 px, the widget is hidden. The width is measured on the header element (a resize
+  observer on `<header data-chat-header>`), not the viewport. A CSS container query is not
+  used because the controls cluster is `position: fixed` and is sometimes rendered outside
+  the header.
 - **Interaction:** hovering opens the popover (§3.2) and clicking pins it open. A
   pinned popover closes on outside click or Escape.
 
@@ -102,9 +104,11 @@ Geometry and colour:
     for the context fraction.
   - Colour comes from the context tier (§4.4), using the shared tier palette below.
 - **Dot:** radius 15% of the glyph size, filled with
-  `color-mix(in oklab, <state colour> 45%, var(--muted-foreground))`.
-  - Warm: state colour is `--muted-foreground`, so the dot is plain grey.
-  - Expiring: state colour is `--warning`.
+  `color-mix(in oklab, <state colour> 45%, var(--color-muted-foreground))` (the
+  `--color-*` theme tokens Tailwind's classes resolve to, which honour the contrast
+  setting).
+  - Warm: state colour is `--color-muted-foreground`, so the dot is plain grey.
+  - Expiring: state colour is `--color-warning`.
   - Cold or unknown: no dot.
 
 Data and states:
@@ -124,14 +128,14 @@ Data and states:
 A new **Usage pacing** section in the settings sidebar holds per-device client settings
 (`ClientSettingsSchema`), each registered in `settingsSearch.ts`:
 
-| Setting                          | Control                                                                         | Default     |
-| -------------------------------- | ------------------------------------------------------------------------------- | ----------- |
-| Show session (5h) window         | switch                                                                          | on          |
-| Show weekly window               | switch                                                                          | on          |
-| Show model-scoped weekly windows | switch                                                                          | on          |
-| Work hours                       | time range (`HH:MM`–`HH:MM`; an end at or before the start wraps past midnight) | 09:00–17:00 |
-| Work days                        | weekday multi-select, reusing the scheduled-tasks weekday picker                | Mon–Fri     |
-| Off-hours weight                 | number 0–1, step 0.05                                                           | 0.2         |
+| Setting                          | Control                                                                                                                                | Default     |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| Show session (5h) window         | switch                                                                                                                                 | on          |
+| Show weekly window               | switch                                                                                                                                 | on          |
+| Show model-scoped weekly windows | switch                                                                                                                                 | on          |
+| Work hours                       | time range (`HH:MM`–`HH:MM`; an end at or before the start wraps past midnight)                                                        | 09:00–17:00 |
+| Work days                        | weekday multi-select, reusing the scheduled-tasks weekday picker (extracted from `ScheduledTasksSettings.tsx` into a shared component) | Mon–Fri     |
+| Off-hours weight                 | number 0–1, step 0.05                                                                                                                  | 0.2         |
 
 `contextWindowMeterEnabled` moves out of the "legacy" group, is relabelled **Show
 context ring in composer**, and its default changes to **on**. The sidebar glyph has no
@@ -163,10 +167,13 @@ time-dependent values recompute on a shared 30 s client tick, as well as on data
 **Session windows** (`kind: "session"`) use an EWMA of the observed rate, ported
 verbatim from `computeBurn` in `burn-rate.ts`:
 
-- Constants: window 18000 s, half-life 1800 s, idle cap 3600 s, minimum observation
-  90 s, fallback minimum elapsed 1800 s.
-- Input: the window's `history` (§5.2), filtered to the current `resetsAt` and the last
-  `windowSec`.
+- Constants: half-life 1800 s, idle cap 3600 s, minimum observation 90 s, fallback
+  minimum elapsed 1800 s. The window length is `windowDurationMins * 60` when the window
+  reports it (Claude reports 300), falling back to 18000 s.
+- Input: the window's `history` (§5.2). The server already keeps only samples of the
+  current `resetsAt`; the client keeps those within the last `windowSec`. An empty or
+  missing `history` (a restarted or upstream server) simply leaves no intervals, so the
+  linear fallback below applies.
 - Rate: walk intervals newest to oldest, weighting each by `exp(-ln2 * age / HL)`. Stop
   at a drop greater than 0.1 points or a gap longer than the idle cap.
   - With at least 2 intervals and at least 90 s observed: `rate = Σw·du / Σw·dt`.
@@ -227,7 +234,7 @@ request identity (§5.3).
   - `now >= updatedAt + ttl`, or
   - the identity mismatches. Compare model, effort and fast mode between the last
     request and the next one; a field absent on either side is skipped.
-- **expiring** when the time remaining is less than `min(600 s, ttl / 4)`.
+- **expiring** when the time remaining is at most `min(600 s, ttl / 4)`.
 - **warm** otherwise.
 
 "The next one" means:
@@ -235,6 +242,10 @@ request identity (§5.3).
 - for the active thread in the composer, the composer's currently selected model
   selection, so changing the picker updates the dot immediately;
 - in the sidebar, the thread's `modelSelection`.
+
+Effort and fast mode compare as the raw selected option values, with no default
+resolution, so switching between an implicit default effort and the same value chosen
+explicitly reads as a mismatch (cold). This understates warmth, the safe direction.
 
 ## 5. Data and architecture
 
@@ -245,21 +256,29 @@ request identity (§5.3).
 every event named `seven_day`, so five-hour updates were dropped until the next 5-minute
 probe.
 
-**The fix:** every `rate_limit_info` also carries an untyped
-`unifiedWindows: {five_hour: {utilization, resetsAt}, seven_day: {…}}`. Read it
-structurally, and update every window it lists on every event, keeping the current
-single-window path as the fallback when it's absent.
+**The fix:** every `rate_limit_info` also carries
+`unifiedWindows: {five_hour: {utilization, resetsAt}, seven_day: {…}}`, which the pinned
+SDK typings (0.3.276) do not declare. `utilization` is a 0–1 fraction and `resetsAt` is
+epoch seconds. Events with `status: "allowed"` carry no top-level `utilization`, so today
+most events update nothing at all. Read `unifiedWindows` structurally, and update every
+window it lists on every event, keeping the current single-window path as the fallback
+when it's absent (and as the only path for the overage-included scoped window).
 
 Test: an event with `rateLimitType: "seven_day"` and `unifiedWindows` updates both
 windows.
 
 ### 5.2 Usage history for session burn (server)
 
-- **Recording:** `ManagedServerProvider` keeps an in-memory sample list per provider
-  instance for windows of `kind: "session"`. Each entry is `{ at, usedPercent }`,
-  appended on every usage update (event or probe), even if the value didn't change.
-  Probes therefore act as idle heartbeats.
-- **Pruning:** samples are discarded when `resetsAt` moves to a new window, when
+- **Recording:** the managed provider (`makeManagedServerProvider` in
+  `packages/provider-core/src/server/managedProvider.ts`) keeps an in-memory sample list
+  per provider instance for windows of `kind: "session"`. Each entry is
+  `{ at, usedPercent }`, appended on every usage update (event or probe), even if the value
+  didn't change, except that an unchanged value within 60 s of the previous sample is
+  skipped (some providers send a usage notification with every token tick). Probes,
+  minutes apart, therefore act as idle heartbeats.
+- **Pruning:** samples are discarded when `resetsAt` moves to a new window (resets within
+  60 s of each other count as the same window, since probes and events report it at
+  different precision), when
   `credentialFingerprint` or `workspaceId` changes (an account swap), and beyond 400
   entries.
 - **Transport:** exposed as an optional `history: Array<{at: IsoDateTime, usedPercent}>`
@@ -274,8 +293,9 @@ windows.
 
 - **New identity field:** `OrchestrationV2ProviderTurnTokenUsage` gains an optional
   `requestIdentity: { model?: string, effort?: string, fastMode?: boolean }`.
-  `ClaudeAdapterV2` fills it on the top-level assistant usage path: `message.model`, plus
-  effort and fast mode from the turn's `modelSelection`.
+  `ClaudeAdapterV2` fills it on the top-level assistant usage path: `message.message.model`
+  with a trailing `[...]` suffix removed and resolved to the catalog slug (the vocabulary
+  of `ModelSelection.model`), plus effort and fast mode from the turn's `modelSelection`.
 - **Carried-forward TTL:** when a report has no `promptCacheTtlMs` (a turn that only
   read cache), the adapter carries forward the thread's last known TTL. The TTL scan
   continues past the newest entry for the same reason as in the statusline.
@@ -283,12 +303,14 @@ windows.
   the newest top-level token usage of the thread's active provider thread.
   - Sourced from the persisted provider-turn rows, so historical threads get a ring with
     no backfill.
-  - Updated live whenever a provider turn's `tokenUsage` changes.
+  - Updated live whenever a provider turn's `tokenUsage` changes. It is derived when the
+    shell is read, so it reaches clients through the existing per-thread shell re-read
+    that follows every thread event; no new stream is needed.
   - It follows the existing `goal` pattern (`activeProviderGoalForShell`) for reaching
     the shell. The plan picks the exact projection mechanics.
-- **Regression test** pinning the 0.0.45 bug's cause: a `task_progress` or
-  `task_notification` frame with a large `usage.total_tokens` must not change any
-  `tokenUsage`.
+- **Regression test** pinning the property behind the 0.0.45 bug (its exact cause cannot
+  be reproduced on this code base): a `task_progress` or `task_notification` frame with a
+  large `usage.total_tokens` must not change any `tokenUsage`.
 
 ### 5.4 Web
 
@@ -334,16 +356,20 @@ windows.
 state), driven by Playwright in headless Chrome as approved, with screenshots saved for
 the handoff:
 
-1. Run real Claude turns in a dev project. The header shows 5h/7d rows whose percentages
-   match `/usage` and the provider snapshot.
-2. After enough samples, the session burn appears; the weekly burn appears immediately.
-   Toggling a window off hides its row and leaves it in the popover as `hidden`.
+1. Run real Claude turns in a dev project. The header shows 5h/7d rows, and the
+   popover's percentages match `/usage` and the provider snapshot (header rows show no
+   percentage).
+2. The session window carries a growing history and the session burn matches the
+   recency-weighted projection over it; the weekly burn appears immediately (unless the
+   window is under 2% elapsed). Toggling a window off hides its row and leaves it in the
+   popover as `hidden`.
 3. The sidebar and composer glyphs appear after a turn, and the dot is present while
    warm. Switching the composer's model or effort removes the dot immediately (an
    identity mismatch); switching back restores it.
 4. Run a turn that uses subagents or a workflow. The ring stays at the real context size
    (no 1m/1m).
-5. Restart the server. The widget recovers and the burn returns to the linear fallback.
+5. Restart the server. The widget recovers, the history restarts empty, and the session
+   burn matches the linear fallback (or is blank in the window's first 30 minutes).
 6. Change work hours and days, and the weekly burn and tick move accordingly.
 
 Time-based expiry (5 min / 1 h) is covered hermetically, not by waiting it out in the
