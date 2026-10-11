@@ -553,6 +553,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   will-change: var(--visible-animation-will-change, auto);
 }
 
+/* Always-on spin for row indicators: eight 45° steps per one-second turn, so
+   the compositor draws ~8 frames a second instead of one per vsync. Pair with
+   observeVisibleAnimation so offscreen rows stay paused. */
+@keyframes stepped-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@utility visible-animate-stepped-spin {
+  animation: stepped-spin 1s steps(8) infinite;
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
+}
+
 @keyframes live-activity-focus {
   from {
     transform: translateX(0);
