@@ -276,6 +276,11 @@ windows.
   didn't change, except that an unchanged value within 60 s of the previous sample is
   skipped (some providers send a usage notification with every token tick). Probes,
   minutes apart, therefore act as idle heartbeats.
+- **Lagging readings:** probes and runtime events round differently, so a source can
+  report up to a point below the newest sample of the same reset period. Such a reading is
+  recorded, and published, at the newest sample's value, and publishes nothing new. Without
+  this the EWMA walk stops at every dip and the burn jitters. A larger drop is real (a
+  rolling window aging out) and is kept as is.
 - **Pruning:** samples are discarded when `resetsAt` moves to a new window (resets within
   60 s of each other count as the same window, since probes and events report it at
   different precision), when

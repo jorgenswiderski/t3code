@@ -854,6 +854,57 @@ describe("makeManagedServerProvider", () => {
       ).pipe(Effect.provide(layerAlwaysRunTest)),
     );
 
+    it.effect("never lets a lagging probe pull the published session reading down", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { provider, next } = yield* makeUsageProvider(probe(23));
+          yield* provider.applyUsageLimits({ checkedAt: plus(30), windows: [fiveHour(24, R1)] });
+
+          // The probe reads 23 after an event already said 24.
+          yield* Ref.set(next, probe(23, { at: plus(90) }));
+          const probed = yield* provider.refresh;
+          assert.strictEqual(probed.usageLimits?.windows[0]?.usedPercent, 24);
+          assert.deepStrictEqual(sessionHistory(probed), [
+            { at: T0, usedPercent: 23 },
+            { at: plus(30), usedPercent: 24 },
+            { at: plus(90), usedPercent: 24 },
+          ]);
+
+          yield* provider.applyUsageLimits({ checkedAt: plus(100), windows: [fiveHour(25, R1)] });
+          const raised = yield* provider.getSnapshot;
+          assert.strictEqual(raised.usageLimits?.windows[0]?.usedPercent, 25);
+          assert.deepStrictEqual(sessionHistory(raised)?.at(-1), {
+            at: plus(100),
+            usedPercent: 25,
+          });
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
+    );
+
+    it.effect("publishes nothing for runtime events that lag a higher probe", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { provider, publishCount } = yield* makeUsageProvider(probe(24));
+          const initial = yield* provider.getSnapshot;
+
+          for (const seconds of [1, 2, 3]) {
+            yield* provider.applyUsageLimits({
+              checkedAt: plus(seconds),
+              windows: [fiveHour(23, R1)],
+            });
+          }
+          assert.strictEqual(yield* publishCount, 0);
+          assert.strictEqual(yield* provider.getSnapshot, initial);
+
+          // A real drop (a rolling window aging out) still publishes.
+          yield* provider.applyUsageLimits({ checkedAt: plus(4), windows: [fiveHour(20, R1)] });
+          assert.strictEqual(yield* publishCount, 1);
+          const dropped = yield* provider.getSnapshot;
+          assert.strictEqual(dropped.usageLimits?.windows[0]?.usedPercent, 20);
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
+    );
+
     it.effect("samples on probes but not on failed or unsupported ones", () =>
       Effect.scoped(
         Effect.gen(function* () {

@@ -158,6 +158,30 @@ describe("usage history", () => {
       ]);
     });
 
+    it("records a lower reading of the same window at the previous value", () => {
+      const first = record(EMPTY_USAGE_HISTORY, sessionWindow(24), T0);
+      expect(record(first, sessionWindow(23), at(30))).toBe(first);
+      expect(samplesOf(record(first, sessionWindow(23), at(61)))).toEqual([
+        { at: T0, usedPercent: 24 },
+        { at: at(61), usedPercent: 24 },
+      ]);
+    });
+
+    it("records a drop of more than a point as is (a rolling window aging out)", () => {
+      const first = record(EMPTY_USAGE_HISTORY, sessionWindow(30), T0);
+      const held = record(first, sessionWindow(29.2), at(61));
+      expect(samplesOf(held)?.at(-1)?.usedPercent).toBe(30);
+      expect(samplesOf(record(held, sessionWindow(28.9), at(122)))?.at(-1)?.usedPercent).toBe(28.9);
+    });
+
+    it("records a lower reading as is when the window has no reset", () => {
+      const first = record(EMPTY_USAGE_HISTORY, sessionWindow(24, null), T0);
+      expect(samplesOf(record(first, sessionWindow(23, null), at(5)))?.at(-1)).toEqual({
+        at: at(5),
+        usedPercent: 23,
+      });
+    });
+
     it("restarts the list when the reset moves to a new window", () => {
       const first = record(EMPTY_USAGE_HISTORY, sessionWindow(40), T0);
       const next = record(first, sessionWindow(41, "2026-09-03T19:00:00.000Z"), at(5));
@@ -297,6 +321,27 @@ describe("usage history", () => {
       expect(attachUsageHistory(noEntry, EMPTY_USAGE_HISTORY)).toBe(noEntry);
       const attached = limitsOf({ ...sessionWindow(40), history: samples });
       expect(attachUsageHistory(attached, seeded)).toBe(attached);
+    });
+
+    it("raises a lagging reading to the newest sample of the same window", () => {
+      const next = attachUsageHistory(limitsOf(sessionWindow(39)), seeded)!;
+      expect(next.windows[0]).toEqual({ ...sessionWindow(40), history: samples });
+    });
+
+    it("publishes a drop of more than a point as is", () => {
+      const next = attachUsageHistory(limitsOf(sessionWindow(38.9)), seeded)!;
+      expect(next.windows[0]?.usedPercent).toBe(38.9);
+    });
+
+    it("leaves a reading alone when the sample belongs to another or unknown reset", () => {
+      const moved = attachUsageHistory(
+        limitsOf(sessionWindow(39.5, "2026-09-03T19:00:00.000Z")),
+        seeded,
+      )!;
+      expect(moved.windows[0]?.usedPercent).toBe(39.5);
+      const noReset = record(EMPTY_USAGE_HISTORY, sessionWindow(40, null), T0);
+      const unknown = attachUsageHistory(limitsOf(sessionWindow(39.5, null)), noReset)!;
+      expect(unknown.windows[0]?.usedPercent).toBe(39.5);
     });
 
     it("removes stale history from session and non-session windows", () => {

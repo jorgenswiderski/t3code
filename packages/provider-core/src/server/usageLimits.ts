@@ -98,6 +98,28 @@ export function applyUsageLimitsUpdate(input: {
   };
 }
 
+/**
+ * Whether publishing `next` would show clients nothing new over `published`.
+ * `checkedAt` alone does not count, matching `applyUsageLimitsUpdate`.
+ */
+export function usageLimitsLookSame(
+  next: ServerProviderUsageLimits | undefined,
+  published: ServerProviderUsageLimits | undefined,
+): boolean {
+  if (next === published) return true;
+  if (next === undefined || published === undefined) return false;
+  return (
+    next.unavailable === published.unavailable &&
+    next.credentialFingerprint === published.credentialFingerprint &&
+    next.resetCredits === published.resetCredits &&
+    next.windows.length === published.windows.length &&
+    next.windows.every((window, index) => {
+      const other = published.windows[index]!;
+      return usageWindowEquals(window, other) && window.history === other.history;
+    })
+  );
+}
+
 function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageWindow): boolean {
   return (
     a.id === b.id &&
@@ -138,6 +160,20 @@ const USAGE_HISTORY_MAX_SAMPLES = 400;
 const USAGE_HISTORY_HEARTBEAT_MS = 60_000;
 /** The probe reports reset times as ISO strings, events as whole epoch seconds. */
 const USAGE_HISTORY_RESET_TOLERANCE_MS = 60_000;
+/**
+ * Points a reading may fall below the previous one of the same reset period
+ * and still count as a lagging source: probes and runtime events round
+ * differently. A larger drop is real (a rolling window aging out), kept as is.
+ */
+const USAGE_HISTORY_LAG_TOLERANCE = 1;
+
+function withoutLag(previous: number | undefined, reading: number): number {
+  return previous !== undefined &&
+    reading < previous &&
+    previous - reading <= USAGE_HISTORY_LAG_TOLERANCE
+    ? previous
+    : reading;
+}
 
 interface UsageHistoryEntry {
   readonly resetsAt: string | undefined;
@@ -193,16 +229,21 @@ export function recordUsageSamples(input: {
         : undefined;
     const last = entry?.samples.at(-1);
     const lastMs = last === undefined ? Number.NEGATIVE_INFINITY : Date.parse(last.at);
+    // A lagging reading would break the client's burn walk at every dip.
+    const usedPercent =
+      window.resetsAt !== undefined
+        ? withoutLag(last?.usedPercent, window.usedPercent)
+        : window.usedPercent;
     if (
       last !== undefined &&
-      last.usedPercent === window.usedPercent &&
+      last.usedPercent === usedPercent &&
       atMs - lastMs < USAGE_HISTORY_HEARTBEAT_MS
     ) {
       continue;
     }
     const sample = {
       at: last !== undefined && lastMs > atMs ? last.at : at,
-      usedPercent: window.usedPercent,
+      usedPercent,
     };
     edit().set(window.id, {
       resetsAt: window.resetsAt,
@@ -214,8 +255,9 @@ export function recordUsageSamples(input: {
 
 /**
  * Publish `history` on the session windows of `limits`, and strip it from any
- * window that should not carry it. Returns `limits` itself when no window
- * changes.
+ * window that should not carry it. A session reading that lags the newest
+ * sample of the same reset period is raised to it, so the published value
+ * equals the newest sample. Returns `limits` itself when no window changes.
  */
 export function attachUsageHistory(
   limits: ServerProviderUsageLimits | undefined,
@@ -224,12 +266,20 @@ export function attachUsageHistory(
   if (limits === undefined) return limits;
   let changed = false;
   const windows = limits.windows.map((window) => {
-    const samples = window.kind === "session" ? history.get(window.id)?.samples : undefined;
+    const entry = window.kind === "session" ? history.get(window.id) : undefined;
+    const samples = entry?.samples;
     const wanted = samples !== undefined && samples.length > 0 ? samples : undefined;
-    if (window.history === wanted) return window;
+    const newest = wanted?.at(-1)?.usedPercent;
+    const usedPercent =
+      window.resetsAt !== undefined && sameWindowReset(entry?.resetsAt, window.resetsAt)
+        ? withoutLag(newest, window.usedPercent)
+        : window.usedPercent;
+    if (window.history === wanted && window.usedPercent === usedPercent) return window;
     changed = true;
     const { history: _stale, ...rest } = window;
-    return wanted === undefined ? rest : { ...rest, history: wanted };
+    return wanted === undefined
+      ? { ...rest, usedPercent }
+      : { ...rest, usedPercent, history: wanted };
   });
   return changed ? { ...limits, windows } : limits;
 }
