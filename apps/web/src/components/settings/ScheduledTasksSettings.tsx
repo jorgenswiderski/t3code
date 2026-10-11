@@ -103,8 +103,6 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 
-/** JS day-of-week (0 = Sunday) rendered Monday-first, matching how people read a week. */
-
 const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   worktree: "Create a new worktree",
   root: "Use the project checkout",

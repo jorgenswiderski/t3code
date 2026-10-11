@@ -302,6 +302,8 @@ export const ChatHeader = memo(function ChatHeader({
       ref={breadcrumbContainerRef}
       className={cn(
         "flex min-w-0 flex-1 items-center gap-2 sm:gap-3",
+        // --pacing-widget-reserve: written by PacingWidget (PACING_RESERVE_CSS_VAR) on <header>.
+        "mr-[var(--pacing-widget-reserve,0px)]",
         rightPanelOpen ? "pr-10" : "pr-24",
       )}
       onContextMenu={handleHeaderContextMenu}

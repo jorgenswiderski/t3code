@@ -452,6 +452,8 @@ import {
   resolveScrollToEndClearance,
 } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import { PacingWidget } from "./pacing/PacingWidget";
+import { resolvePacingPlacement } from "./pacing/pacingRows.logic";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -11246,6 +11248,19 @@ export default function ChatView(props: ChatViewProps) {
       showThreadPanelControl={!inlineRightPanelOwnsTitleBar}
     />
   );
+  const pacingWidgetPlacement = resolvePacingPlacement({
+    inlineRightPanelOwnsTitleBar,
+    rightPanelControlsAtRoot,
+    rightPanelControlsInPanel,
+  });
+  const pacingWidget = (
+    <div className="pointer-events-auto flex h-full items-center">
+      <PacingWidget
+        usageLimits={activeProviderStatus?.usageLimits}
+        headerRef={threadPanelPopoverAnchorRef}
+      />
+    </div>
+  );
   const threadPanelHeaderControl = (
     <div
       // Inset from the chat header's edge, not the window's: --workspace-controls-right also
@@ -11253,6 +11268,7 @@ export default function ChatView(props: ChatViewProps) {
       className="absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
+      {pacingWidgetPlacement === "panel-header" ? pacingWidget : null}
       <PanelLayoutControls
         {...panelToggleControlProps}
         showTerminalControl={false}
@@ -11269,6 +11285,7 @@ export default function ChatView(props: ChatViewProps) {
       )}
       data-workspace-titlebar-controls
     >
+      {pacingWidgetPlacement === "cluster" ? pacingWidget : null}
       {!shouldUsePlanSidebarSheet ? (
         <span
           aria-hidden={!rightPanelOpen}
