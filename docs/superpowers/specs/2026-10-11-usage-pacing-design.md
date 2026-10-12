@@ -276,11 +276,15 @@ windows.
   didn't change, except that an unchanged value within 60 s of the previous sample is
   skipped (some providers send a usage notification with every token tick). Probes,
   minutes apart, therefore act as idle heartbeats.
-- **Lagging readings:** probes and runtime events round differently, so a source can
-  report up to a point below the newest sample of the same reset period. Such a reading is
-  recorded, and published, at the newest sample's value, and publishes nothing new. Without
-  this the EWMA walk stops at every dip and the burn jitters. A larger drop is real (a
-  rolling window aging out) and is kept as is.
+- **Lagging readings:** within one reset period, a runtime event never lowers the window.
+  Each thread's events report the usage that thread last saw, so with several threads
+  running, a thread idle for a minute reports several points below the live value. A probe
+  reads the account directly, so it is held only within a point (its rounding differs from
+  the events'); a larger probe drop is real (a rolling window aging out) and is kept as is.
+  A held reading is recorded, and published, at the newest sample's value, and publishes
+  nothing new. Without this the EWMA walk stops at every dip, and the jump back to the
+  live value right after it reads as a burst: on 2026-10-12 two stale readings 4 and 5
+  points low drove the burn to 4.2x on an on-pace window.
 - **Pruning:** samples are discarded when `resetsAt` moves to a new window (resets within
   60 s of each other count as the same window, since probes and events report it at
   different precision), when
@@ -290,9 +294,11 @@ windows.
   on `ServerProviderUsageWindow`, sent only for session windows.
 - **No persistence:** after a server restart, the burn uses the linear fallback until
   enough samples exist. This is the accepted trade.
-- Nothing from the statusline's envelope or pool-swap machinery is ported. It existed
-  because every Claude Code session re-emitted its own stale payload; T3 has a single
-  authoritative snapshot per provider instance.
+- Of the statusline's envelope, only its ratchet is ported, as the event rule above. Its
+  vintage repair and pool-swap gate are not: the account-swap pruning covers the swap,
+  and a probe corrects a reading the ratchet would otherwise hold too high. Without
+  vintage, a stale event from before a probe's real drop (a banked reset, say) is still
+  recorded as a rise, so that one case can spike the burn until the next probe.
 
 ### 5.3 Per-thread token usage in the shell (server + contracts)
 

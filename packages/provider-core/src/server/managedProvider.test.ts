@@ -896,11 +896,33 @@ describe("makeManagedServerProvider", () => {
           assert.strictEqual(yield* publishCount, 0);
           assert.strictEqual(yield* provider.getSnapshot, initial);
 
-          // A real drop (a rolling window aging out) still publishes.
+          // Another thread's stale reading lags by more than rounding; still nothing.
           yield* provider.applyUsageLimits({ checkedAt: plus(4), windows: [fiveHour(20, R1)] });
-          assert.strictEqual(yield* publishCount, 1);
-          const dropped = yield* provider.getSnapshot;
+          assert.strictEqual(yield* publishCount, 0);
+          assert.strictEqual(yield* provider.getSnapshot, initial);
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
+    );
+
+    it.effect("publishes a probe's real drop and ratchets later events from it", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { provider, next } = yield* makeUsageProvider(probe(24));
+
+          // A rolling window aging out (OpenCode Go) shows up on a probe.
+          yield* Ref.set(next, probe(20, { at: plus(90) }));
+          const dropped = yield* provider.refresh;
           assert.strictEqual(dropped.usageLimits?.windows[0]?.usedPercent, 20);
+          assert.deepStrictEqual(sessionHistory(dropped)?.at(-1), {
+            at: plus(90),
+            usedPercent: 20,
+          });
+
+          yield* provider.applyUsageLimits({ checkedAt: plus(100), windows: [fiveHour(18, R1)] });
+          assert.strictEqual(
+            (yield* provider.getSnapshot).usageLimits?.windows[0]?.usedPercent,
+            20,
+          );
         }),
       ).pipe(Effect.provide(layerAlwaysRunTest)),
     );

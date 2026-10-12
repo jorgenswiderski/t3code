@@ -167,11 +167,47 @@ describe("usage history", () => {
       ]);
     });
 
-    it("records a drop of more than a point as is (a rolling window aging out)", () => {
+    it("holds a runtime reading of any size below the window's high-water mark", () => {
       const first = record(EMPTY_USAGE_HISTORY, sessionWindow(30), T0);
-      const held = record(first, sessionWindow(29.2), at(61));
+      expect(record(first, sessionWindow(25), at(5))).toBe(first);
+      expect(samplesOf(record(first, sessionWindow(25), at(61)))?.at(-1)?.usedPercent).toBe(30);
+    });
+
+    it("records a probe's drop of more than a point as is (a rolling window aging out)", () => {
+      const probe = (history: ReturnType<typeof recordUsageSamples>, used: number, when: string) =>
+        recordUsageSamples({
+          history,
+          limits: limitsOf(sessionWindow(used)),
+          windowIds: undefined,
+          at: when,
+        });
+      const first = probe(EMPTY_USAGE_HISTORY, 30, T0);
+      const held = probe(first, 29.2, at(61));
       expect(samplesOf(held)?.at(-1)?.usedPercent).toBe(30);
-      expect(samplesOf(record(held, sessionWindow(28.9), at(122)))?.at(-1)?.usedPercent).toBe(28.9);
+      expect(samplesOf(probe(held, 28.9, at(122)))?.at(-1)?.usedPercent).toBe(28.9);
+    });
+
+    it("keeps concurrent threads' stale readings out of the history", () => {
+      // Claude rate-limit events from several threads, 2026-10-12 17:54:18 onward: a thread
+      // whose last API call was earlier reports 43 between the live 48 and 49.
+      const readings: ReadonlyArray<readonly [number, number]> = [
+        [0, 48],
+        [16, 43],
+        [21, 49],
+        [54, 50],
+        [56, 49],
+        [87, 51],
+      ];
+      let history = EMPTY_USAGE_HISTORY;
+      for (const [seconds, used] of readings) {
+        history = record(history, sessionWindow(used), at(seconds));
+      }
+      expect(samplesOf(history)).toEqual([
+        { at: T0, usedPercent: 48 },
+        { at: at(21), usedPercent: 49 },
+        { at: at(54), usedPercent: 50 },
+        { at: at(87), usedPercent: 51 },
+      ]);
     });
 
     it("records a lower reading as is when the window has no reset", () => {
@@ -328,8 +364,19 @@ describe("usage history", () => {
       expect(next.windows[0]).toEqual({ ...sessionWindow(40), history: samples });
     });
 
-    it("publishes a drop of more than a point as is", () => {
-      const next = attachUsageHistory(limitsOf(sessionWindow(38.9)), seeded)!;
+    it("raises a stale reading of any size to the newest sample", () => {
+      const next = attachUsageHistory(limitsOf(sessionWindow(35)), seeded)!;
+      expect(next.windows[0]?.usedPercent).toBe(40);
+    });
+
+    it("publishes a drop the history recorded", () => {
+      const dropped = recordUsageSamples({
+        history: seeded,
+        limits: limitsOf(sessionWindow(38.9)),
+        windowIds: undefined,
+        at: at(61),
+      });
+      const next = attachUsageHistory(limitsOf(sessionWindow(38.9)), dropped)!;
       expect(next.windows[0]?.usedPercent).toBe(38.9);
     });
 
