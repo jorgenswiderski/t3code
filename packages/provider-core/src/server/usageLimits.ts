@@ -161,18 +161,22 @@ const USAGE_HISTORY_HEARTBEAT_MS = 60_000;
 /** The probe reports reset times as ISO strings, events as whole epoch seconds. */
 const USAGE_HISTORY_RESET_TOLERANCE_MS = 60_000;
 /**
- * Points a reading may fall below the previous one of the same reset period
- * and still count as a lagging source: probes and runtime events round
- * differently. A larger drop is real (a rolling window aging out), kept as is.
+ * Points a probe may fall below the previous sample of the same reset period
+ * and still count as lagging: probes and runtime events round differently. A
+ * larger probe drop is real (a rolling window aging out), kept as is.
  */
 const USAGE_HISTORY_LAG_TOLERANCE = 1;
 
-function withoutLag(previous: number | undefined, reading: number): number {
-  return previous !== undefined &&
-    reading < previous &&
-    previous - reading <= USAGE_HISTORY_LAG_TOLERANCE
-    ? previous
-    : reading;
+/**
+ * The reading to record against the previous sample of the same reset period.
+ * A runtime event reports the usage its thread last saw, so with several
+ * threads running a lower one is usually another thread's stale reading:
+ * events only ever raise the window. A probe reads the account directly, so
+ * only its rounding lag is held.
+ */
+function heldReading(previous: number | undefined, reading: number, fromProbe: boolean): number {
+  if (previous === undefined || reading >= previous) return reading;
+  return !fromProbe || previous - reading <= USAGE_HISTORY_LAG_TOLERANCE ? previous : reading;
 }
 
 interface UsageHistoryEntry {
@@ -232,7 +236,7 @@ export function recordUsageSamples(input: {
     // A lagging reading would break the client's burn walk at every dip.
     const usedPercent =
       window.resetsAt !== undefined
-        ? withoutLag(last?.usedPercent, window.usedPercent)
+        ? heldReading(last?.usedPercent, window.usedPercent, windowIds === undefined)
         : window.usedPercent;
     if (
       last !== undefined &&
@@ -255,9 +259,10 @@ export function recordUsageSamples(input: {
 
 /**
  * Publish `history` on the session windows of `limits`, and strip it from any
- * window that should not carry it. A session reading that lags the newest
- * sample of the same reset period is raised to it, so the published value
- * equals the newest sample. Returns `limits` itself when no window changes.
+ * window that should not carry it. A session reading below the newest sample
+ * of the same reset period is raised to it: a drop the history accepted is
+ * already the newest sample, so the published value equals the newest sample.
+ * Returns `limits` itself when no window changes.
  */
 export function attachUsageHistory(
   limits: ServerProviderUsageLimits | undefined,
@@ -271,8 +276,10 @@ export function attachUsageHistory(
     const wanted = samples !== undefined && samples.length > 0 ? samples : undefined;
     const newest = wanted?.at(-1)?.usedPercent;
     const usedPercent =
-      window.resetsAt !== undefined && sameWindowReset(entry?.resetsAt, window.resetsAt)
-        ? withoutLag(newest, window.usedPercent)
+      newest !== undefined &&
+      window.resetsAt !== undefined &&
+      sameWindowReset(entry?.resetsAt, window.resetsAt)
+        ? Math.max(newest, window.usedPercent)
         : window.usedPercent;
     if (window.history === wanted && window.usedPercent === usedPercent) return window;
     changed = true;
