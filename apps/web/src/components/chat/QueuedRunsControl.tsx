@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { isCompactCommandMessage } from "@t3tools/client-runtime/state/composer-dispatch";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import type {
@@ -207,7 +208,12 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !workflow?.canPromoteToSteer) return false;
+      if (
+        !next ||
+        !workflow?.canPromoteToSteer ||
+        isCompactCommandMessage({ text: next.text, attachmentCount: next.attachments.length })
+      )
+        return false;
       if (!repeat && busyRunId === null) void steer(next.run.id);
       return true;
     },
@@ -272,9 +278,16 @@ export function QueuedRunsControl({
         <ComposerBanner.Scroll className={cn("max-h-32", !expanded && "hidden")}>
           <ComposerBanner.Children render={<ol />} id={queueListId}>
             {items.map((item) => {
-              const previewText = replaceComposerContextReferences(item.text, (reference) =>
-                reference.kind === "image" && item.thumbnails.length > 0 ? "" : reference.label,
-              ).trim();
+              // Optimistic rows carry their images only as thumbnails.
+              const isCompact = isCompactCommandMessage({
+                text: item.text,
+                attachmentCount: item.attachments.length || item.thumbnails.length,
+              });
+              const previewText = isCompact
+                ? "Compact context"
+                : replaceComposerContextReferences(item.text, (reference) =>
+                    reference.kind === "image" && item.thumbnails.length > 0 ? "" : reference.label,
+                  ).trim();
               const rowRunId = item.runId;
               const rowServerIndex = item.serverIndex;
               const isEditing = rowRunId !== null && rowRunId === props.editingRunId;
@@ -450,7 +463,8 @@ export function QueuedRunsControl({
                               disabled={
                                 item.runId === null ||
                                 busyRunId !== null ||
-                                !workflow?.canPromoteToSteer
+                                !workflow?.canPromoteToSteer ||
+                                isCompact
                               }
                               onClick={() => {
                                 if (item.runId !== null) {
@@ -463,9 +477,11 @@ export function QueuedRunsControl({
                             </Button>
                           </TooltipTrigger>
                           <TooltipPopup>
-                            {activeRun === null
-                              ? "There is no active run to steer"
-                              : `Send as a steer instead${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                            {isCompact
+                              ? "Compaction runs after the current turn"
+                              : activeRun === null
+                                ? "There is no active run to steer"
+                                : `Send as a steer instead${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
                           </TooltipPopup>
                         </Tooltip>
                         <Tooltip>

@@ -61,6 +61,7 @@ import { derivePhase, type TimelineEntry } from "../session-logic";
 import type { PreviewMiniPlayerSource } from "../previewMiniPlayerStore";
 import type { DesktopPreviewOverlay } from "../previewStateStore";
 import type { RightPanelSurface } from "../rightPanelStore";
+import { isCompactCommandMessage } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
   NO_PROVIDER_MODEL_SELECTION,
   resolveSelectableProviderInstanceEntry,
@@ -1178,6 +1179,42 @@ export interface LocalDispatchSnapshot {
   latestRunCompletedAt: string | null;
   runtimeStatus: NonNullable<Thread["runtime"]>["status"] | null;
   runtimeUpdatedAt: string | null;
+}
+
+type QueuedCompactionMessage = {
+  readonly id: string;
+  readonly text: string;
+  readonly attachments?: ReadonlyArray<unknown> | undefined;
+};
+
+/** Whether a /compact already waits in the queue, committed or still being sent. */
+export function hasQueuedCompaction(input: {
+  projection: {
+    readonly runs: ReadonlyArray<{ readonly status: string; readonly userMessageId: string }>;
+    readonly messages: ReadonlyArray<QueuedCompactionMessage>;
+  } | null;
+  optimisticMessages: ReadonlyArray<QueuedCompactionMessage & Pick<ChatMessage, "inputIntent">>;
+}): boolean {
+  const messages = input.projection?.messages ?? [];
+  const isCompact = (message: QueuedCompactionMessage) =>
+    isCompactCommandMessage({
+      text: message.text,
+      attachmentCount: message.attachments?.length ?? 0,
+    });
+  const queuedOnServer = (input.projection?.runs ?? []).some((run) => {
+    if (run.status !== "queued") return false;
+    const message = messages.find((candidate) => candidate.id === run.userMessageId);
+    return message !== undefined && isCompact(message);
+  });
+  return (
+    queuedOnServer ||
+    input.optimisticMessages.some(
+      (message) =>
+        message.inputIntent === "queued_turn" &&
+        isCompact(message) &&
+        !messages.some((candidate) => candidate.id === message.id),
+    )
+  );
 }
 
 export function createLocalDispatchSnapshot(

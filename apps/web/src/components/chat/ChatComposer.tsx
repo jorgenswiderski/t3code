@@ -1392,6 +1392,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onCompactContext?: (() => void) | undefined;
+  compactQueues: boolean;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
   compactBeforeSendTokens: number | null;
@@ -1408,6 +1409,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
           timestampFormat={props.timestampFormat}
           modelDisplayName={props.activeThreadModelDisplayName}
           onCompact={props.onCompactContext}
+          compactQueues={props.compactQueues}
           compactDisabled={props.compactDisabled}
           compactDisabledReason={props.compactDisabledReason}
         />
@@ -1620,6 +1622,8 @@ export interface ChatComposerProps {
   activeContextWindow: ContextWindowSnapshot | null;
   activeThreadLiveTokenUsage: OrchestrationV2ProviderTurnTokenUsage | null;
   compactThreadUnavailable: boolean;
+  /** The agent is working, so Compact queues behind the current turn. */
+  compactQueues: boolean;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
 
@@ -1768,6 +1772,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeContextWindow,
     activeThreadLiveTokenUsage,
     compactThreadUnavailable,
+    compactQueues,
     compactDisabled,
     compactDisabledReason,
     resolvedTheme,
@@ -4359,7 +4364,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       noProviderAvailable ||
       activePendingApproval !== null ||
       pendingUserInputs.length > 0 ||
-      phase === "running" ||
       isSendBusy ||
       isConnecting ||
       !activeThreadId
@@ -4378,7 +4382,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     noProviderAvailable,
     onCompactContext,
     pendingUserInputs.length,
-    phase,
   ]);
   const expandMobileComposer = useCallback(() => {
     if (composerBlurFrameRef.current !== null) {
@@ -7723,6 +7726,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     compactBeforeSendTokens={props.resumeCompactionTokens}
                     keepFullHistory={props.keepFullHistory}
                     onToggleKeepFullHistory={props.onToggleKeepFullHistory}
+                    compactQueues={compactQueues}
                     compactDisabled={
                       compactDisabled || noProviderAvailable || isSendBusy || isConnecting
                     }

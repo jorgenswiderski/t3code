@@ -1,4 +1,8 @@
-import { findRecordedWorktreeSetup, resolveVisibleWorktreeSetup } from "./ChatView.logic";
+import {
+  findRecordedWorktreeSetup,
+  hasQueuedCompaction,
+  resolveVisibleWorktreeSetup,
+} from "./ChatView.logic";
 import {
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
@@ -742,6 +746,57 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+});
+
+describe("hasQueuedCompaction", () => {
+  const compactMessage = { id: "message-compact", text: "/compact", attachments: [] };
+
+  it("finds a /compact waiting in the server queue", () => {
+    expect(
+      hasQueuedCompaction({
+        projection: {
+          runs: [{ status: "queued", userMessageId: "message-compact" }],
+          messages: [compactMessage],
+        },
+        optimisticMessages: [],
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores a /compact that already started and queued prompts", () => {
+    expect(
+      hasQueuedCompaction({
+        projection: {
+          runs: [
+            { status: "running", userMessageId: "message-compact" },
+            { status: "queued", userMessageId: "message-prompt" },
+          ],
+          messages: [compactMessage, { id: "message-prompt", text: "Summarize", attachments: [] }],
+        },
+        optimisticMessages: [],
+      }),
+    ).toBe(false);
+  });
+
+  it("counts a queued /compact still being sent until the server holds it", () => {
+    const optimistic = { ...compactMessage, inputIntent: "queued_turn" as const };
+    expect(
+      hasQueuedCompaction({
+        projection: { runs: [], messages: [] },
+        optimisticMessages: [optimistic],
+      }),
+    ).toBe(true);
+    // Once the server holds the message, its run decides; a cancelled one no longer counts.
+    expect(
+      hasQueuedCompaction({
+        projection: {
+          runs: [{ status: "cancelled", userMessageId: "message-compact" }],
+          messages: [compactMessage],
+        },
+        optimisticMessages: [optimistic],
+      }),
+    ).toBe(false);
   });
 });
 
