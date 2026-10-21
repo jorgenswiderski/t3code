@@ -512,7 +512,10 @@ import {
   MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
   runMobileComposerTransition,
 } from "./chat/draftHeroTransition";
-import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
+import {
+  composerDispatchModeForMessage,
+  type ComposerDispatchMode,
+} from "@t3tools/client-runtime/state/composer-dispatch";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   agentControlledBrowserCloseConfirmation,
@@ -526,6 +529,7 @@ import {
   dismissBranchMismatchForSession,
   hasEnvironmentReconnectWarningGraceElapsed,
   scheduleEnvironmentReconnectWarning,
+  hasQueuedCompaction,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   shouldShowBranchMismatchBanner,
@@ -3600,6 +3604,7 @@ export default function ChatView(props: ChatViewProps) {
   const compactRequestIsActive =
     (isSendBusy &&
       optimisticCompactionMessage !== undefined &&
+      optimisticCompactionMessage.inputIntent !== "queued_turn" &&
       isCompactCommandMessage(optimisticCompactionMessage)) ||
     (latestServerUserItem?.type === "user_message" &&
       latestServerUserItem.text.trim().toLowerCase() === "/compact" &&
@@ -7491,8 +7496,10 @@ export default function ChatView(props: ChatViewProps) {
 
   // Commands such as /compact and /goal clear run as their own turn. The draft
   // and its attachments stay local.
+  // `queue` holds the command until the running turn ends instead of starting a turn now.
   const sendStandaloneCommand = useCallback(
-    async (text: string, failureMessage: string) => {
+    async (text: string, failureMessage: string, options?: { queue?: boolean }) => {
+      const queue = options?.queue === true;
       if (!activeThread || !clientSettingsHydrated || sendInFlightRef.current) return;
       const context = composerRef.current?.getSendContext();
       if (!context?.providerAvailable) return;
@@ -7513,9 +7520,11 @@ export default function ChatView(props: ChatViewProps) {
           createdAt,
           updatedAt: createdAt,
           streaming: false,
+          ...(queue ? { inputIntent: "queued_turn" as const } : {}),
         },
       ]);
-      scrollToEnd();
+      // A queued command waits in the composer queue, so the timeline stays put.
+      if (!queue) scrollToEnd();
       try {
         const settingsResult = await persistThreadSettingsForNextTurn({
           threadId,
@@ -7537,6 +7546,7 @@ export default function ChatView(props: ChatViewProps) {
                   modelSelection: context.selectedModelSelection,
                   runtimeMode,
                   interactionMode: context.interactionMode,
+                  ...(queue ? { dispatchMode: "queue" as const } : {}),
                   createdAt,
                 },
               });
@@ -7736,6 +7746,14 @@ export default function ChatView(props: ChatViewProps) {
       item.type === "user_message" &&
       (item.text.trim().toLowerCase() !== "/compact" || item.attachments.length > 0),
   );
+  // A compaction already running or waiting in the queue covers a new request.
+  const compactionPending =
+    isCompacting ||
+    hasQueuedCompaction({
+      projection: serverProjection,
+      optimisticMessages: optimisticUserMessages,
+    });
+  // While the agent works, Compact queues to run once the thread is idle.
   const compactThreadUnavailable =
     !canOperateThread ||
     !activeThread ||
@@ -7743,7 +7761,7 @@ export default function ChatView(props: ChatViewProps) {
     !activeProject ||
     !isServerThread ||
     !manualCompactionProviderAvailable ||
-    isWorking ||
+    compactionPending ||
     isRevertingCheckpoint ||
     threadDetailLoading ||
     isPreparingWorktree ||
@@ -7760,7 +7778,11 @@ export default function ChatView(props: ChatViewProps) {
         ? "Choose a project before compacting"
         : !manualCompactionProviderAvailable
           ? "Compaction is unavailable for this provider"
-          : "Compacting is unavailable right now"
+          : isCompacting
+            ? "Compacting context"
+            : compactionPending
+              ? "Compaction queued"
+              : "Compacting is unavailable right now"
     : null;
   // Tokens a stale Claude session would re-read on its next turn. While set,
   // the composer shows a Compact chip and Enter compacts first; turning the
@@ -7771,6 +7793,7 @@ export default function ChatView(props: ChatViewProps) {
     !resumeCompactionPermanentlyDismissed &&
     !nativeResumeCompactionDismissed &&
     !compactDisabled &&
+    !isWorking &&
     !hasHeldQueuedRuns &&
     multipleModelSelections === null &&
     shouldOfferResumeCompaction({
@@ -8724,7 +8747,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const onCompactContext = () => {
     if (compactDisabled) return;
-    void sendStandaloneCommand("/compact", "Failed to compact context.");
+    void sendStandaloneCommand("/compact", "Failed to compact context.", { queue: isWorking });
   };
 
   const onResume = async () => {
@@ -9340,6 +9363,27 @@ export default function ChatView(props: ChatViewProps) {
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
+    const sendDispatchMode = composerDispatchModeForMessage(dispatchMode, {
+      text: messageTextForSend,
+      attachmentCount: composerAttachmentsSnapshot.length,
+    });
+    // A compaction already running or queued covers a typed /compact.
+    if (
+      compactionPending &&
+      composerAttachmentsSnapshot.length === 0 &&
+      messageTextForSend.toLowerCase() === "/compact"
+    ) {
+      promptRef.current = "";
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState();
+      toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title: isCompacting ? "Already compacting context" : "Compaction already queued",
+        }),
+      );
+      return;
+    }
     // A stale Claude session compacts before this message so the turn does not re-read the
     // old history. The message queues behind the /compact run, since steering into it is
     // rejected.
@@ -9347,11 +9391,12 @@ export default function ChatView(props: ChatViewProps) {
       resumeCompactionTokens !== null &&
       !keepFullHistory &&
       messageTextForSend.toLowerCase() !== "/compact";
-    const turnDispatchMode = compactBeforeSend || sendQueuesBehindSetup ? "queue" : dispatchMode;
+    const turnDispatchMode =
+      compactBeforeSend || sendQueuesBehindSetup ? "queue" : sendDispatchMode;
     const shouldQueueBehindActiveRun =
       compactBeforeSend ||
       sendQueuesBehindSetup ||
-      (phase === "running" && dispatchMode === "queue");
+      (phase === "running" && sendDispatchMode === "queue");
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
@@ -9859,7 +9904,7 @@ export default function ChatView(props: ChatViewProps) {
         streaming: false,
         ...(shouldQueueBehindActiveRun
           ? { inputIntent: "queued_turn" as const }
-          : phase === "running" && dispatchMode === "steer"
+          : phase === "running" && sendDispatchMode === "steer"
             ? { inputIntent: "steer" as const }
             : {}),
       },
@@ -11818,6 +11863,7 @@ export default function ChatView(props: ChatViewProps) {
                               activeTasksProgress={activeComposerTasksProgress}
                               activeTaskSteps={activeComposerTaskSteps}
                               compactThreadUnavailable={compactThreadUnavailable}
+                              compactQueues={isWorking}
                               compactDisabled={compactDisabled}
                               compactDisabledReason={compactDisabledReason}
                               resolvedTheme={resolvedTheme}

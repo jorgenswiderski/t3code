@@ -41,6 +41,8 @@ export function ContextWindowMeter(props: {
   timestampFormat: TimestampFormat;
   modelDisplayName?: string | null;
   onCompact?: (() => void) | undefined;
+  /** The agent is working, so compacting waits in the queue until it finishes. */
+  compactQueues?: boolean | undefined;
   compactDisabled?: boolean | undefined;
   compactDisabledReason?: string | null | undefined;
 }) {
@@ -51,6 +53,7 @@ export function ContextWindowMeter(props: {
     timestampFormat,
     modelDisplayName,
     onCompact,
+    compactQueues,
     compactDisabled,
     compactDisabledReason,
   } = props;
@@ -162,7 +165,7 @@ export function ContextWindowMeter(props: {
                 onClick={onCompact}
               >
                 <Minimize2Icon aria-hidden="true" />
-                Compact context
+                {compactQueues ? "Queue compaction" : "Compact context"}
               </Button>
               {compactDisabled && compactDisabledReason ? (
                 <div className="text-pretty text-secondary-label text-2xs">

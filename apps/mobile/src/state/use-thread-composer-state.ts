@@ -80,6 +80,7 @@ import {
   useComposerDraft,
 } from "./use-composer-drafts";
 import {
+  composerDispatchModeForMessage,
   resolveComposerDispatchMode,
   type ActiveTurnComposerAction,
 } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -672,11 +673,15 @@ export function useThreadComposerState() {
       // Steering travels as "auto" so a turn that ends in the meantime degrades
       // to a queued run on the server instead of failing the delivery and
       // bouncing the message back into the draft.
-      const followUpAction = resolveComposerDispatchMode({
-        running: activeThreadBusy && canSteerActiveTurn,
-        alternateModifier: followUpOverride !== undefined && followUpOverride !== followUpBehavior,
-        activeTurnDefault: followUpBehavior,
-      });
+      const followUpAction = composerDispatchModeForMessage(
+        resolveComposerDispatchMode({
+          running: activeThreadBusy && canSteerActiveTurn,
+          alternateModifier:
+            followUpOverride !== undefined && followUpOverride !== followUpBehavior,
+          activeTurnDefault: followUpBehavior,
+        }),
+        { text, attachmentCount: attachments.length },
+      );
       // A send while the worktree is still being set up waits behind that setup,
       // so the server can hold it if the setup ends without a worktree.
       // Before detail loads, the shell's latest run can be a queued follow-up

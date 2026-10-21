@@ -20,6 +20,27 @@ export function resolveComposerDispatchMode(input: {
   return defaultAction;
 }
 
+/** A bare `/compact`, which the server runs as a compaction turn of its own. */
+export function isCompactCommandMessage(message: {
+  readonly text: string;
+  readonly attachmentCount: number;
+}): boolean {
+  return message.attachmentCount === 0 && message.text.trim().toLowerCase() === "/compact";
+}
+
+/**
+ * The server refuses to steer or restart a running turn with `/compact`, so a
+ * compaction sent mid-turn queues to run once the thread is idle.
+ */
+export function composerDispatchModeForMessage(
+  mode: ComposerDispatchMode,
+  message: { readonly text: string; readonly attachmentCount: number },
+): ComposerDispatchMode {
+  return (mode === "steer" || mode === "restart") && isCompactCommandMessage(message)
+    ? "queue"
+    : mode;
+}
+
 /** What the alternate would do, for labelling the affordance that triggers it. */
 export function alternateComposerDispatchAction(
   activeTurnDefault?: ActiveTurnComposerAction,
