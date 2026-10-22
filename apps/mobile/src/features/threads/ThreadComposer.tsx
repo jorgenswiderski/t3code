@@ -692,6 +692,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       },
       runtimeMode: currentRuntimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
+      autoCompact: { kind: "thread", threadId: props.selectedThread.id },
     }),
     [
       currentModelSelection,
@@ -699,6 +700,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       currentRuntimeMode,
       props.onUpdateModelSelection,
       props.onUpdateRuntimeMode,
+      props.selectedThread.id,
       providerOptionDescriptors,
       settingsOwnerId,
       lockedProviderInstanceId,
