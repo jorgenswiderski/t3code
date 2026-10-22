@@ -100,8 +100,9 @@ import {
   projectionFor,
 } from "../testkit/fixtures/shared.ts";
 
-const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
-const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
+const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+const DEFAULT_CLAUDE_SETTINGS = decodeClaudeSettings({});
+const AUTO_COMPACT_CLAUDE_SETTINGS = decodeClaudeSettings({
   autoCompactWindow: "300000",
 });
 const CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
@@ -131,6 +132,11 @@ const CLAUDE_TEST_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
   model: "claude-sonnet-4-6",
   options: [{ id: "effort", value: "ultrathink" }],
+} satisfies ModelSelection;
+/** A bundled model with a fixed 1M context window, so per-thread values are never at the window. */
+const CLAUDE_1M_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+  model: "claude-opus-5-5",
 } satisfies ModelSelection;
 const CLAUDE_TEST_RUNTIME_POLICY = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
   runtimeMode: "full-access",
@@ -285,9 +291,74 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       supportedDialogKinds: ["resume_return"],
     });
 
-    assert.equal((options.settings as { autoCompactWindow?: number }).autoCompactWindow, 300_000);
+    // The instance value means "compacts at about N"; the SDK window adds Claude's buffer.
+    assert.equal((options.settings as { autoCompactWindow?: number }).autoCompactWindow, 333_000);
     assert.equal(options.onUserDialog, onUserDialog);
     assert.deepEqual(options.supportedDialogKinds, ["resume_return"]);
+  });
+
+  const autoCompactWindowOf = (options: { readonly settings?: unknown }) =>
+    (options.settings as { autoCompactWindow?: number } | undefined)?.autoCompactWindow;
+
+  it("thread auto-compact value wins over the instance window", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_1M_MODEL_SELECTION,
+      nativeThreadId: "native-thread-auto-compact",
+      resume: false,
+      cwd: "/workspace",
+      settings: AUTO_COMPACT_CLAUDE_SETTINGS,
+      threadAutoCompactTokens: 200_000,
+    });
+    assert.equal(autoCompactWindowOf(options), 233_000);
+  });
+
+  it("null thread value converts the instance value like a thread value", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_1M_MODEL_SELECTION,
+      nativeThreadId: "native-thread-auto-compact",
+      resume: false,
+      cwd: "/workspace",
+      settings: AUTO_COMPACT_CLAUDE_SETTINGS,
+      threadAutoCompactTokens: null,
+    });
+    assert.equal(autoCompactWindowOf(options), 333_000);
+  });
+
+  it("instance 1_000_000 sends the SDK maximum", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_1M_MODEL_SELECTION,
+      nativeThreadId: "native-thread-auto-compact",
+      resume: false,
+      cwd: "/workspace",
+      settings: decodeClaudeSettings({ autoCompactWindow: "1000000" }),
+    });
+    assert.equal(autoCompactWindowOf(options), 1_000_000);
+  });
+
+  it("no thread or instance value omits autoCompactWindow", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_1M_MODEL_SELECTION,
+      nativeThreadId: "native-thread-auto-compact",
+      resume: false,
+      cwd: "/workspace",
+      settings: DEFAULT_CLAUDE_SETTINGS,
+    });
+    assert.isFalse("autoCompactWindow" in (options.settings ?? {}));
+  });
+
+  it("keeps selection settings alongside the thread window", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        ...CLAUDE_TEST_MODEL_SELECTION,
+        model: "claude-haiku-4-5",
+        options: [{ id: "thinking", value: false }],
+      },
+      nativeThreadId: "native-thread-auto-compact",
+      resume: false,
+      cwd: "/workspace",
+      threadAutoCompactTokens: 150_000,
+    });
+    assert.include(options.settings, { alwaysThinkingEnabled: false, autoCompactWindow: 183_000 });
   });
 
   it("projects AskUserQuestion input with question text as the answer key", () => {

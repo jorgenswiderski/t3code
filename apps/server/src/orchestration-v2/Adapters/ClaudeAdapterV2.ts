@@ -110,7 +110,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import { planClaudeSkillDispatch } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
-import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
+import { compileClaudeModelSelection, resolveClaudeAutoCompact } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
@@ -1001,6 +1001,8 @@ export function makeClaudeQueryOptions(input: {
    */
   readonly attachmentsDir?: string;
   readonly settings?: ClaudeSettings;
+  /** The thread's stored auto-compact value (user-facing tokens); wins over the instance setting. */
+  readonly threadAutoCompactTokens?: number | null;
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
@@ -1039,12 +1041,17 @@ export function makeClaudeQueryOptions(input: {
       : typeof input.sdkSettings === "object" && input.sdkSettings !== null
         ? ({ ...input.sdkSettings, ...selectionSettings } as ClaudeSdkSettings)
         : selectionSettings;
+  const { sdkWindow } = resolveClaudeAutoCompact({
+    stored: input.threadAutoCompactTokens,
+    modelSelection: input.modelSelection,
+    settings: input.settings,
+  });
   const effectiveQuerySettings =
-    input.settings?.autoCompactWindow === undefined || input.settings.autoCompactWindow.length === 0
+    sdkWindow === undefined
       ? querySettings
       : ({
           ...(typeof querySettings === "object" && querySettings !== null ? querySettings : {}),
-          autoCompactWindow: Number(input.settings.autoCompactWindow),
+          autoCompactWindow: sdkWindow,
         } as ClaudeSdkSettings);
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
