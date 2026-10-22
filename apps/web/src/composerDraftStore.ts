@@ -18,6 +18,7 @@ import {
   PastedTextAttachmentSource,
   type PreviewAnnotationPayload,
   RuntimeMode,
+  ThreadAutoCompactTokens,
   ThreadContextRecord,
   type ServerProvider,
   type ScopedProjectRef,
@@ -259,6 +260,8 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
+  // Pre-creation auto-compact cap; only non-null values are persisted.
+  autoCompactTokens: Schema.optionalKey(ThreadAutoCompactTokens),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -414,6 +417,8 @@ export interface ComposerThreadDraftState {
   modelSelectionExplicit?: boolean;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
+  /** Per-thread auto-compact cap chosen before the thread exists; null = provider default. */
+  autoCompactTokens: number | null;
 }
 
 /**
@@ -632,6 +637,10 @@ interface ComposerDraftStoreState {
   setInteractionMode: (
     threadRef: ComposerThreadTarget,
     interactionMode: ProviderInteractionMode | null | undefined,
+  ) => void;
+  setAutoCompactTokens: (
+    threadRef: ComposerThreadTarget,
+    tokens: number | null | undefined,
   ) => void;
   addImage: (threadRef: ComposerThreadTarget, image: ComposerImageAttachment) => boolean;
   /** Returns the ids the draft accepted; duplicates and over-cap attachments are left out. */
@@ -866,6 +875,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   activeProvider: null,
   runtimeMode: null,
   interactionMode: null,
+  autoCompactTokens: null,
 });
 
 /**
@@ -889,6 +899,7 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     activeProvider: null,
     runtimeMode: null,
     interactionMode: null,
+    autoCompactTokens: null,
   };
 }
 
@@ -983,7 +994,8 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
-    draft.interactionMode === null
+    draft.interactionMode === null &&
+    draft.autoCompactTokens === null
   );
 }
 
@@ -1711,7 +1723,15 @@ function removeDraftThreadReferences(
     state.draftThreadsByThreadKey;
   const { [threadKey]: removedComposerDraft, ...restDraftsByThreadKey } = state.draftsByThreadKey;
   if (composerDestination && removedComposerDraft) {
-    restDraftsByThreadKey[composerTargetKey(composerDestination)] = removedComposerDraft;
+    // The auto-compact cap is a pre-creation setting: the created thread owns the value now,
+    // so it must not linger in the canonical thread's composer draft.
+    const carriedDraft: ComposerThreadDraftState = {
+      ...removedComposerDraft,
+      autoCompactTokens: null,
+    };
+    if (!shouldRemoveDraft(carriedDraft)) {
+      restDraftsByThreadKey[composerTargetKey(composerDestination)] = carriedDraft;
+    }
   } else {
     revokeDraftThreadPreviewUrls(removedComposerDraft);
   }
@@ -1996,6 +2016,9 @@ function normalizePersistedDraftsByThreadId(
       draftCandidate.interactionMode === "plan" || draftCandidate.interactionMode === "default"
         ? draftCandidate.interactionMode
         : null;
+    const autoCompactTokens = Schema.is(ThreadAutoCompactTokens)(draftCandidate.autoCompactTokens)
+      ? draftCandidate.autoCompactTokens
+      : null;
     const contextIds = new Map<string, string>();
     for (const [kind, entries] of [
       ["image", attachments],
@@ -2091,7 +2114,8 @@ function normalizePersistedDraftsByThreadId(
       threadContexts.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
-      !interactionMode
+      !interactionMode &&
+      autoCompactTokens === null
     ) {
       continue;
     }
@@ -2124,6 +2148,7 @@ function normalizePersistedDraftsByThreadId(
         : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
       ...(interactionMode ? { interactionMode } : {}),
+      ...(autoCompactTokens !== null ? { autoCompactTokens } : {}),
     };
   }
 
@@ -2162,7 +2187,11 @@ function stripLegacyModelSeedsFromEmptyDraftSessions(
         modelSelectionExplicit: _modelSelectionExplicit,
         ...retained
       } = draft;
-      return retained.runtimeMode || retained.interactionMode ? [[threadKey, retained]] : [];
+      return retained.runtimeMode ||
+        retained.interactionMode ||
+        retained.autoCompactTokens !== undefined
+        ? [[threadKey, retained]]
+        : [];
     }),
   );
 }
@@ -2227,7 +2256,8 @@ export function partializeComposerDraftStoreState(
       draft.threadContexts.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
-      draft.interactionMode === null
+      draft.interactionMode === null &&
+      draft.autoCompactTokens === null
     ) {
       continue;
     }
@@ -2294,6 +2324,7 @@ export function partializeComposerDraftStoreState(
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
       ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
+      ...(draft.autoCompactTokens !== null ? { autoCompactTokens: draft.autoCompactTokens } : {}),
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
@@ -2569,6 +2600,7 @@ function toHydratedThreadDraft(
     ...(persistedDraft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
+    autoCompactTokens: persistedDraft.autoCompactTokens ?? null,
   };
 }
 
@@ -3411,6 +3443,34 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextDraft: ComposerThreadDraftState = {
               ...base,
               interactionMode: nextInteractionMode,
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        setAutoCompactTokens: (threadRef, tokens) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          const nextTokens = tokens ?? null;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey];
+            if (!existing && nextTokens === null) {
+              return state;
+            }
+            const base = existing ?? createEmptyThreadDraft();
+            if (base.autoCompactTokens === nextTokens) {
+              return state;
+            }
+            const nextDraft: ComposerThreadDraftState = {
+              ...base,
+              autoCompactTokens: nextTokens,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
