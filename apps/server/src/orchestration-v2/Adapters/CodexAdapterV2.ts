@@ -16,6 +16,7 @@ import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapsh
 import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
 import {
   buildCodexInitializeParams,
+  CODEX_THREAD_AUTO_COMPACT_RANGE,
   codexAppServerEnvironment,
 } from "../../provider/CodexProvider.ts";
 import {
@@ -38,6 +39,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { resolveEffectiveAutoCompactTokens } from "@t3tools/shared/threadAutoCompact";
 import type {
   ChatAttachment,
   OrchestrationV2AppThread,
@@ -1300,10 +1302,31 @@ export class CodexAppServerClientFactory extends Context.Service<
  */
 export const CODEX_THREAD_CONFIG = { "tools.update_plan.enabled": true } as const;
 
+/** Codex config key for the absolute token count at which a thread compacts. */
+export const CODEX_AUTO_COMPACT_LIMIT_KEY = "model_auto_compact_token_limit" as const;
+
+/**
+ * The limit to load a Codex thread with, or null to leave Codex's own default. Codex has no
+ * live path to change it, so this is only read when a native thread is started, forked or
+ * freshly resumed. A missing window is safe: Codex itself caps the limit at 90% of it.
+ */
+export function codexEffectiveAutoCompactTokens(input: {
+  readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly windowTokens?: number | null;
+}): number | null {
+  return resolveEffectiveAutoCompactTokens({
+    stored: input.runtimePolicy?.autoCompactTokens,
+    range: CODEX_THREAD_AUTO_COMPACT_RANGE,
+    windowTokens: input.windowTokens,
+  });
+}
+
 export function codexThreadRuntimeParams(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  /** Already-resolved effective limit (see `codexEffectiveAutoCompactTokens`); null omits it. */
+  readonly autoCompactTokens?: number | null;
 }): {
   readonly cwd?: string;
   readonly model?: string;
@@ -1315,6 +1338,9 @@ export function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      ...(input.autoCompactTokens == null
+        ? {}
+        : { [CODEX_AUTO_COMPACT_LIMIT_KEY]: input.autoCompactTokens }),
       ...(mcpSession === undefined
         ? {}
         : {

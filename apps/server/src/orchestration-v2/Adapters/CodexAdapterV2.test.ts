@@ -677,6 +677,71 @@ describe("CodexAdapterV2 process spawning", () => {
     );
   });
 
+  describe("auto-compact limit", () => {
+    const baseRuntimePolicy = {
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    } as const;
+
+    it("adds the limit key to thread config when a cap is set", () => {
+      assert.deepEqual(
+        CodexAdapterV2.codexThreadRuntimeParams({
+          mcpSession: undefined,
+          autoCompactTokens: 300_000,
+        }).config,
+        { "tools.update_plan.enabled": true, model_auto_compact_token_limit: 300_000 },
+      );
+    });
+
+    it("omits the limit key for a null or absent cap", () => {
+      const absent = CodexAdapterV2.codexThreadRuntimeParams({ mcpSession: undefined });
+      assert.deepEqual(absent.config, CodexAdapterV2.CODEX_THREAD_CONFIG);
+      assert.deepEqual(
+        CodexAdapterV2.codexThreadRuntimeParams({ mcpSession: undefined, autoCompactTokens: null })
+          .config,
+        CodexAdapterV2.CODEX_THREAD_CONFIG,
+      );
+    });
+
+    it("sends both the limit key and mcp_servers when both apply", () => {
+      const config = CodexAdapterV2.codexThreadRuntimeParams({
+        mcpSession: {
+          environmentId: EnvironmentId.make("environment-codex-mcp"),
+          threadId: ThreadId.make("thread-codex-mcp"),
+          providerSessionId: "mcp-session-codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer secret-codex-token",
+          browserToolsAvailable: true,
+        },
+        autoCompactTokens: 200_000,
+      }).config;
+      assert.equal(config.model_auto_compact_token_limit, 200_000);
+      assert.isDefined(config.mcp_servers);
+    });
+
+    it("resolves the effective limit: unset, in range, clamped, and at or above the window", () => {
+      const resolve = (
+        autoCompactTokens: number | null | undefined,
+        windowTokens?: number | null,
+      ) =>
+        CodexAdapterV2.codexEffectiveAutoCompactTokens({
+          runtimePolicy:
+            autoCompactTokens === undefined
+              ? baseRuntimePolicy
+              : { ...baseRuntimePolicy, autoCompactTokens },
+          windowTokens,
+        });
+      assert.equal(resolve(undefined), null);
+      assert.equal(resolve(null), null);
+      assert.equal(resolve(300_000, null), 300_000);
+      assert.equal(resolve(50_000), 100_000);
+      assert.equal(resolve(5_000_000), 1_000_000);
+      assert.equal(resolve(300_000, 272_000), null);
+      assert.equal(CodexAdapterV2.codexEffectiveAutoCompactTokens({}), null);
+    });
+  });
+
   it.effect("resolves Windows command shims through the shared spawn policy", () =>
     Effect.gen(function* () {
       const command = yield* CodexAdapterV2.makeCodexAppServerSpawnCommand({
