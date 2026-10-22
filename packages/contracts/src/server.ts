@@ -248,7 +248,8 @@ export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 export const ServerProviderThreadAutoCompact = Schema.Struct({
   minTokens: PositiveInt,
   maxTokens: PositiveInt,
-  /** The instance default in user-facing tokens; absent = the provider's own default. */
+  /** The instance default in user-facing tokens; absent = the provider's own default. It does
+      not apply to a model whose window is at or below it (see `@t3tools/shared/threadAutoCompact`). */
   defaultTokens: Schema.optional(PositiveInt),
 });
 export type ServerProviderThreadAutoCompact = typeof ServerProviderThreadAutoCompact.Type;

@@ -967,7 +967,8 @@ export type OrchestrationV2ProviderGoal = typeof OrchestrationV2ProviderGoal.Typ
 /** What the live provider process for a provider thread compacts at. */
 export const OrchestrationV2AppliedAutoCompact = Schema.Struct({
   /** User-facing tokens the process actually runs with, including an instance default;
-      null = the provider's built-in behaviour (no per-thread and no instance value). */
+      null = the provider's built-in behaviour (no per-thread or instance value below the
+      model's window). Clients read a value at or above the window they know as null too. */
   tokens: Schema.NullOr(PositiveInt),
 });
 export type OrchestrationV2AppliedAutoCompact = typeof OrchestrationV2AppliedAutoCompact.Type;
