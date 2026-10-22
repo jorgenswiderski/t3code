@@ -11,6 +11,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import {
+  buildServerProvider,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
@@ -178,5 +179,33 @@ describe("ProviderCommandNotFoundError", () => {
       expect(error).not.toHaveProperty("stderr");
       expect(error.message).not.toContain("secret-token-value");
     });
+  });
+});
+
+describe("buildServerProvider", () => {
+  const baseInput = {
+    enabled: true,
+    checkedAt: "2026-10-22T00:00:00.000Z",
+    models: [],
+    probe: {
+      installed: true,
+      version: "1.0.0",
+      status: "ready" as const,
+      auth: { status: "authenticated" as const },
+    },
+  };
+
+  it("omits threadAutoCompact when the presentation has none", () => {
+    const result = buildServerProvider({ ...baseInput, presentation: { displayName: "Claude" } });
+    expect("threadAutoCompact" in result).toBe(false);
+  });
+
+  it("copies threadAutoCompact from the presentation", () => {
+    const threadAutoCompact = { minTokens: 100_000, maxTokens: 1_000_000, defaultTokens: 300_000 };
+    const result = buildServerProvider({
+      ...baseInput,
+      presentation: { displayName: "Claude", threadAutoCompact },
+    });
+    expect(result.threadAutoCompact).toEqual(threadAutoCompact);
   });
 });
