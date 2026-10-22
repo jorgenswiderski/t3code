@@ -1,8 +1,14 @@
-import type { ThreadAutoCompactView } from "@t3tools/client-runtime/thread-auto-compact";
+import {
+  contextWindowTokensFromSelection,
+  deriveThreadAutoCompactView,
+  type ThreadAutoCompactView,
+} from "@t3tools/client-runtime/thread-auto-compact";
 import type {
   ModelSelection,
+  OrchestrationV2AppliedAutoCompact,
   ProviderDriverKind,
   ProviderInstanceId,
+  ServerProviderModel,
   ServerProviderThreadAutoCompact,
 } from "@t3tools/contracts";
 import {
@@ -187,4 +193,69 @@ export function shouldIgnoreMeterClose(input: {
   readonly editing: boolean;
 }): boolean {
   return !input.nextOpen && input.reason === "trigger-hover" && input.editing;
+}
+
+/**
+ * Whether a thread that has not started (so has no usage) gets the empty ring, which carries the
+ * auto-compact control. The populated meter and the loading placeholder own their own slots.
+ */
+export function shouldShowEmptyContextWindowMeter(input: {
+  readonly meterEnabled: boolean;
+  readonly hasCapability: boolean;
+  readonly hasSnapshot: boolean;
+  readonly threadStarted: boolean;
+  readonly reservingPlaceholder: boolean;
+}): boolean {
+  return (
+    input.meterEnabled &&
+    input.hasCapability &&
+    !input.hasSnapshot &&
+    !input.threadStarted &&
+    !input.reservingPlaceholder
+  );
+}
+
+/**
+ * Meter state for the auto-compact control, or null when the selected provider instance does not
+ * declare the capability. `applied` only counts when the composer still points at the instance the
+ * live process runs under; another instance will start fresh, so nothing is pending.
+ */
+export function resolveContextWindowAutoCompact(input: {
+  readonly capability: ServerProviderThreadAutoCompact | undefined;
+  readonly providerDisplayName: string;
+  readonly stored: number | null | undefined;
+  readonly applied: OrchestrationV2AppliedAutoCompact | null | undefined;
+  readonly threadProviderInstanceId: ProviderInstanceId | null;
+  readonly selectedInstanceId: ProviderInstanceId;
+  readonly snapshotMaxTokens: number | null;
+  readonly selection: ModelSelection;
+  readonly selectedModel: ServerProviderModel | undefined;
+  readonly canChange: boolean;
+  readonly changeDeniedReason: string | null;
+  readonly onChange: (tokens: number | null) => void;
+}): ContextWindowAutoCompact | null {
+  const { capability } = input;
+  if (capability === undefined) return null;
+  const windowTokens =
+    input.snapshotMaxTokens ??
+    contextWindowTokensFromSelection(input.selection, input.selectedModel);
+  const applied =
+    input.selectedInstanceId === input.threadProviderInstanceId ? (input.applied ?? null) : null;
+  const view = deriveThreadAutoCompactView({
+    capability,
+    providerDisplayName: input.providerDisplayName,
+    stored: input.stored,
+    applied,
+    windowTokens,
+  });
+  if (view === null) return null;
+  return {
+    view,
+    capability,
+    windowTokens,
+    appliedTokens: applied?.tokens ?? null,
+    disabled: !input.canChange,
+    disabledReason: input.canChange ? null : input.changeDeniedReason,
+    onChange: input.onChange,
+  };
 }

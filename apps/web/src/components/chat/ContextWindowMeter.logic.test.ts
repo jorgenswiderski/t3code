@@ -1,4 +1,10 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ModelSelection,
+  type ServerProvider,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
@@ -7,8 +13,10 @@ import {
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
   formatContextWindowCost,
+  resolveContextWindowAutoCompact,
   resolveContextWindowModelDisplayName,
   shouldIgnoreMeterClose,
+  shouldShowEmptyContextWindowMeter,
   shouldOfferResumeCompaction,
   shouldReserveContextWindowMeter,
 } from "./ContextWindowMeter.logic";
@@ -338,5 +346,129 @@ describe("shouldIgnoreMeterClose", () => {
     expect(shouldIgnoreMeterClose({ nextOpen: true, reason: "trigger-hover", editing: true })).toBe(
       false,
     );
+  });
+});
+
+describe("shouldShowEmptyContextWindowMeter", () => {
+  const base = {
+    meterEnabled: true,
+    hasCapability: true,
+    hasSnapshot: false,
+    threadStarted: false,
+    reservingPlaceholder: false,
+  };
+
+  it.each([
+    ["new thread with the capability", {}, true],
+    ["ring setting off", { meterEnabled: false }, false],
+    ["older server or unsupported provider", { hasCapability: false }, false],
+    ["populated meter takes over", { hasSnapshot: true }, false],
+    ["started thread without usage", { threadStarted: true }, false],
+    ["placeholder owns the slot", { reservingPlaceholder: true }, false],
+  ] as const)("%s", (_name, overrides, expected) => {
+    expect(shouldShowEmptyContextWindowMeter({ ...base, ...overrides })).toBe(expected);
+  });
+});
+
+describe("resolveContextWindowAutoCompact", () => {
+  const capability = { minTokens: 100_000, maxTokens: 1_000_000 };
+  const claude = ProviderInstanceId.make("claudeAgent");
+  const other = ProviderInstanceId.make("claudeAgent_work");
+  const selection = (options?: ModelSelection["options"]): ModelSelection => ({
+    instanceId: claude,
+    model: "claude-opus-4-8",
+    ...(options ? { options } : {}),
+  });
+  const onChange = () => undefined;
+  const base = {
+    capability,
+    providerDisplayName: "Claude",
+    stored: null,
+    applied: null,
+    threadProviderInstanceId: claude,
+    selectedInstanceId: claude,
+    snapshotMaxTokens: 1_000_000,
+    selection: selection(),
+    selectedModel: undefined,
+    canChange: true,
+    changeDeniedReason: null,
+    onChange,
+  };
+  const fixedWindowModel = (contextWindowTokens: number): ServerProviderModel => ({
+    slug: "claude-opus-4-8",
+    name: "Claude Opus",
+    isCustom: false,
+    capabilities: null,
+    contextWindowTokens,
+  });
+
+  it("is null without the capability", () => {
+    expect(resolveContextWindowAutoCompact({ ...base, capability: undefined })).toBeNull();
+  });
+
+  it("derives the tick from the stored value and the snapshot window", () => {
+    const result = resolveContextWindowAutoCompact({ ...base, stored: 400_000 });
+    expect(result?.view.tickFraction).toBeCloseTo(0.4);
+    expect(result?.windowTokens).toBe(1_000_000);
+    expect(result?.disabled).toBe(false);
+  });
+
+  it("shows a change as pending against the live process", () => {
+    const result = resolveContextWindowAutoCompact({
+      ...base,
+      stored: 300_000,
+      applied: { tokens: null },
+    });
+    expect(result?.view.pending).toBe(true);
+    expect(result?.appliedTokens).toBeNull();
+  });
+
+  it("ignores the applied report when the picker points at another instance", () => {
+    const result = resolveContextWindowAutoCompact({
+      ...base,
+      stored: 300_000,
+      applied: { tokens: null },
+      selectedInstanceId: other,
+    });
+    expect(result?.view.pending).toBe(false);
+  });
+
+  it("falls back to the selection's context window option", () => {
+    const result = resolveContextWindowAutoCompact({
+      ...base,
+      snapshotMaxTokens: null,
+      selection: selection([{ id: "contextWindow", value: "1m" }]),
+    });
+    expect(result?.windowTokens).toBe(1_000_000);
+  });
+
+  it("falls back to the model's fixed window", () => {
+    const result = resolveContextWindowAutoCompact({
+      ...base,
+      snapshotMaxTokens: null,
+      selectedModel: fixedWindowModel(1_000_000),
+    });
+    expect(result?.windowTokens).toBe(1_000_000);
+  });
+
+  it("has no window and no tick when nothing reports one", () => {
+    const result = resolveContextWindowAutoCompact({
+      ...base,
+      stored: 400_000,
+      snapshotMaxTokens: null,
+    });
+    expect(result?.windowTokens).toBeNull();
+    expect(result?.view.tickFraction).toBeNull();
+  });
+
+  it("disables the control with the reason when the connection cannot change threads", () => {
+    const result = resolveContextWindowAutoCompact({
+      ...base,
+      stored: 400_000,
+      canChange: false,
+      changeDeniedReason: "X",
+    });
+    expect(result?.disabled).toBe(true);
+    expect(result?.disabledReason).toBe("X");
   });
 });
