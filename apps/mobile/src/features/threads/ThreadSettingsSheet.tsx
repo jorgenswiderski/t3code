@@ -102,6 +102,10 @@ import {
   providerSectionIsCollapsed,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import {
+  ThreadSettingsAutoCompactSection,
+  type ThreadSettingsAutoCompactSource,
+} from "./ThreadSettingsAutoCompactSection";
 
 /**
  * Everyday harnesses start expanded; every other provider (OpenRouter catalogs
@@ -262,6 +266,8 @@ type ThreadSettingsSessionProps = {
   readonly onUpdateOptionSelections: (selections: ReadonlyArray<ProviderOptionSelection>) => void;
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
+  /** Omitted where a per-thread auto-compact cap does not apply (scheduled tasks). */
+  readonly autoCompact?: ThreadSettingsAutoCompactSource;
 };
 
 export type ExistingThreadSettingsRouteSession = ThreadSettingsSessionProps & {
@@ -319,6 +325,7 @@ type ThreadSettingsSessionValue = {
   readonly runtimeMode: RuntimeMode;
   readonly runtimeModeChoices: ReturnType<typeof runtimeModeChoicesForSupportedModes>;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
+  readonly autoCompact: ThreadSettingsAutoCompactSource | undefined;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly displayedModelSelection: ModelSelection | null;
   readonly reportedModelSelection: ModelSelection | null;
@@ -617,6 +624,7 @@ function ThreadSettingsSessionProvider(
       runtimeMode: compatibleRuntimeMode,
       runtimeModeChoices,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
+      autoCompact: props.autoCompact,
       displayedDescriptors,
       displayedModelSelection: pendingModel?.selection ?? props.selectedModel,
       reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
@@ -658,6 +666,7 @@ function ThreadSettingsSessionProvider(
       pressModel,
       providerFilter,
       props.onUpdateRuntimeMode,
+      props.autoCompact,
       providerGroups,
       manageHidden,
       toggleHidden,
@@ -894,6 +903,10 @@ function ThreadSettingsOptionsItem(props: {
         .get(session.environmentId)
         ?.providers.find((provider) => provider.instanceId === session.providerInstanceId) ?? null)
     : null;
+  // The same instance name the model picker shows for the staged model's provider.
+  const autoCompactProviderLabel = session.providerGroups.find(
+    (group) => group.providerKey === session.displayedModelSelection?.instanceId,
+  )?.providerLabel;
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const bottomToolbarInset = usesNativeMailSearchToolbar
     ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET
@@ -957,6 +970,13 @@ function ThreadSettingsOptionsItem(props: {
           />
         </Animated.View>
       </Animated.View>
+
+      <ThreadSettingsAutoCompactSection
+        environmentId={session.environmentId}
+        modelSelection={session.displayedModelSelection}
+        providerLabel={autoCompactProviderLabel}
+        source={session.autoCompact}
+      />
 
       <Text className="px-5 pb-2 pt-7 text-sm font-t3-medium text-foreground-muted">Catalog</Text>
       <View className="mx-4 overflow-hidden rounded-2xl bg-grouped-card">
@@ -1613,6 +1633,11 @@ export function NewTaskThreadSettingsRouteScreen() {
       onUpdateOptionSelections={flow.setSelectedModelOptions}
       runtimeMode={flow.runtimeMode}
       onUpdateRuntimeMode={flow.setRuntimeMode}
+      autoCompact={{
+        kind: "draft",
+        value: flow.autoCompactTokens,
+        onChange: flow.setAutoCompactTokens,
+      }}
       onClose={() => navigation.goBack()}
     />
   );

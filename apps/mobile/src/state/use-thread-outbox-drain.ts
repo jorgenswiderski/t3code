@@ -27,6 +27,7 @@ import { serializeComposerMessageForServer, uploadedComposerContext } from "../l
 import { prepareTurnAttachments, type PreparedTurnAttachments } from "../lib/attachmentUpload";
 import { randomHex } from "../lib/uuid";
 import { isModelSelectionUnavailable } from "../lib/modelOptions";
+import { resolveCreationAutoCompactTokens } from "../features/threads/thread-auto-compact-presentation";
 import {
   retainAcknowledgedThreadMessage,
   forgetAcknowledgedThreadMessage,
@@ -529,6 +530,9 @@ export async function restoreRejectedQueuedMessage(
                 ? { startFromOrigin: queuedMessage.creation.startFromOrigin }
                 : {}),
             },
+            ...(queuedMessage.creation.autoCompactTokens !== undefined
+              ? { autoCompactTokens: queuedMessage.creation.autoCompactTokens }
+              : {}),
           }
         : {}),
     });
@@ -1046,6 +1050,12 @@ export function useThreadOutboxDrain(): void {
         settings,
         currentConfig.providers,
       );
+      // A server that lost (or never had) the capability silently drops the cap; the task still creates.
+      const autoCompactTokens = resolveCreationAutoCompactTokens({
+        draftTokens: creation.autoCompactTokens,
+        instanceId: sendSettings.modelSelection.instanceId,
+        providers: currentConfig.providers,
+      });
       if (!hasAccess()) return true;
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,
@@ -1073,6 +1083,7 @@ export function useThreadOutboxDrain(): void {
           branch: creation.branch,
           worktreePath: creation.worktreePath,
           startFromOrigin: creation.startFromOrigin ?? false,
+          ...(autoCompactTokens !== undefined ? { autoCompactTokens } : {}),
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
         }),
       });

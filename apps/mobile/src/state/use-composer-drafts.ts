@@ -12,6 +12,7 @@ import {
   ProviderInteractionMode as ProviderInteractionModeSchema,
   ProviderOptionSelection as ProviderOptionSelectionSchema,
   RuntimeMode as RuntimeModeSchema,
+  ThreadAutoCompactTokens as ThreadAutoCompactTokensSchema,
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
@@ -333,6 +334,8 @@ export interface ComposerDraft {
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
+  /** New-task drafts only: per-thread auto-compact cap; absent = provider default. */
+  readonly autoCompactTokens?: number;
   /**
    * Set on new-task drafts only. The project is stored here rather than in
    * the key so a project can hold any number of drafts and a draft can be
@@ -363,7 +366,12 @@ export interface ComposerDraftWorkspaceSelection {
 
 export type ComposerDraftSettingsUpdate = Pick<
   ComposerDraft,
-  "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceSelection" | "project"
+  | "modelSelection"
+  | "runtimeMode"
+  | "interactionMode"
+  | "workspaceSelection"
+  | "autoCompactTokens"
+  | "project"
 >;
 
 const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
@@ -395,6 +403,7 @@ const ComposerDraftSchema = Schema.Struct({
   runtimeMode: Schema.optional(RuntimeModeSchema),
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
+  autoCompactTokens: Schema.optional(ThreadAutoCompactTokensSchema),
   project: Schema.optional(ComposerDraftProjectSchema),
 });
 
@@ -564,7 +573,8 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.modelSelection === undefined &&
     draft.runtimeMode === undefined &&
     draft.interactionMode === undefined &&
-    draft.workspaceSelection === undefined
+    draft.workspaceSelection === undefined &&
+    draft.autoCompactTokens === undefined
   );
 }
 
@@ -649,7 +659,8 @@ export function decodePersistedComposerState(value: unknown): {
               draft.attachments.length === 0 &&
               draft.runtimeMode === undefined &&
               draft.interactionMode === undefined &&
-              draft.workspaceSelection === undefined
+              draft.workspaceSelection === undefined &&
+              draft.autoCompactTokens === undefined
               ? { ...draft, modelSelection: undefined }
               : draft,
             now,
@@ -1189,6 +1200,8 @@ export async function removeDeliveredCloudQueuedMessage(
         (editor.modelSelection !== undefined &&
           JSON.stringify(editor.modelSelection) !== JSON.stringify(message.modelSelection)) ||
         (editor.runtimeMode !== undefined && editor.runtimeMode !== message.runtimeMode) ||
+        (editor.autoCompactTokens !== undefined &&
+          editor.autoCompactTokens !== message.creation?.autoCompactTokens) ||
         (editor.interactionMode !== undefined &&
           editor.interactionMode !== message.interactionMode) ||
         (editor.workspaceSelection !== undefined &&
@@ -1526,6 +1539,8 @@ export function clearComposerDraftContentState(
   // draft leaves the store rather than lingering as a blank row.
   const {
     importedShareIds: _importedShareIds,
+    // A per-thread value never carries over to the next task.
+    autoCompactTokens: _autoCompactTokens,
     context: _context,
     modelSelection,
     workspaceSelection,
@@ -1718,7 +1733,8 @@ export function sameComposerDraftState(a: ComposerDraft, b: ComposerDraft): bool
     a.modelSelection === b.modelSelection &&
     a.runtimeMode === b.runtimeMode &&
     a.interactionMode === b.interactionMode &&
-    a.workspaceSelection === b.workspaceSelection
+    a.workspaceSelection === b.workspaceSelection &&
+    a.autoCompactTokens === b.autoCompactTokens
   );
 }
 
@@ -1751,7 +1767,12 @@ export function undoComposerDraftMergeState(
   // A setting still holding the merge's value is the merge's doing: restore
   // the snapshot's. One the user changed since the merge stays theirs.
   const undoSetting = <
-    K extends "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceSelection",
+    K extends
+      | "modelSelection"
+      | "runtimeMode"
+      | "interactionMode"
+      | "workspaceSelection"
+      | "autoCompactTokens",
   >(
     key: K,
   ): ComposerDraft[K] => (existing[key] === merged[key] ? snapshot[key] : existing[key]);
@@ -1772,6 +1793,7 @@ export function undoComposerDraftMergeState(
     runtimeMode: undoSetting("runtimeMode"),
     interactionMode: undoSetting("interactionMode"),
     workspaceSelection: undoSetting("workspaceSelection"),
+    autoCompactTokens: undoSetting("autoCompactTokens"),
   };
   return withComposerDraft(current, draftKey, draft);
 }

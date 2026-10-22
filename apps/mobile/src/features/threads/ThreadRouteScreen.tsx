@@ -1,6 +1,7 @@
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { useWorktreeSetup } from "./use-worktree-setup";
+import { resolveCreationAutoCompactTokens } from "./thread-auto-compact-presentation";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import {
   StackActions,
@@ -850,6 +851,12 @@ function ThreadRouteContent(
       // V2 accepts the launch before setup runs, so cancellation never rejects
       // the original outbox delivery. Reuse the server-owned prompt and uploads.
       const metadata = makeTurnCommandMetadata();
+      // Keep the thread's auto-compact cap, unless the provider no longer supports it.
+      const autoCompactTokens = resolveCreationAutoCompactTokens({
+        draftTokens: selectedThread.autoCompactTokens,
+        instanceId: selectedThread.modelSelection.instanceId,
+        providers: routeEnvironmentRuntime?.serverConfig?.providers ?? [],
+      });
       const launched = await startLocalThread({
         environmentId: selectedThread.environmentId,
         input: buildProjectThreadStartTurnInput({
@@ -866,6 +873,7 @@ function ThreadRouteContent(
           branch: null,
           worktreePath: null,
           startFromOrigin: false,
+          ...(autoCompactTokens !== undefined ? { autoCompactTokens } : {}),
           worktreeBranchName: "",
         }),
       });
@@ -882,6 +890,7 @@ function ThreadRouteContent(
   }, [
     cancelWorktreeSetup,
     navigation,
+    routeEnvironmentRuntime?.serverConfig?.providers,
     selectedThread,
     selectedThreadProject,
     setupMessage,

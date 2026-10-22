@@ -1390,6 +1390,24 @@ describe("thread outbox", () => {
     ).toBe("remove");
   });
 
+  it("round-trips a queued creation's auto-compact cap and decodes rows without one", () => {
+    const base = queuedMessage({
+      messageId: "message-1",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+    const creation = {
+      projectId: ProjectId.make("project-1"),
+      workspaceMode: "local",
+      branch: null,
+      worktreePath: null,
+    } as const;
+    const withCap = { ...base, creation: { ...creation, autoCompactTokens: 300_000 } };
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(withCap))).toEqual(withCap);
+
+    const legacy = decodeQueuedThreadMessage(encodeQueuedThreadMessage({ ...base, creation }));
+    expect(legacy.creation).not.toHaveProperty("autoCompactTokens");
+  });
+
   it("round-trips queued creations and gates incomplete ones from sending", () => {
     const base = queuedMessage({
       messageId: "message-1",

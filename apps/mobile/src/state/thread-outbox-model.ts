@@ -14,6 +14,7 @@ import {
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
+  ThreadAutoCompactTokens,
   ThreadId,
   type ModelSelection as ModelSelectionType,
   type ProjectId as ProjectIdType,
@@ -43,6 +44,8 @@ const QueuedThreadCreationSchema = Schema.Struct({
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   startFromOrigin: Schema.optional(Schema.Boolean),
+  // Per-thread auto-compact cap, sent at creation only if the provider still supports it.
+  autoCompactTokens: Schema.optional(ThreadAutoCompactTokens),
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
@@ -75,6 +78,7 @@ export interface QueuedThreadCreation {
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean;
+  readonly autoCompactTokens?: number;
 }
 
 export interface QueuedThreadMessage {
