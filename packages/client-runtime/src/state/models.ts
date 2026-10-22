@@ -131,6 +131,8 @@ export interface EnvironmentThreadShell {
   readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecovery | null;
   readonly pinnedAt: string | null;
   readonly autoSettleDisabledAt?: string | null;
+  /** Per-thread auto-compact threshold in tokens; null = the provider instance default. */
+  readonly autoCompactTokens?: number | null;
   /** Slot in the user-arranged pinned order; null for keyless (legacy) pins. */
   readonly pinOrderKey: string | null;
   /** Slot in the user-arranged active order; null for keyless active threads. */
@@ -278,6 +280,7 @@ export function presentThreadShell(
     limitRecovery: thread.limitRecovery ?? null,
     pinnedAt: nullableIso(thread.pinnedAt ?? null),
     autoSettleDisabledAt: nullableIso(thread.autoSettleDisabledAt ?? null),
+    autoCompactTokens: thread.autoCompactTokens ?? null,
     pinOrderKey: thread.pinOrderKey ?? null,
     activeOrderKey: thread.activeOrderKey ?? null,
     ...(thread.lastVisitedAt === undefined

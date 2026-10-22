@@ -25,6 +25,7 @@ import type {
   ChatFileAttachment,
   EnvironmentId,
   ModelSelection,
+  OrchestrationV2AppliedAutoCompact,
   OrchestrationV2ProviderTurnTokenUsage,
   ProjectId,
   PullRequestListInput,
@@ -302,7 +303,10 @@ import { ContextWindowMeter, ContextWindowMeterPlaceholder } from "./ContextWind
 import {
   providerSupportsManualCompaction,
   resolveContextWindowModelDisplayName,
+  resolveContextWindowAutoCompact,
   shouldReserveContextWindowMeter,
+  shouldShowEmptyContextWindowMeter,
+  type ContextWindowAutoCompact,
 } from "./ContextWindowMeter.logic";
 import {
   attachVideoThumbnail,
@@ -1363,6 +1367,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   nextModelSelection: ModelSelection;
   timestampFormat: TimestampFormat;
   reserveContextWindowMeter: boolean;
+  showEmptyContextWindowMeter: boolean;
+  autoCompact: ContextWindowAutoCompact | null;
   activeThreadModelDisplayName: string | null;
   isPreparingWorktree: boolean;
   pendingAction: {
@@ -1404,6 +1410,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
       {props.activeContextWindow ? (
         <ContextWindowMeter
           usage={props.activeContextWindow}
+          autoCompact={props.autoCompact ?? undefined}
           liveUsage={props.activeThreadLiveTokenUsage}
           nextModelSelection={props.nextModelSelection}
           timestampFormat={props.timestampFormat}
@@ -1415,6 +1422,14 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         />
       ) : props.reserveContextWindowMeter ? (
         <ContextWindowMeterPlaceholder />
+      ) : props.showEmptyContextWindowMeter && props.autoCompact ? (
+        <ContextWindowMeter
+          usage={null}
+          autoCompact={props.autoCompact}
+          liveUsage={null}
+          nextModelSelection={props.nextModelSelection}
+          timestampFormat={props.timestampFormat}
+        />
       ) : null}
       <ComposerPrimaryActions
         compact={props.compact}
@@ -1545,6 +1560,13 @@ export interface ChatComposerProps {
   activeThread: Thread | undefined;
   /** The routed server thread's shell, present before its detail loads. */
   activeThreadShell: ThreadShell | null;
+  /** The thread's stored auto-compact cap (composer draft before the thread exists). */
+  autoCompactStored: number | null;
+  /** What the active provider thread's live process reports it runs with, if anything. */
+  autoCompactApplied: OrchestrationV2AppliedAutoCompact | null;
+  /** Why the auto-compact control cannot change the value, or null. */
+  autoCompactDisabledReason: string | null;
+  onAutoCompactChange: (tokens: number | null) => void;
   /** Timeline messages including optimistic sends, for ArrowUp prompt recall. */
   promptHistoryMessages: ReadonlyArray<ChatMessage>;
   isServerThread: boolean;
@@ -2435,6 +2457,54 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? selectedProviderStatus.reportsContextWindow === true
       : null,
   });
+
+  const autoCompactCapability = selectedProviderEntry?.snapshot.threadAutoCompact;
+  const showEmptyContextWindowMeter = shouldShowEmptyContextWindowMeter({
+    meterEnabled: settings.composerContextRingEnabled,
+    hasCapability: autoCompactCapability !== undefined,
+    hasSnapshot: activeContextWindow !== null,
+    threadStarted: threadShellHasStarted(props.activeThreadShell),
+    reservingPlaceholder: reserveContextWindowMeter,
+  });
+  const selectedProviderModel = useMemo(
+    () =>
+      selectedProviderEntry?.models.find((model) => model.slug === selectedModelSelection.model),
+    [selectedProviderEntry, selectedModelSelection.model],
+  );
+  const autoCompact = useMemo(
+    () =>
+      resolveContextWindowAutoCompact({
+        capability: autoCompactCapability,
+        providerDisplayName: selectedProviderEntry?.displayName ?? "",
+        stored: props.autoCompactStored,
+        applied: props.autoCompactApplied,
+        threadProviderInstanceId:
+          activeThread?.runtime?.providerInstanceId ??
+          activeThreadModelSelection?.instanceId ??
+          null,
+        selectedInstanceId,
+        snapshotMaxTokens: activeContextWindow?.maxTokens ?? null,
+        selection: selectedModelSelection,
+        selectedModel: selectedProviderModel,
+        canChange: props.autoCompactDisabledReason === null,
+        changeDeniedReason: props.autoCompactDisabledReason,
+        onChange: props.onAutoCompactChange,
+      }),
+    [
+      activeContextWindow?.maxTokens,
+      activeThread?.runtime?.providerInstanceId,
+      activeThreadModelSelection?.instanceId,
+      autoCompactCapability,
+      props.autoCompactApplied,
+      props.autoCompactDisabledReason,
+      props.autoCompactStored,
+      props.onAutoCompactChange,
+      selectedInstanceId,
+      selectedModelSelection,
+      selectedProviderEntry?.displayName,
+      selectedProviderModel,
+    ],
+  );
 
   // ------------------------------------------------------------------
   // Composer-local state
@@ -7685,6 +7755,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     nextModelSelection={selectedModelSelection}
                     timestampFormat={settings.timestampFormat}
                     reserveContextWindowMeter={reserveContextWindowMeter}
+                    showEmptyContextWindowMeter={showEmptyContextWindowMeter}
+                    autoCompact={autoCompact}
                     activeThreadModelDisplayName={activeThreadModelDisplayName}
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}

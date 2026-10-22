@@ -1,4 +1,9 @@
-import type { ModelSelection, TimestampFormat } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  ServerProviderThreadAutoCompact,
+  TimestampFormat,
+} from "@t3tools/contracts";
+import { deriveThreadAutoCompactView } from "@t3tools/client-runtime/thread-auto-compact";
 import {
   CONTEXT_TIER_COLORS,
   cacheExpiresAtMs,
@@ -110,6 +115,69 @@ export function glyphGeometry(size: GlyphSize): GlyphGeometry {
     circumference: 2 * Math.PI * radius,
     dotRadius: size * 0.15, // 14 -> 2.1, 18 -> 2.7
   };
+}
+
+export interface GlyphTickSegment {
+  readonly x1: number;
+  readonly y1: number;
+  readonly x2: number;
+  readonly y2: number;
+  readonly strokeWidth: number;
+}
+
+/**
+ * Radial mark across the ring at `fraction` of the window, clockwise from 12 o'clock. It reaches
+ * past both edges of the track (the svg must allow overflow). Null means "draw nothing".
+ */
+export function glyphTickSegment(
+  size: GlyphSize,
+  fraction: number | null,
+): GlyphTickSegment | null {
+  if (fraction === null || !Number.isFinite(fraction) || fraction <= 0 || fraction >= 1) {
+    return null;
+  }
+  const g = glyphGeometry(size);
+  const angle = fraction * 2 * Math.PI - Math.PI / 2;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const inner = g.radius - 0.9 * g.strokeWidth;
+  const outer = g.radius + 0.9 * g.strokeWidth;
+  return {
+    x1: g.center + inner * cos,
+    y1: g.center + inner * sin,
+    x2: g.center + outer * cos,
+    y2: g.center + outer * sin,
+    strokeWidth: 0.7 * g.strokeWidth,
+  };
+}
+
+/** The ring of a thread with no usage yet: no arc, no cache dot. */
+export function emptyThreadContextGlyphModel(maxTokens: number | null): ThreadContextGlyphModel {
+  return {
+    usedTokens: 0,
+    maxTokens,
+    tier: 0,
+    tierColor: "muted",
+    fraction: maxTokens !== null && maxTokens > 0 ? 0 : null,
+    cacheState: "unknown",
+    expiresAtMs: null,
+  };
+}
+
+/** Tick position for the thread's stored cap; null when there is no cap, capability or window. */
+export function threadGlyphTickFraction(input: {
+  readonly capability: ServerProviderThreadAutoCompact | undefined;
+  readonly stored: number | null | undefined;
+  readonly maxTokens: number | null | undefined;
+}): number | null {
+  const view = deriveThreadAutoCompactView({
+    capability: input.capability,
+    providerDisplayName: "",
+    stored: input.stored,
+    applied: null,
+    windowTokens: input.maxTokens ?? null,
+  });
+  return view?.tickFraction ?? null;
 }
 
 /** Dash pattern that paints `fraction` of the circle from the path start, or null for "no arc". */

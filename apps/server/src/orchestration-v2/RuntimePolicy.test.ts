@@ -30,6 +30,7 @@ function makeThread(input: {
   readonly now: DateTime.Utc;
   readonly worktreePath: string | null;
   readonly runtimeMode?: RuntimeMode;
+  readonly autoCompactTokens?: number | null;
 }): OrchestrationV2AppThread {
   const threadId = ThreadId.make("thread:runtime-policy");
   return {
@@ -42,6 +43,9 @@ function makeThread(input: {
     modelSelection,
     runtimeMode: input.runtimeMode ?? "full-access",
     interactionMode: "default",
+    ...(input.autoCompactTokens === undefined
+      ? {}
+      : { autoCompactTokens: input.autoCompactTokens }),
     branch: null,
     worktreePath: input.worktreePath,
     activeProviderThreadId: null,
@@ -152,5 +156,44 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
       // A provider that advertises no restriction runs every mode as stored.
       assert.equal(yield* modeFor(providerInstanceId, "auto-accept-edits"), "auto-accept-edits");
     }),
+  );
+
+  it.effect("passes the thread's stored auto-compact value", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const resolved = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: null, autoCompactTokens: 250_000 }),
+        modelSelection,
+      });
+      assert.equal(resolved.autoCompactTokens, 250_000);
+    }),
+  );
+
+  it.effect("resolves a Default thread to null", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const resolved = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: null }),
+        modelSelection,
+      });
+      assert.equal(resolved.autoCompactTokens, null);
+    }),
+  );
+
+  it.effect("keeps the value under an override", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const resolved = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: null, autoCompactTokens: 250_000 }),
+        modelSelection,
+      });
+      assert.equal(resolved.cwd, "/x");
+      assert.equal(resolved.autoCompactTokens, 250_000);
+    }).pipe(
+      Effect.provide(RuntimePolicy.layerWithOverride({ cwd: "/x" }).pipe(Layer.provide(layerTest))),
+    ),
   );
 });

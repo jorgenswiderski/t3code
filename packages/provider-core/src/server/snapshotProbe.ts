@@ -10,6 +10,7 @@ import type {
   ServerProviderModel,
   ServerProviderUpdateRequiredModel,
   ServerProviderState,
+  ServerProviderThreadAutoCompact,
   ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -89,6 +90,7 @@ export interface ServerProviderPresentation {
   readonly badgeLabel?: string;
   readonly showInteractionModeToggle?: boolean;
   readonly reportsContextWindow?: boolean;
+  readonly threadAutoCompact?: ServerProviderThreadAutoCompact;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly requiresNewThreadForModelChange?: boolean;
   readonly supportsConversationRollback?: boolean;
@@ -252,6 +254,9 @@ export function buildServerProvider(input: {
     ...(typeof input.presentation.reportsContextWindow === "boolean"
       ? { reportsContextWindow: input.presentation.reportsContextWindow }
       : {}),
+    ...(input.presentation.threadAutoCompact === undefined
+      ? {}
+      : { threadAutoCompact: input.presentation.threadAutoCompact }),
     ...(input.presentation.supportedRuntimeModes === undefined
       ? {}
       : { supportedRuntimeModes: [...input.presentation.supportedRuntimeModes] }),

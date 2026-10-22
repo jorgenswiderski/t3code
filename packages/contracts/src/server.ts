@@ -89,6 +89,8 @@ export const ServerProviderModel = Schema.Struct({
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
   capabilities: Schema.NullOr(ModelCapabilities),
+  /** Fixed context window in tokens when the driver knows it; absent = unknown. */
+  contextWindowTokens: Schema.optional(PositiveInt),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
 
@@ -243,6 +245,15 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
+export const ServerProviderThreadAutoCompact = Schema.Struct({
+  minTokens: PositiveInt,
+  maxTokens: PositiveInt,
+  /** The instance default in user-facing tokens; absent = the provider's own default. It does
+      not apply to a model whose window is at or below it (see `@t3tools/shared/threadAutoCompact`). */
+  defaultTokens: Schema.optional(PositiveInt),
+});
+export type ServerProviderThreadAutoCompact = typeof ServerProviderThreadAutoCompact.Type;
+
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -261,6 +272,9 @@ export const ServerProvider = Schema.Struct({
   // The driver streams context window usage, so a started thread will have a
   // meter once its activities load. Clients reserve the meter's space on it.
   reportsContextWindow: Schema.optional(Schema.Boolean),
+  // The driver applies OrchestrationV2AppThread.autoCompactTokens. Absent (older servers,
+  // unsupported drivers) = clients hide the control.
+  threadAutoCompact: Schema.optional(ServerProviderThreadAutoCompact),
   supportedRuntimeModes: Schema.optional(ForwardCompatibleArray(RuntimeMode)),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   supportsConversationRollback: Schema.optional(Schema.Boolean),

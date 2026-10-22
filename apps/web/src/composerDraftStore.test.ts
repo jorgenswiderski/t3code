@@ -2909,6 +2909,92 @@ describe("composerDraftStore runtime and interaction settings", () => {
   });
 });
 
+describe("composerDraftStore auto-compact cap", () => {
+  const threadId = ThreadId.make("thread-auto-compact");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const threadKey = threadKeyFor(threadId, TEST_ENVIRONMENT_ID);
+  const merge = () => useComposerDraftStore.persist.getOptions().merge!;
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("setAutoCompactTokens stores and clears the cap", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setAutoCompactTokens(threadRef, 300_000);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.autoCompactTokens).toBe(300_000);
+
+    store.setAutoCompactTokens(threadRef, null);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("setAutoCompactTokens ignores null on a missing draft", () => {
+    const before = useComposerDraftStore.getState();
+
+    before.setAutoCompactTokens(threadRef, null);
+
+    expect(useComposerDraftStore.getState()).toBe(before);
+  });
+
+  it("a cap-only draft is not user content", () => {
+    useComposerDraftStore.getState().setAutoCompactTokens(threadRef, 300_000);
+
+    const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+    expect(draft?.autoCompactTokens).toBe(300_000);
+    expect(composerDraftHasUserContent(draft)).toBe(false);
+  });
+
+  it("persists and rehydrates the cap", () => {
+    useComposerDraftStore.getState().setAutoCompactTokens(threadRef, 300_000);
+
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    expect(persisted.draftsByThreadKey[threadKey]?.autoCompactTokens).toBe(300_000);
+
+    const hydrated = merge()(
+      JSON.parse(JSON.stringify(persisted)),
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(hydrated.draftsByThreadKey[threadKey]?.autoCompactTokens).toBe(300_000);
+  });
+
+  it("writes no key for a draft without a cap", () => {
+    useComposerDraftStore.getState().setPrompt(threadRef, "hello");
+
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    expect(persisted.draftsByThreadKey[threadKey]).not.toHaveProperty("autoCompactTokens");
+  });
+
+  it.each([5, 1.5, "300k"])("ignores an invalid persisted cap %j", (value) => {
+    const hydrated = merge()(
+      {
+        draftsByThreadKey: {
+          [threadKey]: { prompt: "keep me", attachments: [], autoCompactTokens: value },
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    expect(hydrated.draftsByThreadKey[threadKey]?.prompt).toBe("keep me");
+    expect(hydrated.draftsByThreadKey[threadKey]?.autoCompactTokens).toBeNull();
+  });
+
+  it("promoting the draft session discards the cap", () => {
+    const draftId = DraftId.make("draft-auto-compact");
+    const projectRef = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("project-auto-compact"));
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setAutoCompactTokens(draftId, 300_000);
+    expect(draftByKey(draftId)?.autoCompactTokens).toBe(300_000);
+
+    markPromotedDraftThreadByRef(threadRef);
+    finalizePromotedDraftThreadByRef(threadRef);
+
+    expect(draftByKey(draftId)).toBeUndefined();
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // createDeferredStorage
 // ---------------------------------------------------------------------------

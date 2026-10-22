@@ -6,8 +6,11 @@ import {
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
+  type ServerProvider,
+  ThreadAutoCompactTokens,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -19,6 +22,7 @@ import {
   unavailable,
 } from "../../threadAccess.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
@@ -70,6 +74,21 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (input: {
     });
   return { ...context, request, item };
 });
+const isThreadAutoCompactTokens = Schema.is(ThreadAutoCompactTokens);
+
+/** Why a provider instance cannot run a thread at `tokens`, or null when it can. */
+function autoCompactRejection(provider: ServerProvider | undefined, tokens: number): string | null {
+  const range = provider?.threadAutoCompact;
+  if (range === undefined) {
+    return "This thread's provider does not support a per-thread auto-compact value.";
+  }
+  // The contract's sanity bound also applies, in case a provider range ever exceeds it.
+  if (tokens < range.minTokens || tokens > range.maxTokens || !isThreadAutoCompactTokens(tokens)) {
+    return `autoCompactTokens must be between ${range.minTokens} and ${range.maxTokens}.`;
+  }
+  return null;
+}
+
 /** A tool that changes `threadId`, or the caller's own thread when it is omitted. */
 const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
@@ -179,6 +198,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         modelSelection: thread.modelSelection,
         runtimeMode: thread.runtimeMode,
         interactionMode: thread.interactionMode,
+        autoCompactTokens: thread.autoCompactTokens ?? null,
       };
     }),
   ),
@@ -188,16 +208,52 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         threads,
         projection: { thread },
       } = yield* readThread(input.threadId);
-      const type = modelSelectionCommandType(thread.providerInstanceId, input.modelSelection);
-      const result = yield* threads
-        .dispatch({
-          type,
-          threadId: thread.id,
-          commandId: yield* newCommandId(),
-          modelSelection: input.modelSelection,
-        })
-        .pipe(Effect.mapError(dispatchFailure));
-      return { sequence: result.sequence };
+      const { modelSelection } = input;
+      const autoCompactTokens = input.autoCompactTokens === "null" ? null : input.autoCompactTokens;
+      if (modelSelection === undefined && autoCompactTokens === undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Provide modelSelection, autoCompactTokens, or both.",
+        });
+      }
+      // Validate before any dispatch so a rejected value never leaves a
+      // half-applied model change.
+      if (autoCompactTokens != null) {
+        const instanceId = modelSelection?.instanceId ?? thread.providerInstanceId;
+        const registry = yield* ProviderRegistry.ProviderRegistry;
+        const providers = yield* registry.getProviders;
+        const rejection = autoCompactRejection(
+          providers.find((provider) => provider.instanceId === instanceId),
+          autoCompactTokens,
+        );
+        if (rejection !== null) {
+          return yield* new OrchestratorMcpFailure({ code: "invalid_request", message: rejection });
+        }
+      }
+      let sequence = 0;
+      if (modelSelection !== undefined) {
+        const result = yield* threads
+          .dispatch({
+            type: modelSelectionCommandType(thread.providerInstanceId, modelSelection),
+            threadId: thread.id,
+            commandId: yield* newCommandId(),
+            modelSelection,
+          })
+          .pipe(Effect.mapError(dispatchFailure));
+        sequence = result.sequence;
+      }
+      if (autoCompactTokens !== undefined) {
+        const result = yield* threads
+          .dispatch({
+            type: "thread.auto-compact.set",
+            threadId: thread.id,
+            commandId: yield* newCommandId(),
+            autoCompactTokens,
+          })
+          .pipe(Effect.mapError(dispatchFailure));
+        sequence = result.sequence;
+      }
+      return { sequence };
     }),
   ),
   t3_pending_request_list: McpToolAccess.reads((input) =>

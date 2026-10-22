@@ -436,6 +436,8 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { resolveCreateAutoCompactTokens } from "./chat/autoCompactCreate.logic";
+import { useThreadAutoCompactControl } from "./chat/useThreadAutoCompactControl";
 import { createPageScrollController, type PageScrollKey } from "./chat/pageScrollController";
 import { isTimelineScrollTarget } from "./chat/timelineScrollTarget";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
@@ -2265,6 +2267,14 @@ export default function ChatView(props: ChatViewProps) {
     widthStorageKey: `t3code:preview-panel-width:${activeThreadKey}`,
   });
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  const autoCompactControl = useThreadAutoCompactControl({
+    isLocalDraftThread,
+    composerDraftTarget,
+    environmentId,
+    threadId,
+    serverStored: activeThreadShell?.autoCompactTokens,
+    canOperateThread,
+  });
   const timelineThreadError =
     serverRuntime?.status === "failed" &&
     serverRuntime.lastErrorClass === "usage_limit" &&
@@ -9424,6 +9434,15 @@ export default function ChatView(props: ChatViewProps) {
       };
     };
 
+    // Read at send time so a cap picked while the send was being prepared is not lost.
+    const draftAutoCompactForCreate = (instanceId: ProviderInstanceId) =>
+      resolveCreateAutoCompactTokens({
+        draftTokens: useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+          ?.autoCompactTokens,
+        capability: providerInstanceEntries.find((entry) => entry.instanceId === instanceId)
+          ?.snapshot.threadAutoCompact,
+      });
+
     const multipleTargets = [];
     for (const selection of multipleModelSelections ?? []) {
       const provider = providerInstanceEntries.find(
@@ -9676,6 +9695,7 @@ export default function ChatView(props: ChatViewProps) {
                       modelSelection: target.selection,
                       runtimeMode,
                       interactionMode: target.interactionMode,
+                      ...draftAutoCompactForCreate(target.selection.instanceId),
                       branch: activeThreadBranch,
                       worktreePath: null,
                       createdAt: messageCreatedAt,
@@ -10016,6 +10036,7 @@ export default function ChatView(props: ChatViewProps) {
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode: sendInteractionMode,
+                      ...draftAutoCompactForCreate(threadCreateModelSelection.instanceId),
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
@@ -11761,6 +11782,12 @@ export default function ChatView(props: ChatViewProps) {
                               activeThreadEnvironmentId={activeThread?.environmentId}
                               activeThread={activeThread}
                               activeThreadShell={activeThreadShell}
+                              autoCompactStored={autoCompactControl.stored}
+                              autoCompactApplied={
+                                activeProviderThreadContext?.appliedAutoCompact ?? null
+                              }
+                              autoCompactDisabledReason={autoCompactControl.disabledReason}
+                              onAutoCompactChange={autoCompactControl.onChange}
                               promptHistoryMessages={timelineMessages}
                               isServerThread={isServerThread}
                               isLocalDraftThread={isLocalDraftThread}

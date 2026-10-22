@@ -24,6 +24,7 @@ import {
 } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
+  OrchestrationV2AppThreadJson,
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
@@ -34,6 +35,7 @@ import {
   OrchestrationV2ProviderThreadJson,
   OrchestrationV2RpcSchemas,
   OrchestrationV2ShellSnapshot,
+  OrchestrationV2StoredEventJson,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2Subagent,
   OrchestrationV2SubagentJson,
@@ -1645,5 +1647,102 @@ describe("latestProviderTurnForAttempt", () => {
     ];
     expect(latestProviderTurnForAttempt(turns, RunAttemptId.make("goal-attempt"))?.id).toBe("last");
     expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
+  });
+});
+
+describe("per-thread auto-compact", () => {
+  const decodeAppThreadJson = Schema.decodeUnknownSync(OrchestrationV2AppThreadJson);
+  const encodeAppThreadJson = Schema.encodeSync(OrchestrationV2AppThreadJson);
+  const decodeStoredEventJson = Schema.decodeUnknownSync(OrchestrationV2StoredEventJson);
+  const threadJson = {
+    createdBy: "user",
+    creationSource: "web",
+    id: "thread-1",
+    projectId: "project-1",
+    title: "Thread",
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "gpt-5-codex" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread-1" },
+    forkedFrom: null,
+    createdAt: "2026-04-20T00:00:00.000Z",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+    archivedAt: null,
+    deletedAt: null,
+  };
+  const providerThreadJson = {
+    id: "provider-thread-1",
+    driver: "claude",
+    providerInstanceId: "claudeAgent",
+    providerSessionId: "provider-session-1",
+    appThreadId: "thread-1",
+    ownerNodeId: null,
+    nativeThreadRef: null,
+    nativeConversationHeadRef: null,
+    status: "idle",
+    firstRunOrdinal: 1,
+    lastRunOrdinal: 1,
+    handoffIds: [],
+    forkedFrom: null,
+    createdAt: "2026-04-20T00:00:00.000Z",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+  };
+
+  it("decodes a pre-change thread payload as Default", () => {
+    expect(decodeAppThreadJson(threadJson).autoCompactTokens).toBeUndefined();
+  });
+
+  it("round-trips a stored value", () => {
+    const thread = decodeAppThreadJson({ ...threadJson, autoCompactTokens: 300000 });
+    expect(thread.autoCompactTokens).toBe(300000);
+    expect(encodeAppThreadJson(thread).autoCompactTokens).toBe(300000);
+  });
+
+  it.each([9999, 10000001, 250000.5])("rejects values outside the sanity bound (%s)", (value) => {
+    expect(() => decodeAppThreadJson({ ...threadJson, autoCompactTokens: value })).toThrow();
+  });
+
+  it("decodes the set command with null", () => {
+    const command = decodeOrchestrationV2Command({
+      type: "thread.auto-compact.set",
+      commandId: "command-1",
+      threadId: "thread-1",
+      autoCompactTokens: null,
+    });
+    expect(command.type).toBe("thread.auto-compact.set");
+  });
+
+  it("decodes the new event in the JSON union", () => {
+    const stored = decodeStoredEventJson({
+      sequence: 1,
+      commandId: "command-1",
+      event: {
+        id: "event-1",
+        type: "thread.auto-compact-updated",
+        threadId: "thread-1",
+        occurredAt: "2026-04-20T00:00:00.000Z",
+        payload: { ...threadJson, autoCompactTokens: 200000 },
+      },
+    });
+    expect(stored.event.type).toBe("thread.auto-compact-updated");
+  });
+
+  it("decodes a pre-change provider thread with applied = null", () => {
+    expect(
+      decodeOrchestrationV2ProviderThreadJson(providerThreadJson).appliedAutoCompact,
+    ).toBeNull();
+  });
+
+  it("decodes an applied report with a null token count", () => {
+    expect(
+      decodeOrchestrationV2ProviderThreadJson({
+        ...providerThreadJson,
+        appliedAutoCompact: { tokens: null },
+      }).appliedAutoCompact,
+    ).toEqual({ tokens: null });
   });
 });

@@ -31,6 +31,7 @@ import {
   RuntimeRequestId,
   RunAttemptId,
   RunId,
+  ThreadAutoCompactTokens,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -51,6 +52,9 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   approvalPolicy: Schema.optional(Schema.Unknown),
   sandboxPolicy: Schema.optional(Schema.Unknown),
   reasoningEffort: Schema.optional(Schema.String),
+  /** The thread's stored per-thread auto-compact value (null = Default). Adapters resolve
+      the effective value with resolveEffectiveAutoCompactTokens. */
+  autoCompactTokens: Schema.optional(Schema.NullOr(ThreadAutoCompactTokens)),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 

@@ -472,6 +472,20 @@ it.layer(
       }),
     );
 
+    it.effect("declares per-thread auto-compact support with the contract range", () =>
+      Effect.gen(function* () {
+        const expected = { minTokens: 100_000, maxTokens: 1_000_000 };
+        const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.succeed(makeCodexProbeSnapshot()),
+        );
+        assert.deepStrictEqual(status.threadAutoCompact, expected);
+
+        // All six buildServerProvider call sites share the presentation constant.
+        const disabled = yield* checkCodexProviderStatus(disabledCodexSettings);
+        assert.deepStrictEqual(disabled.threadAutoCompact, expected);
+      }),
+    );
+
     it.effect("passes configured launch args to the Codex provider probe", () =>
       Effect.gen(function* () {
         let observedLaunchArgs: string | undefined;

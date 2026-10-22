@@ -159,6 +159,21 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.updatedAt).toEqual(archivedAt);
   });
 
+  it("applies thread.auto-compact-updated to the thread", () => {
+    const occurredAt = DateTime.makeUnsafe("2026-06-20T02:00:00.000Z");
+    const event = {
+      id: "event-auto-compact",
+      type: "thread.auto-compact-updated",
+      threadId,
+      occurredAt,
+      payload: { ...emptyProjection.thread, autoCompactTokens: 300_000, updatedAt: occurredAt },
+    } as OrchestrationV2DomainEvent;
+
+    const next = applyOrchestrationV2ProjectionEvent(emptyProjection, event);
+    expect(next?.thread.autoCompactTokens).toBe(300_000);
+    expect(next?.updatedAt).toEqual(occurredAt);
+  });
+
   it("ignores events for another thread", () => {
     const event = {
       id: "event-other",

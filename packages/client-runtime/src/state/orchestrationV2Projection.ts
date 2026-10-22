@@ -218,6 +218,7 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.pull-request-synced":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
+    case "thread.auto-compact-updated":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
       return { ...base, thread: event.payload };

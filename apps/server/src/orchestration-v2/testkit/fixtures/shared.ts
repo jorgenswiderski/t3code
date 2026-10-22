@@ -301,6 +301,8 @@ export type OrchestratorFixtureInputStep =
 
 export interface OrchestratorFixtureInput {
   readonly interactionMode?: ProviderInteractionMode;
+  /** The thread's per-thread auto-compact value; fixtures default to Default. */
+  readonly autoCompactTokens?: number | null;
   /** The thread's permission mode; fixtures default to full access. */
   readonly runtimeMode?: RuntimeMode;
   /**
@@ -456,6 +458,7 @@ function createThreadCommand(input: {
   readonly modelSelection: ModelSelection;
   readonly interactionMode?: ProviderInteractionMode;
   readonly runtimeMode?: RuntimeMode;
+  readonly autoCompactTokens?: number | null;
 }): OrchestrationV2Command {
   return {
     type: "thread.create",
@@ -468,6 +471,9 @@ function createThreadCommand(input: {
     modelSelection: input.modelSelection,
     runtimeMode: input.runtimeMode ?? "full-access",
     interactionMode: input.interactionMode ?? "default",
+    ...(input.autoCompactTokens === undefined
+      ? {}
+      : { autoCompactTokens: input.autoCompactTokens }),
     branch: null,
     worktreePath: null,
   };
@@ -569,6 +575,9 @@ export function materializeFixtureInput(input: {
         ...(input.fixtureInput.runtimeMode === undefined
           ? {}
           : { runtimeMode: input.fixtureInput.runtimeMode }),
+        ...(input.fixtureInput.autoCompactTokens === undefined
+          ? {}
+          : { autoCompactTokens: input.fixtureInput.autoCompactTokens }),
       }),
     );
 

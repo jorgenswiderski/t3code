@@ -64,6 +64,16 @@ Use a completely separate **CODEX_HOME path**, with no shadow home, when you wan
 separate Codex sessions and configuration. That instance cannot continue threads
 from the other home.
 
+## Compact long conversations
+
+Open the context meter in the composer (on mobile, thread settings) and pick **Auto-compact at** (`Default`, `200k`,
+`300k`, `400k`, or `Custom…`) to choose when Codex compacts a thread. The choice applies to
+that thread only, can be set before the first message, and shows as a tick on the ring and
+the meter's bar. `Default` returns to Codex's own behavior.
+
+A Codex thread picks up a change when its session next restarts. Until then the meter shows
+the new value as waiting to apply.
+
 ## Switch accounts in an existing thread
 
 Choose the other account from the thread's model picker. T3 Code offers compatible

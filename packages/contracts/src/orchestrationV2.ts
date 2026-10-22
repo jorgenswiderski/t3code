@@ -361,6 +361,13 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 );
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
+/** Per-thread auto-compact threshold in user-facing tokens. A schema sanity bound only;
+    each provider's real range is ServerProvider.threadAutoCompact. */
+export const ThreadAutoCompactTokens = Schema.Int.check(
+  Schema.isBetween({ minimum: 10_000, maximum: 10_000_000 }),
+);
+export type ThreadAutoCompactTokens = typeof ThreadAutoCompactTokens.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -409,6 +416,9 @@ export const OrchestrationV2AppThread = Schema.Struct({
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** Per-thread auto-compact threshold; null/absent = the provider instance default.
+      Kept across model and provider switches; adapters clamp what they apply. */
+  autoCompactTokens: Schema.optional(Schema.NullOr(ThreadAutoCompactTokens)),
   // Fractional-index slot in the user-arranged pinned order. Optional so
   // payloads from pre-reorder servers still decode.
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -954,6 +964,15 @@ export const OrchestrationV2ProviderGoal = Schema.Struct({
 });
 export type OrchestrationV2ProviderGoal = typeof OrchestrationV2ProviderGoal.Type;
 
+/** What the live provider process for a provider thread compacts at. */
+export const OrchestrationV2AppliedAutoCompact = Schema.Struct({
+  /** User-facing tokens the process actually runs with, including an instance default;
+      null = the provider's built-in behaviour (no per-thread or instance value below the
+      model's window). Clients read a value at or above the window they know as null too. */
+  tokens: Schema.NullOr(PositiveInt),
+});
+export type OrchestrationV2AppliedAutoCompact = typeof OrchestrationV2AppliedAutoCompact.Type;
+
 export const OrchestrationV2ProviderThread = Schema.Struct({
   id: ProviderThreadId,
   driver: ProviderDriverKind,
@@ -986,6 +1005,12 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
   ),
   /** Native goal on this provider thread; rows written before goals decode to null. */
   goal: Schema.optional(Schema.NullOr(OrchestrationV2ProviderGoal)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** Set by adapters that support per-thread auto-compact whenever they start, resume, or
+      live-apply a process for this provider thread. null/absent = no report (no pending
+      state is shown). Rows written before this field decode to null. */
+  appliedAutoCompact: Schema.optional(Schema.NullOr(OrchestrationV2AppliedAutoCompact)).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   createdAt: Schema.DateTimeUtc,
@@ -1771,6 +1796,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.pull-request-synced",
       "thread.runtime-mode-updated",
       "thread.interaction-mode-updated",
+      "thread.auto-compact-updated",
       "thread.model-selection-updated",
       "thread.provider-switched",
     ]),
@@ -2010,6 +2036,9 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   /** Omitted by servers that predate thread pinning. */
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** Per-thread auto-compact threshold; null/absent = the provider instance default.
+      Kept across model and provider switches; adapters clamp what they apply. */
+  autoCompactTokens: Schema.optional(Schema.NullOr(ThreadAutoCompactTokens)),
   /** Slot in the user-arranged pinned order; omitted by pre-reorder servers. */
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Slot in the user-arranged active order; omitted by pre-reorder servers. */
@@ -2593,6 +2622,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.metadata-updated",
       "thread.runtime-mode-updated",
       "thread.interaction-mode-updated",
+      "thread.auto-compact-updated",
       "thread.model-selection-updated",
       "thread.provider-switched",
     ]),
@@ -2724,6 +2754,9 @@ export const OrchestrationV2Command = Schema.Union([
     modelSelection: ModelSelection,
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
+    /** Per-thread auto-compact threshold; null/absent = the provider instance default.
+        Kept across model and provider switches; adapters clamp what they apply. */
+    autoCompactTokens: Schema.optional(Schema.NullOr(ThreadAutoCompactTokens)),
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
     importedNativeThread: Schema.optional(
@@ -2925,6 +2958,13 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     interactionMode: ProviderInteractionMode,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.auto-compact.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** null = Default (clears the per-thread value). */
+    autoCompactTokens: Schema.NullOr(ThreadAutoCompactTokens),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.model-selection.set"),
@@ -3304,6 +3344,9 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  /** Per-thread auto-compact threshold; null/absent = the provider instance default.
+      Kept across model and provider switches; adapters clamp what they apply. */
+  autoCompactTokens: Schema.optional(Schema.NullOr(ThreadAutoCompactTokens)),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   initialMessage: Schema.optional(
     Schema.Struct({

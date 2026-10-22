@@ -7,6 +7,10 @@
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
     },
+    "./thread-auto-compact": {
+      "types": "./src/threadAutoCompact.ts",
+      "default": "./src/threadAutoCompact.ts"
+    },
     "./handoff": {
       "types": "./src/handoff.ts",
       "default": "./src/handoff.ts"

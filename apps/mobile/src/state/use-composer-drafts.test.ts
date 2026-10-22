@@ -186,6 +186,7 @@ import {
   setComposerDraftText,
   insertComposerDraftContext,
   insertComposerDraftText,
+  isComposerDraftEmpty,
   rememberComposerDraftSelection,
   setComposerDraftAttachmentUpload,
   waitForComposerDraftsLoaded,
@@ -193,6 +194,7 @@ import {
   stickyComposerModelSelectionAtom,
   undoComposerDraftMerge,
   undoComposerDraftMergeState,
+  updateComposerDraftSettings,
 } from "./use-composer-drafts";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
 
@@ -2195,6 +2197,64 @@ describe("mobile composer drafts", () => {
         clearWorkspaceSelection: true,
       }),
     ).toEqual({});
+  });
+
+  describe("per-thread auto-compact cap", () => {
+    const draftKey = "environment-1:thread-1";
+
+    it("survives a persist round trip and decodes as absent from older files", () => {
+      const draft: ComposerDraft = { text: "", attachments: [], autoCompactTokens: 300_000 };
+      const decoded = decodePersistedComposerState({
+        schemaVersion: 1,
+        drafts: { [draftKey]: draft, other: { text: "hi", attachments: [] } },
+      });
+      expect(decoded.drafts[draftKey]?.autoCompactTokens).toBe(300_000);
+      expect(decoded.drafts.other?.autoCompactTokens).toBeUndefined();
+    });
+
+    it("counts as content until it is cleared", () => {
+      appAtomRegistry.set(composerDraftsAtom, {});
+      updateComposerDraftSettings(draftKey, { autoCompactTokens: 300_000 });
+      expect(getComposerDraftSnapshot(draftKey).autoCompactTokens).toBe(300_000);
+      expect(isComposerDraftEmpty(getComposerDraftSnapshot(draftKey))).toBe(false);
+      updateComposerDraftSettings(draftKey, { autoCompactTokens: undefined });
+      expect(isComposerDraftEmpty(getComposerDraftSnapshot(draftKey))).toBe(true);
+    });
+
+    it("does not leak into the next task after the content is cleared", () => {
+      const draft: ComposerDraft = {
+        text: "send this",
+        attachments: [],
+        runtimeMode: "approval-required",
+        autoCompactTokens: 300_000,
+      };
+      const next = clearComposerDraftContentState({ [draftKey]: draft }, draftKey);
+      expect(next[draftKey]).toEqual({
+        text: "",
+        attachments: [],
+        runtimeMode: "approval-required",
+      });
+      expect(
+        clearComposerDraftContentState(
+          { [draftKey]: { text: "x", attachments: [], autoCompactTokens: 300_000 } },
+          draftKey,
+        ),
+      ).toEqual({});
+    });
+
+    it("undoes a merge's cap unless the user changed it since", () => {
+      const snapshot: ComposerDraft = { text: "a", attachments: [], autoCompactTokens: 200_000 };
+      const merged: ComposerDraft = { text: "a b", attachments: [], autoCompactTokens: 400_000 };
+      expect(
+        undoComposerDraftMergeState({ [draftKey]: merged }, draftKey, snapshot, merged)[draftKey]
+          ?.autoCompactTokens,
+      ).toBe(200_000);
+      const edited: ComposerDraft = { ...merged, text: "a b c", autoCompactTokens: 300_000 };
+      expect(
+        undoComposerDraftMergeState({ [draftKey]: edited }, draftKey, snapshot, merged)[draftKey]
+          ?.autoCompactTokens,
+      ).toBe(300_000);
+    });
   });
 
   it("reads the latest selector state synchronously for send", () => {

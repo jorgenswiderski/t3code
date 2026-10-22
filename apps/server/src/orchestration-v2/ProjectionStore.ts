@@ -737,6 +737,7 @@ export function applyToProjection(
     case "thread.pull-request-synced":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
+    case "thread.auto-compact-updated":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
       return {
@@ -1548,6 +1549,7 @@ export function threadShellFromProjection(
     pinnedAt: projection.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
+    autoCompactTokens: projection.thread.autoCompactTokens ?? null,
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
@@ -1835,6 +1837,7 @@ function shellFromState(input: {
     pinnedAt: input.state.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
+    autoCompactTokens: input.state.thread.autoCompactTokens ?? null,
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
@@ -1884,6 +1887,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "thread.pull-request-synced":
           case "thread.runtime-mode-updated":
           case "thread.interaction-mode-updated":
+          case "thread.auto-compact-updated":
           case "thread.model-selection-updated":
           case "thread.provider-switched": {
             const payloadJson = yield* encodeThreadPayload(event.payload);
@@ -2714,6 +2718,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           event.type !== "thread.metadata-updated" &&
           event.type !== "thread.runtime-mode-updated" &&
           event.type !== "thread.interaction-mode-updated" &&
+          event.type !== "thread.auto-compact-updated" &&
           event.type !== "thread.model-selection-updated" &&
           event.type !== "thread.provider-switched"
         ) {

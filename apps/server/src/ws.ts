@@ -1971,6 +1971,9 @@ const layerWsRpc = (
                     modelSelection: input.modelSelection,
                     runtimeMode: input.runtimeMode,
                     interactionMode: input.interactionMode,
+                    ...(input.autoCompactTokens === undefined
+                      ? {}
+                      : { autoCompactTokens: input.autoCompactTokens }),
                     workspaceStrategy: input.workspaceStrategy,
                     ...(input.initialMessage === undefined
                       ? {}

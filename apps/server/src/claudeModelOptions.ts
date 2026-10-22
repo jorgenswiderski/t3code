@@ -1,10 +1,14 @@
-import type { ModelSelection } from "@t3tools/contracts";
+import type { ClaudeSettings, ModelSelection } from "@t3tools/contracts";
 import {
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
+import {
+  resolveDesiredAppliedAutoCompactTokens,
+  type ThreadAutoCompactRange,
+} from "@t3tools/shared/threadAutoCompact";
 
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -12,6 +16,7 @@ import {
   isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogContextWindowTokens,
   resolveClaudeCatalogEffort,
   type ClaudeModelCatalog,
 } from "./provider/ClaudeModelCatalog.ts";
@@ -55,5 +60,75 @@ export function compileClaudeModelSelection(
     promptEffort,
     settings,
     queryIdentity: JSON.stringify({ apiModelId, effort: effort ?? null, settings }),
+  };
+}
+
+/**
+ * Claude compacts at about `autoCompactWindow` minus this many tokens. Measured
+ * as a constant from 100k to 1M windows (per-thread auto-compact spike, CLI
+ * 2.1.306 / SDK 0.3.276). The only place this buffer appears.
+ */
+export const CLAUDE_AUTO_COMPACT_BUFFER_TOKENS = 33_000;
+/** SDK-accepted autoCompactWindow bounds; anything else is silently ignored by the CLI. */
+export const CLAUDE_AUTO_COMPACT_WINDOW_MIN = 100_000;
+export const CLAUDE_AUTO_COMPACT_WINDOW_MAX = 1_000_000;
+/** User-facing per-thread range Claude advertises (ServerProvider.threadAutoCompact). */
+export const CLAUDE_THREAD_AUTO_COMPACT_RANGE: ThreadAutoCompactRange = {
+  minTokens: 100_000,
+  maxTokens: CLAUDE_AUTO_COMPACT_WINDOW_MAX - CLAUDE_AUTO_COMPACT_BUFFER_TOKENS,
+};
+
+/**
+ * Instance "Auto-compact after" as user-facing tokens ("compacts at about N");
+ * undefined when empty. Values above the advertised maximum count as that maximum.
+ */
+export function claudeInstanceAutoCompactTokens(
+  settings: ClaudeSettings | undefined,
+): number | undefined {
+  const value = settings?.autoCompactWindow;
+  if (value === undefined || value === "") return undefined;
+  return Math.min(Number(value), CLAUDE_THREAD_AUTO_COMPACT_RANGE.maxTokens);
+}
+
+/** User-facing tokens → SDK `autoCompactWindow`, clamped to the range the SDK accepts. */
+export function claudeAutoCompactWindowForTokens(tokens: number): number {
+  return Math.min(
+    Math.max(tokens + CLAUDE_AUTO_COMPACT_BUFFER_TOKENS, CLAUDE_AUTO_COMPACT_WINDOW_MIN),
+    CLAUDE_AUTO_COMPACT_WINDOW_MAX,
+  );
+}
+
+export interface ClaudeAutoCompactResolution {
+  /** Value for options.settings.autoCompactWindow; undefined = omit the key. */
+  readonly sdkWindow: number | undefined;
+  /** User-facing tokens to report as appliedAutoCompact.tokens. */
+  readonly appliedTokens: number | null;
+}
+
+/**
+ * Resolve what a Claude process should compact at: the thread's stored value
+ * wins over the instance setting, and both mean "compacts at about N tokens".
+ * `appliedTokens` matches what clients derive from the advertised capability.
+ */
+export function resolveClaudeAutoCompact(input: {
+  readonly stored: number | null | undefined;
+  readonly modelSelection: ModelSelection;
+  readonly settings: ClaudeSettings | undefined;
+  readonly catalog?: ClaudeModelCatalog;
+}): ClaudeAutoCompactResolution {
+  const catalog = input.catalog ?? BUNDLED_CLAUDE_MODEL_CATALOG;
+  const windowTokens =
+    resolveClaudeCatalogContextWindowTokens(catalog, input.modelSelection) ?? null;
+  // The process runs with exactly what it reports: a per-thread or instance value at or above
+  // the model's window counts as unset, so the key is omitted and the CLI uses its own default.
+  const appliedTokens = resolveDesiredAppliedAutoCompactTokens({
+    stored: input.stored,
+    range: CLAUDE_THREAD_AUTO_COMPACT_RANGE,
+    windowTokens,
+    defaultTokens: claudeInstanceAutoCompactTokens(input.settings) ?? null,
+  });
+  return {
+    sdkWindow: appliedTokens === null ? undefined : claudeAutoCompactWindowForTokens(appliedTokens),
+    appliedTokens,
   };
 }
