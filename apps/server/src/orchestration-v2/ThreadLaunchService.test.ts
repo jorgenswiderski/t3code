@@ -38,6 +38,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -2527,6 +2528,180 @@ it.effect.each([
             : { startFromOrigin: testCase.startFromOrigin }),
         },
       });
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+const countAutoCompactEvents = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count FROM orchestration_events
+      WHERE stream_id = ${threadId} AND event_type = 'thread.auto-compact-updated'
+    `;
+    return rows[0]?.count ?? 0;
+  });
+
+const createEmptyThread = (threadId: ThreadId, autoCompactTokens: number | null) =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    yield* threads.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`${threadId}:create`),
+      threadId,
+      projectId,
+      title: "Empty thread",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      autoCompactTokens,
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+  });
+
+it.effect("launch carries the auto-compact value into thread.create", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch({
+        ...launchInput({
+          command: "command:launch:auto-compact-create",
+          thread: "thread:launch:auto-compact-create",
+          message: "Hello",
+        }),
+        autoCompactTokens: 300_000,
+      });
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(projection.thread.autoCompactTokens, 300_000);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("launch without the key creates a Default thread", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:auto-compact-default",
+          thread: "thread:launch:auto-compact-default",
+          message: "Hello",
+        }),
+      );
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(projection.thread.autoCompactTokens, null);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("reusing an empty thread applies a changed value once", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const threadId = ThreadId.make("thread:launch:auto-compact-reuse");
+      yield* createEmptyThread(threadId, null);
+      yield* launches.launch({
+        ...launchInput({
+          command: "command:launch:auto-compact-reuse",
+          thread: threadId,
+          message: "Hello",
+        }),
+        reuseExistingThread: true,
+        autoCompactTokens: 200_000,
+      });
+      const projection = yield* threads.getThreadProjection(threadId);
+      assert.equal(projection.thread.autoCompactTokens, 200_000);
+      assert.equal(yield* countAutoCompactEvents(threadId), 1);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("reusing an empty thread with the same value dispatches nothing extra", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const threadId = ThreadId.make("thread:launch:auto-compact-reuse-same");
+      yield* createEmptyThread(threadId, 200_000);
+      yield* launches.launch({
+        ...launchInput({
+          command: "command:launch:auto-compact-reuse-same",
+          thread: threadId,
+          message: "Hello",
+        }),
+        reuseExistingThread: true,
+        autoCompactTokens: 200_000,
+      });
+      const projection = yield* threads.getThreadProjection(threadId);
+      assert.equal(projection.thread.autoCompactTokens, 200_000);
+      assert.equal(yield* countAutoCompactEvents(threadId), 0);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("a retried launch keeps the value and does not fail", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const threadId = ThreadId.make("thread:launch:auto-compact-retry");
+      yield* createEmptyThread(threadId, null);
+      const input = {
+        ...launchInput({
+          command: "command:launch:auto-compact-retry",
+          thread: threadId,
+          message: "Hello",
+        }),
+        reuseExistingThread: true,
+        autoCompactTokens: 200_000,
+      };
+      yield* launches.launch(input);
+      yield* launches.launch(input);
+      const projection = yield* threads.getThreadProjection(threadId);
+      assert.equal(projection.thread.autoCompactTokens, 200_000);
+      assert.equal(yield* countAutoCompactEvents(threadId), 1);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("a rejected initial message leaves a reused thread's value unchanged", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const threadId = ThreadId.make("thread:launch:auto-compact-rejected");
+      yield* createEmptyThread(threadId, null);
+      const failed = yield* launches
+        .launch({
+          ...launchInput({
+            command: "command:launch:auto-compact-rejected",
+            thread: threadId,
+            message: "Hello",
+          }),
+          reuseExistingThread: true,
+          autoCompactTokens: 200_000,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("missing-provider"),
+            model: "missing-model",
+          },
+        })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(failed));
+      const projection = yield* threads.getThreadProjection(threadId);
+      assert.equal(projection.thread.autoCompactTokens, null);
+      assert.equal(yield* countAutoCompactEvents(threadId), 0);
     }).pipe(Effect.provide(harness.layer));
   }),
 );

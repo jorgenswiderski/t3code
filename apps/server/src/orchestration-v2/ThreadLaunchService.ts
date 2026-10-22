@@ -82,6 +82,8 @@ export interface ThreadLaunchInput {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  /** Per-thread auto-compact value; absent leaves the thread's value unchanged. */
+  readonly autoCompactTokens?: number | null;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
   readonly initialMessage?: ThreadLaunchInitialMessage;
   readonly importedNativeThread?: {
@@ -841,6 +843,9 @@ const make = Effect.gen(function* () {
                 modelSelection: input.modelSelection,
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,
+                ...(input.autoCompactTokens === undefined
+                  ? {}
+                  : { autoCompactTokens: input.autoCompactTokens }),
                 branch: initialBranch,
                 worktreePath: initialWorktreePath,
                 ...(input.importedNativeThread === undefined
@@ -908,6 +913,25 @@ const make = Effect.gen(function* () {
               "dispatch-message",
               threadId,
             )("Initial message was accepted without a durable run.");
+          }
+        }
+
+        // A reused thread takes the launch's auto-compact value only once its
+        // initial message is accepted, like its title. The derived command id
+        // lets a retry dedupe on the receipt.
+        if (input.reuseExistingThread === true && input.autoCompactTokens !== undefined) {
+          const shell = yield* threads
+            .getThreadShell(threadId)
+            .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
+          if ((shell?.autoCompactTokens ?? null) !== input.autoCompactTokens) {
+            yield* threads
+              .dispatch({
+                type: "thread.auto-compact.set",
+                commandId: CommandId.make(`${input.commandId}:auto-compact`),
+                threadId,
+                autoCompactTokens: input.autoCompactTokens,
+              })
+              .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
           }
         }
 
