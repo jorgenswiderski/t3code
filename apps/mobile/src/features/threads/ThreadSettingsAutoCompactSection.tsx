@@ -90,8 +90,12 @@ function ExistingThreadAutoCompact(props: {
   const shell = useThreadShell(scopeThreadRef(environmentId, threadId));
   const detail = useEnvironmentThread(environmentId, threadId);
   const applied = useMemo(
-    () => appliedAutoCompactFromProjection(Option.getOrNull(detail.data)),
-    [detail.data],
+    () =>
+      appliedAutoCompactFromProjection(
+        Option.getOrNull(detail.data),
+        props.modelSelection.instanceId,
+      ),
+    [detail.data, props.modelSelection.instanceId],
   );
   const canEdit = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const setAutoCompact = useAtomCommand(threadEnvironment.setAutoCompact, {

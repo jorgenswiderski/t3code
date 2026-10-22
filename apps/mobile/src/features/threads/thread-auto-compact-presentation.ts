@@ -90,17 +90,23 @@ export function resolveCustomCommit(input: {
     : { kind: "set", tokens: validation.tokens };
 }
 
-/** Applied report of the thread's active provider thread, or null. */
+/**
+ * Applied report of the thread's active provider thread, or null. It only counts when that
+ * provider thread runs under `instanceId`: a staged model on another instance starts a fresh
+ * process, so nothing is pending.
+ */
 export function appliedAutoCompactFromProjection(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "providerThreads"> | null,
+  instanceId: ProviderInstanceId,
 ): OrchestrationV2AppliedAutoCompact | null {
   if (projection === null) return null;
   const activeId = projection.thread.activeProviderThreadId;
   if (activeId === null) return null;
-  return (
-    projection.providerThreads.find((providerThread) => providerThread.id === activeId)
-      ?.appliedAutoCompact ?? null
+  const active = projection.providerThreads.find(
+    (providerThread) => providerThread.id === activeId,
   );
+  if (active === undefined || active.providerInstanceId !== instanceId) return null;
+  return active.appliedAutoCompact ?? null;
 }
 
 /** Value to send in thread creation, or undefined (omit the key). A provider that does not

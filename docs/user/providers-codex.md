@@ -66,7 +66,7 @@ from the other home.
 
 ## Compact long conversations
 
-Open the context meter in the composer and pick **Auto-compact at** (`Default`, `200k`,
+Open the context meter in the composer (on mobile, thread settings) and pick **Auto-compact at** (`Default`, `200k`,
 `300k`, `400k`, or `Custom…`) to choose when Codex compacts a thread. The choice applies to
 that thread only, can be set before the first message, and shows as a tick on the ring and
 the meter's bar. `Default` returns to Codex's own behavior.

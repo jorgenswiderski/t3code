@@ -718,7 +718,7 @@ export const ClaudeSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Auto-compact after",
         description:
-          "Compact at about this many tokens, 100,000 to 967,000 (larger values count as 967,000). Leave empty to use Claude's default.",
+          "Compact after 100,000 to 1,000,000 tokens. Leave empty to use Claude's default.",
         providerSettingsForm: {
           placeholder: "e.g. 300000",
           clearWhenEmpty: "omit",

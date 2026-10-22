@@ -148,6 +148,8 @@ describe("resolveCustomCommit", () => {
 });
 
 describe("appliedAutoCompactFromProjection", () => {
+  const claude = ProviderInstanceId.make("claudeAgent");
+  const codex = ProviderInstanceId.make("codex");
   const projection = (activeId: string | null, providerThreads: ReadonlyArray<unknown>) =>
     ({
       thread: { activeProviderThreadId: activeId },
@@ -158,21 +160,41 @@ describe("appliedAutoCompactFromProjection", () => {
     expect(
       appliedAutoCompactFromProjection(
         projection("pt-2", [
-          { id: "pt-1", appliedAutoCompact: { tokens: 100_000 } },
-          { id: "pt-2", appliedAutoCompact: { tokens: 300_000 } },
+          { id: "pt-1", providerInstanceId: claude, appliedAutoCompact: { tokens: 100_000 } },
+          { id: "pt-2", providerInstanceId: claude, appliedAutoCompact: { tokens: 300_000 } },
         ]),
+        claude,
       ),
     ).toEqual({ tokens: 300_000 });
   });
 
   it("returns null without a projection, an active thread, or a report", () => {
-    expect(appliedAutoCompactFromProjection(null)).toBeNull();
+    expect(appliedAutoCompactFromProjection(null, claude)).toBeNull();
     expect(
       appliedAutoCompactFromProjection(
-        projection(null, [{ id: "pt-1", appliedAutoCompact: { tokens: 1 } }]),
+        projection(null, [
+          { id: "pt-1", providerInstanceId: claude, appliedAutoCompact: { tokens: 1 } },
+        ]),
+        claude,
       ),
     ).toBeNull();
-    expect(appliedAutoCompactFromProjection(projection("pt-1", [{ id: "pt-1" }]))).toBeNull();
+    expect(
+      appliedAutoCompactFromProjection(
+        projection("pt-1", [{ id: "pt-1", providerInstanceId: claude }]),
+        claude,
+      ),
+    ).toBeNull();
+  });
+
+  it("ignores the report when the staged model is on another instance", () => {
+    expect(
+      appliedAutoCompactFromProjection(
+        projection("pt-1", [
+          { id: "pt-1", providerInstanceId: claude, appliedAutoCompact: { tokens: 300_000 } },
+        ]),
+        codex,
+      ),
+    ).toBeNull();
   });
 });
 

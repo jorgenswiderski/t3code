@@ -44,21 +44,9 @@ T3 Code uses the Claude configuration on the connected server.
 ## Compact long conversations
 
 Set **Auto-compact after** in the Claude provider settings to an integer between
-`100000` and `967000`; larger values behave as `967000`. For example, `300000` asks Claude to summarize at about
+`100000` and `1000000`. For example, `300000` asks Claude to summarize at about
 300,000 tokens. This changes when compaction happens, not the model's context
 window. Leave it empty for Claude Code's default.
-
-To set the threshold for one thread, open the context meter in the composer and pick
-**Auto-compact at**: `Default`, `200k`, `300k`, `400k`, or `Custom…`. The choice applies to
-that thread only and overrides **Auto-compact after**. `Default` goes back to the provider
-setting. You can pick a value before the first message, when the meter shows an empty ring,
-and change it any time. The ring and the meter's bar show a tick where the thread compacts.
-Values at or above the model's context window are not offered, and the same value is kept if
-you switch models or providers.
-
-Claude picks up a change on your next message. If Claude is running background work, the meter
-says the change applies after the session restarts, and T3 Code does not interrupt the
-background work to apply it. Agents can read and set the value with `t3_thread_configure`.
 
 You can also send `/compact` in an existing conversation. Web and desktop offer
 **Compact context** from the context meter. When you return to a large thread
