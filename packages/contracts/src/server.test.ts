@@ -336,3 +336,31 @@ describe("OtlpEndpointCheckInput", () => {
     }
   });
 });
+
+describe("ServerProvider.threadAutoCompact", () => {
+  it("a provider without threadAutoCompact decodes (older servers)", () => {
+    expect(decodeServerProvider(baseProviderSnapshot).threadAutoCompact).toBeUndefined();
+  });
+
+  it("decodes threadAutoCompact with and without defaultTokens", () => {
+    const withoutDefault = { minTokens: 100000, maxTokens: 1000000 };
+    const withDefault = { ...withoutDefault, defaultTokens: 300000 };
+    expect(
+      decodeServerProvider({ ...baseProviderSnapshot, threadAutoCompact: withoutDefault })
+        .threadAutoCompact,
+    ).toEqual(withoutDefault);
+    expect(
+      decodeServerProvider({ ...baseProviderSnapshot, threadAutoCompact: withDefault })
+        .threadAutoCompact,
+    ).toEqual(withDefault);
+  });
+
+  it("rejects a zero minTokens", () => {
+    expect(() =>
+      decodeServerProvider({
+        ...baseProviderSnapshot,
+        threadAutoCompact: { minTokens: 0, maxTokens: 1000000 },
+      }),
+    ).toThrow();
+  });
+});
