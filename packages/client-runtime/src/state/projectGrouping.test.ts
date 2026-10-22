@@ -147,14 +147,15 @@ describe("buildProjectGroups", () => {
     );
   });
 
-  it("keeps the repository label when shared titles match its repository name", () => {
+  it("uses a shared title even when it matches the repository name", () => {
+    const identity = { ...repositoryIdentity, displayName: "t3tools/t3code" };
     const projects = [
-      makeProject("first", "/work/t3code", { title: "t3code" }),
-      makeProject("second", "/work/t3code-2", { title: "t3code" }),
+      makeProject("first", "/work/t3code", { title: "t3code", repositoryIdentity: identity }),
+      makeProject("second", "/work/t3code-2", { title: "t3code", repositoryIdentity: identity }),
     ];
 
     expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
-      "T3 Code",
+      "t3code",
     );
   });
 
