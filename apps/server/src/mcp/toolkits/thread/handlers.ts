@@ -7,8 +7,10 @@ import {
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
   type ServerProvider,
+  ThreadAutoCompactTokens,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -72,13 +74,16 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (input: {
     });
   return { ...context, request, item };
 });
+const isThreadAutoCompactTokens = Schema.is(ThreadAutoCompactTokens);
+
 /** Why a provider instance cannot run a thread at `tokens`, or null when it can. */
 function autoCompactRejection(provider: ServerProvider | undefined, tokens: number): string | null {
   const range = provider?.threadAutoCompact;
   if (range === undefined) {
     return "This thread's provider does not support a per-thread auto-compact value.";
   }
-  if (tokens < range.minTokens || tokens > range.maxTokens) {
+  // The contract's sanity bound also applies, in case a provider range ever exceeds it.
+  if (tokens < range.minTokens || tokens > range.maxTokens || !isThreadAutoCompactTokens(tokens)) {
     return `autoCompactTokens must be between ${range.minTokens} and ${range.maxTokens}.`;
   }
   return null;

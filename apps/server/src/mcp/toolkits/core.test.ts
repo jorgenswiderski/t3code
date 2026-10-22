@@ -1066,6 +1066,21 @@ describe("per-thread auto-compact over MCP", () => {
     ),
   );
 
+  it.effect("configure explains a value outside the schema sanity bound", () =>
+    run({ providers: [provider("codex", capability)] }, ({ call, commands }) =>
+      Effect.gen(function* () {
+        for (const autoCompactTokens of [5000, "5000", 50_000_000]) {
+          const result = yield* call("t3_thread_configure", { autoCompactTokens });
+          expect(declaredFailure(result)).toMatchObject({
+            code: "invalid_request",
+            message: "autoCompactTokens must be between 100000 and 1000000.",
+          });
+        }
+        expect(commands).toEqual([]);
+      }),
+    ),
+  );
+
   it.effect("configure validates against the newly selected provider", () =>
     run(
       {

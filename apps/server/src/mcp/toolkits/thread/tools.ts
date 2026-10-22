@@ -19,7 +19,6 @@ import {
   NonNegativeInt,
   ProjectId,
   PositiveInt,
-  ThreadAutoCompactTokens,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
@@ -201,13 +200,15 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
     threadId: Schema.optional(ThreadId),
     modelSelection: Schema.optional(ModelSelection),
     /** null = Default. Omit to leave unchanged. Claude Code sends this union's
-        values as strings ("null", "300000"), so both string forms decode too. */
+        values as strings ("null", "300000"), so both string forms decode too.
+        Only integer-ness is checked here; the handler range-checks so an
+        out-of-range value gets a readable message instead of a schema error. */
     autoCompactTokens: Schema.optional(
       Schema.Union([
-        ThreadAutoCompactTokens,
+        Schema.Int,
         Schema.Null,
         Schema.Literal("null"),
-        Schema.FiniteFromString.pipe(Schema.decodeTo(ThreadAutoCompactTokens)),
+        Schema.FiniteFromString.pipe(Schema.decodeTo(Schema.Int)),
       ]),
     ),
   }),
