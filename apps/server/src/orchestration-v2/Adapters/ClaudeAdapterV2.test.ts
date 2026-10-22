@@ -2920,10 +2920,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
     const openedWindow = (options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined) =>
       (options?.settings as { autoCompactWindow?: number } | undefined)?.autoCompactWindow;
-    const settle = Effect.fnUntraced(function* () {
-      let quietYields = 0;
-      yield* awaitUntil(() => quietYields++ >= 50, "quiet");
-    });
+    // The open-time report is queued before the turn's first provider_turn
+    // event, so once that event is collected every open-time emit is too.
+    const awaitOpenReported = (harness: {
+      readonly events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
+    }) =>
+      awaitUntil(
+        () => harness.events.some((event) => event.type === "provider_turn.updated"),
+        "turn started",
+      );
     const layer = Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer);
 
     it.effect("opens with the thread's auto-compact window and reports it", () =>
@@ -2936,7 +2941,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: 200_000 }),
         );
         assert.equal(openedWindow(harness.getOpenedOptions()), 233_000);
-        yield* settle();
+        yield* awaitOpenReported(harness);
         const updates = providerThreadUpdates(harness.events);
         assert.lengthOf(updates, 1);
         assert.deepEqual(updates[0]?.appliedAutoCompact, { tokens: 200_000 });
@@ -2983,7 +2988,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: null }),
         );
         assert.equal(openedWindow(harness.getOpenedOptions()), 333_000);
-        yield* settle();
+        yield* awaitOpenReported(harness);
         assert.deepEqual(
           providerThreadUpdates(harness.events).map((thread) => thread.appliedAutoCompact),
           [{ tokens: 300_000 }],
@@ -2999,7 +3004,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: null }),
         );
         assert.isFalse(hasAutoCompactWindowKey(harness.getOpenedOptions()?.settings));
-        yield* settle();
+        yield* awaitOpenReported(harness);
         assert.deepEqual(
           providerThreadUpdates(harness.events).map((thread) => thread.appliedAutoCompact),
           [{ tokens: null }],
@@ -3041,15 +3046,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
     it.effect("reports after a process reopen", () =>
       Effect.gen(function* () {
+        // Same stored value on both turns, so only the first process exiting
+        // (not a stale threshold) can cause the second open.
         const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
         const now = yield* DateTime.now;
         yield* harness.runtime.startTurn(
-          autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: null }),
+          autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: 200_000 }),
         );
         yield* harness.offerAndWait(turnOneResult);
         yield* Queue.take(harness.terminalReceipts);
         yield* Queue.shutdown(harness.sdkMessages);
-        yield* settle();
+        let quietYields = 0;
+        yield* awaitUntil(() => quietYields++ >= 50, "query exit");
         const mark = harness.events.length;
         yield* harness.runtime.startTurn(
           autoCompactTurn(harness, { ordinal: 2, now, autoCompactTokens: 200_000 }),
@@ -3125,6 +3133,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(layer)),
     );
 
+    it.effect("overwrites a differing projection report at first open", () =>
+      Effect.gen(function* () {
+        // A fresh session (idle release, server restart) has no remembered
+        // report, while the projection still holds an older one.
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, {
+            ordinal: 1,
+            now,
+            autoCompactTokens: null,
+            providerThread: { ...harness.providerThread, appliedAutoCompact: { tokens: 300_000 } },
+          }),
+        );
+        assert.isFalse(hasAutoCompactWindowKey(harness.getOpenedOptions()?.settings));
+        yield* awaitOpenReported(harness);
+        assert.deepEqual(
+          providerThreadUpdates(harness.events).map((thread) => thread.appliedAutoCompact),
+          [{ tokens: null }],
+        );
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
     it.effect("does not re-emit when the reopened value matches the projection", () =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarnessWithOptions({
@@ -3139,8 +3170,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             providerThread: { ...harness.providerThread, appliedAutoCompact: { tokens: 300_000 } },
           }),
         );
-        yield* settle();
-        assert.lengthOf(providerThreadUpdates(harness.events), 0);
+        // Run the turn to its end: any open-time report would precede the
+        // turn's events, so the only update left must be turn completion.
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        const updates = providerThreadUpdates(harness.events);
+        assert.deepEqual(
+          updates.map((thread) => [thread.lastRunOrdinal, thread.appliedAutoCompact]),
+          [[1, { tokens: 300_000 }]],
+        );
       }).pipe(Effect.scoped, Effect.provide(layer)),
     );
 
