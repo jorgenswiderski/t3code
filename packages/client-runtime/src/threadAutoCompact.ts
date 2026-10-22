@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import {
+  autoCompactTokensBelowWindow,
   resolveDesiredAppliedAutoCompactTokens,
   resolveEffectiveAutoCompactTokens,
 } from "@t3tools/shared/threadAutoCompact";
@@ -132,7 +133,11 @@ export function deriveThreadAutoCompactView(input: {
   const { capability, stored, applied, windowTokens } = input;
   if (capability === undefined) return null;
   const range = { minTokens: capability.minTokens, maxTokens: capability.maxTokens };
-  const defaultTokens = capability.defaultTokens;
+  // An instance default at or above this model's window never triggers, so it is no default here.
+  const defaultTokens = autoCompactTokensBelowWindow({
+    tokens: capability.defaultTokens,
+    windowTokens,
+  });
   const effectiveTokens = resolveEffectiveAutoCompactTokens({ stored, range, windowTokens });
   const desired = resolveDesiredAppliedAutoCompactTokens({
     stored,

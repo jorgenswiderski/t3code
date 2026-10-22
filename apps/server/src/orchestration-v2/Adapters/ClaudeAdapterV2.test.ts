@@ -284,7 +284,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       result: "continue" as const,
     });
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
-      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      modelSelection: CLAUDE_1M_MODEL_SELECTION,
       nativeThreadId: "native-thread-auto-compact",
       resume: true,
       cwd: "/workspace",
@@ -335,6 +335,17 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       settings: decodeClaudeSettings({ autoCompactWindow: "1000000" }),
     });
     assert.equal(autoCompactWindowOf(options), 1_000_000);
+  });
+
+  it("an instance value at or above a 200k model's window omits autoCompactWindow", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model: "claude-haiku-4-5", options: [] },
+      nativeThreadId: "native-thread-auto-compact",
+      resume: false,
+      cwd: "/workspace",
+      settings: AUTO_COMPACT_CLAUDE_SETTINGS,
+    });
+    assert.isFalse(hasAutoCompactWindowKey(options.settings));
   });
 
   it("no thread or instance value omits autoCompactWindow", () => {

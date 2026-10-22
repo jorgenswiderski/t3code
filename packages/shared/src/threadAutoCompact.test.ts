@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  autoCompactTokensBelowWindow,
   resolveDesiredAppliedAutoCompactTokens,
   resolveEffectiveAutoCompactTokens,
 } from "./threadAutoCompact.ts";
@@ -33,12 +34,32 @@ describe("resolveDesiredAppliedAutoCompactTokens", () => {
     { stored: 250_000, windowTokens: 1_000_000, defaultTokens: 300_000, expected: 250_000 },
     { stored: 400_000, windowTokens: 200_000, defaultTokens: 150_000, expected: 150_000 },
     { stored: 400_000, windowTokens: 200_000, defaultTokens: undefined, expected: null },
+    { stored: null, windowTokens: 200_000, defaultTokens: 300_000, expected: null },
+    { stored: null, windowTokens: 200_000, defaultTokens: 200_000, expected: null },
+    { stored: 400_000, windowTokens: 200_000, defaultTokens: 300_000, expected: null },
+    { stored: null, windowTokens: null, defaultTokens: 300_000, expected: 300_000 },
   ])(
     "$stored with window $windowTokens and default $defaultTokens → $expected",
     ({ stored, windowTokens, defaultTokens, expected }) => {
       expect(
         resolveDesiredAppliedAutoCompactTokens({ stored, range, windowTokens, defaultTokens }),
       ).toBe(expected);
+    },
+  );
+});
+
+describe("autoCompactTokensBelowWindow", () => {
+  it.each([
+    { tokens: null, windowTokens: 258_400, expected: null, why: "no value" },
+    { tokens: 300_000, windowTokens: 258_400, expected: null, why: "above the window" },
+    { tokens: 258_400, windowTokens: 258_400, expected: null, why: "at the window" },
+    { tokens: 200_000, windowTokens: 258_400, expected: 200_000, why: "below the window" },
+    { tokens: 300_000, windowTokens: null, expected: 300_000, why: "unknown window" },
+    { tokens: 300_000, windowTokens: 0, expected: 300_000, why: "non-positive window" },
+  ])(
+    "$why: $tokens with window $windowTokens → $expected",
+    ({ tokens, windowTokens, expected }) => {
+      expect(autoCompactTokensBelowWindow({ tokens, windowTokens })).toBe(expected);
     },
   );
 });

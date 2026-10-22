@@ -7,7 +7,6 @@ import {
 } from "@t3tools/shared/model";
 import {
   resolveDesiredAppliedAutoCompactTokens,
-  resolveEffectiveAutoCompactTokens,
   type ThreadAutoCompactRange,
 } from "@t3tools/shared/threadAutoCompact";
 
@@ -120,20 +119,16 @@ export function resolveClaudeAutoCompact(input: {
   const catalog = input.catalog ?? BUNDLED_CLAUDE_MODEL_CATALOG;
   const windowTokens =
     resolveClaudeCatalogContextWindowTokens(catalog, input.modelSelection) ?? null;
-  const instanceTokens = claudeInstanceAutoCompactTokens(input.settings);
-  const effective = resolveEffectiveAutoCompactTokens({
+  // The process runs with exactly what it reports: a per-thread or instance value at or above
+  // the model's window counts as unset, so the key is omitted and the CLI uses its own default.
+  const appliedTokens = resolveDesiredAppliedAutoCompactTokens({
     stored: input.stored,
     range: CLAUDE_THREAD_AUTO_COMPACT_RANGE,
     windowTokens,
+    defaultTokens: claudeInstanceAutoCompactTokens(input.settings) ?? null,
   });
-  const sdkTokens = effective ?? instanceTokens;
   return {
-    sdkWindow: sdkTokens === undefined ? undefined : claudeAutoCompactWindowForTokens(sdkTokens),
-    appliedTokens: resolveDesiredAppliedAutoCompactTokens({
-      stored: input.stored,
-      range: CLAUDE_THREAD_AUTO_COMPACT_RANGE,
-      windowTokens,
-      defaultTokens: instanceTokens ?? null,
-    }),
+    sdkWindow: appliedTokens === null ? undefined : claudeAutoCompactWindowForTokens(appliedTokens),
+    appliedTokens,
   };
 }

@@ -249,4 +249,25 @@ describe("deriveThreadAutoCompactView", () => {
     });
     expect(view?.presets.find((preset) => preset.tokens === 200_000)?.disabled).toBe(true);
   });
+
+  it("12: an instance default at or above the window is no default", () => {
+    const view = deriveThreadAutoCompactView({
+      ...base,
+      capability: { ...capability, defaultTokens: 300_000 },
+      applied: { tokens: null },
+      windowTokens: 200_000,
+    });
+    expect(view).toMatchObject({ pending: false, statusText: null });
+  });
+
+  it("13: a custom cap names the built-in default when the instance default exceeds the window", () => {
+    const view = deriveThreadAutoCompactView({
+      ...base,
+      capability: { ...capability, defaultTokens: 300_000 },
+      stored: 150_000,
+      applied: { tokens: 150_000 },
+      windowTokens: 200_000,
+    });
+    expect(view?.statusText).toBe("This thread compacts at 150k (default: Claude default).");
+  });
 });
