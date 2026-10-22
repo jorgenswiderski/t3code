@@ -41,6 +41,7 @@ import {
   archiveThread,
   cancelQueuedRun,
   createProject,
+  createThread,
   dismissThreadUserInput,
   editQueuedRun,
   forkThreadFromRun,
@@ -50,6 +51,7 @@ import {
   reorderActiveThread,
   reorderQueuedRun,
   revertThreadCheckpoint,
+  setThreadAutoCompact,
   settleThread,
   startThreadTurn,
   unsettleThread,
@@ -916,6 +918,110 @@ describe("V2 environment commands", () => {
           reason: "user",
         },
       ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("dispatches thread.auto-compact.set with a value and with null", () =>
+    Effect.gen(function* () {
+      const dispatched: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands: dispatched, projects: [] });
+
+      for (const [commandId, autoCompactTokens] of [
+        ["ac-1", 300000],
+        ["ac-2", null],
+      ] as const) {
+        yield* setThreadAutoCompact({
+          commandId: CommandId.make(commandId),
+          threadId: ThreadId.make("thread-1"),
+          autoCompactTokens,
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      }
+
+      expect(dispatched).toEqual([
+        {
+          type: "thread.auto-compact.set",
+          commandId: "ac-1",
+          threadId: "thread-1",
+          autoCompactTokens: 300000,
+        },
+        {
+          type: "thread.auto-compact.set",
+          commandId: "ac-2",
+          threadId: "thread-1",
+          autoCompactTokens: null,
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  const launchWithDraftAutoCompact = (autoCompactTokens: number | null) =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
+      yield* startThreadTurn({
+        commandId: CommandId.make(`launch-auto-compact-${autoCompactTokens}`),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make(`message-auto-compact-${autoCompactTokens}`),
+          role: "user",
+          text: "Hello",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project-1"),
+            title: "Thread",
+            modelSelection: v2Projection.thread.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            autoCompactTokens,
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-06-20T00:00:00.000Z",
+          },
+        },
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      return launches;
+    });
+
+  it.effect("launch forwards a non-null draft auto-compact value", () =>
+    Effect.gen(function* () {
+      const launches = yield* launchWithDraftAutoCompact(300000);
+      expect(launches[0]?.autoCompactTokens).toBe(300000);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("launch omits a Default draft auto-compact value", () =>
+    Effect.gen(function* () {
+      const launches = yield* launchWithDraftAutoCompact(null);
+      expect(launches).toHaveLength(1);
+      expect("autoCompactTokens" in launches[0]!).toBe(false);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("createThread forwards a non-null value and omits null", () =>
+    Effect.gen(function* () {
+      const dispatched: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands: dispatched, projects: [] });
+      for (const autoCompactTokens of [200000, null]) {
+        yield* createThread({
+          commandId: CommandId.make(`create-auto-compact-${autoCompactTokens}`),
+          threadId: ThreadId.make(`thread-auto-compact-${autoCompactTokens}`),
+          projectId: ProjectId.make("project-1"),
+          title: "Thread",
+          modelSelection: v2Projection.thread.modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          autoCompactTokens,
+          branch: null,
+          worktreePath: null,
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      }
+      expect(dispatched[0]).toMatchObject({ type: "thread.create", autoCompactTokens: 200000 });
+      expect(dispatched[1]?.type).toBe("thread.create");
+      expect("autoCompactTokens" in dispatched[1]!).toBe(false);
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 

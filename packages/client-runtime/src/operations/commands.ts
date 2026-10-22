@@ -74,6 +74,8 @@ export interface CreateThreadInput extends CommandMetadata {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  /** Sent only when non-null, so a Default thread never sends the key to an older server. */
+  readonly autoCompactTokens?: number | null;
   readonly branch: string | null;
   readonly worktreePath: string | null;
 }
@@ -144,6 +146,10 @@ export interface SetThreadInteractionModeInput extends ThreadCommandInput {
   readonly interactionMode: ProviderInteractionMode;
 }
 
+export interface SetThreadAutoCompactInput extends ThreadCommandInput {
+  readonly autoCompactTokens: number | null;
+}
+
 interface StartThreadBootstrap {
   readonly createThread?: {
     readonly projectId: ProjectId;
@@ -151,6 +157,8 @@ interface StartThreadBootstrap {
     readonly modelSelection: ModelSelection;
     readonly runtimeMode: RuntimeMode;
     readonly interactionMode: ProviderInteractionMode;
+    /** Sent only when non-null; the caller passes one only when the provider supports it. */
+    readonly autoCompactTokens?: number | null;
     readonly branch: string | null;
     readonly worktreePath: string | null;
     readonly createdAt: string;
@@ -408,6 +416,7 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
     modelSelection: input.modelSelection,
     runtimeMode: input.runtimeMode,
     interactionMode: input.interactionMode,
+    ...(input.autoCompactTokens == null ? {} : { autoCompactTokens: input.autoCompactTokens }),
     branch: input.branch,
     worktreePath: input.worktreePath,
   });
@@ -628,6 +637,17 @@ export const setThreadInteractionMode = Effect.fn("EnvironmentCommands.setThread
   },
 );
 
+export const setThreadAutoCompact = Effect.fn("EnvironmentCommands.setThreadAutoCompact")(
+  function* (input: SetThreadAutoCompactInput) {
+    return yield* dispatch({
+      type: "thread.auto-compact.set",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      autoCompactTokens: input.autoCompactTokens,
+    });
+  },
+);
+
 export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(function* (
   input: StartThreadTurnInput,
 ) {
@@ -681,6 +701,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       modelSelection: input.modelSelection ?? thread.modelSelection,
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
+      ...(bootstrap?.autoCompactTokens == null
+        ? {}
+        : { autoCompactTokens: bootstrap.autoCompactTokens }),
       workspaceStrategy,
       initialMessage: {
         messageId: input.message.messageId,
