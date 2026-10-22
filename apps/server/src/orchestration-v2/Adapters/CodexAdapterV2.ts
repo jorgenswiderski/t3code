@@ -1846,7 +1846,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // The auto-compact limit each native thread was really loaded with by this app-server
         // process. Codex ignores config overrides when resuming an already-loaded thread, so
         // the adapter reports this value, not the one it was just asked to apply; the map
-        // dies with the process, which makes the next resume a fresh load.
+        // dies with the process, which makes the next resume a fresh load. An entry also dies
+        // when the app-server confirms it unloaded the thread (`thread/closed`, or a
+        // `notLoaded` unsubscribe), because the next resume is then a fresh load too.
         const loadedAutoCompactByNativeThread = new Map<string, number | null>();
         /** For `thread/start` and `thread/fork`: the thread is always new to this process. */
         const recordAutoCompactLoad = (nativeThreadId: string, desired: number | null) => {
@@ -4516,6 +4518,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
         );
 
+        yield* client.handleServerNotification("thread/closed", (payload) =>
+          Effect.sync(() => {
+            loadedAutoCompactByNativeThread.delete(payload.threadId);
+          }),
+        );
+
         // A goal that stops being active ends any run held open for its next turn.
         yield* client.handleServerNotification("thread/goal/updated", (payload) =>
           Effect.gen(function* () {
@@ -6752,7 +6760,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           unloadThread: (unloadInput) =>
             Effect.gen(function* () {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
-              yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
+              const { status } = yield* client.request("thread/unsubscribe", {
+                threadId: nativeThreadId,
+              });
+              // `unsubscribed` only releases the thread once it is idle, and the app-server
+              // announces that with `thread/closed`; only `notLoaded` is already confirmed.
+              if (status === "notLoaded") loadedAutoCompactByNativeThread.delete(nativeThreadId);
             }).pipe(
               Effect.mapError((cause) =>
                 cause._tag === "ProviderAdapterProtocolError"
@@ -7353,10 +7366,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
               const boundary = yield* resolveCodexForkBoundary(threadInput);
-              // The target has no context measurement yet; Codex caps the limit at 90% of its window.
+              // The fork inherits the source's window, so clamp against the source's measurement.
               const desiredAutoCompact = codexEffectiveAutoCompactTokens({
                 runtimePolicy: threadInput.runtimePolicy,
-                windowTokens: null,
+                windowTokens: threadInput.sourceProviderThread.contextUsage?.maxTokens,
               });
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(

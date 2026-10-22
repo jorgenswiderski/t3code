@@ -3196,6 +3196,146 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       }).pipe(Effect.scoped, withLayers),
     );
 
+    const unsubscribe = (
+      id: number,
+      nativeThreadId: string,
+      status: "unsubscribed" | "notLoaded",
+    ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+      {
+        type: "expect_outbound",
+        label: "thread/unsubscribe",
+        frame: { id, method: "thread/unsubscribe", params: { threadId: nativeThreadId } },
+      },
+      {
+        type: "emit_inbound",
+        label: "thread/unsubscribe",
+        frame: { id, result: { status } },
+      },
+    ];
+
+    it.effect("reports the new cap when a thread is resumed after the app-server unloaded it", () =>
+      Effect.gen(function* () {
+        const scenario = "auto-compact-unload-not-loaded";
+        const nativeThreadId = `native-${scenario}`;
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...sessionStart(nativeThreadId, 100_000),
+              ...unsubscribe(3, nativeThreadId, "notLoaded"),
+              ...resumeRequest(4, nativeThreadId, 200_000),
+            ],
+          }),
+          undefined,
+          undefined,
+          undefined,
+          policy(100_000),
+        );
+        yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        const resumed = yield* resume(harness, policy(200_000));
+        assert.deepEqual(resumed.appliedAutoCompact, { tokens: 200_000 });
+      }).pipe(Effect.scoped, withLayers),
+    );
+
+    it.effect("reports the new cap after thread/closed confirms the unload", () =>
+      Effect.gen(function* () {
+        const scenario = "auto-compact-unload-closed";
+        const nativeThreadId = `native-${scenario}`;
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...sessionStart(nativeThreadId, 100_000),
+              ...unsubscribe(3, nativeThreadId, "unsubscribed"),
+              {
+                type: "emit_inbound",
+                label: "thread/closed",
+                frame: { method: "thread/closed", params: { threadId: nativeThreadId } },
+              },
+              ...resumeRequest(4, nativeThreadId, 200_000),
+            ],
+          }),
+          undefined,
+          undefined,
+          undefined,
+          policy(100_000),
+        );
+        yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        const resumed = yield* resume(harness, policy(200_000));
+        assert.deepEqual(resumed.appliedAutoCompact, { tokens: 200_000 });
+      }).pipe(Effect.scoped, withLayers),
+    );
+
+    it.effect("keeps the loaded cap when an unsubscribed thread was not yet closed", () =>
+      Effect.gen(function* () {
+        const scenario = "auto-compact-unload-pending";
+        const nativeThreadId = `native-${scenario}`;
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...sessionStart(nativeThreadId, 100_000),
+              ...unsubscribe(3, nativeThreadId, "unsubscribed"),
+              ...resumeRequest(4, nativeThreadId, 200_000),
+            ],
+          }),
+          undefined,
+          undefined,
+          undefined,
+          policy(100_000),
+        );
+        yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        const resumed = yield* resume(harness, policy(200_000));
+        assert.deepEqual(resumed.appliedAutoCompact, { tokens: 100_000 });
+      }).pipe(Effect.scoped, withLayers),
+    );
+
+    it.effect("clamps a fork's cap against the source thread's context window", () =>
+      Effect.gen(function* () {
+        const scenario = "auto-compact-fork-window";
+        const nativeThreadId = `native-${scenario}`;
+        const forkThreadId = `fork-${scenario}`;
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...sessionStart(nativeThreadId, null),
+              {
+                type: "expect_outbound",
+                label: "thread/fork",
+                frame: {
+                  id: 3,
+                  method: "thread/fork",
+                  params: { threadId: nativeThreadId, config: threadConfig(null) },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "thread/fork",
+                frame: {
+                  id: 3,
+                  result: codexReplayThreadResult({
+                    nativeThreadId: forkThreadId,
+                    forkedFromId: nativeThreadId,
+                  }),
+                },
+              },
+            ],
+          }),
+        );
+        const forked = yield* harness.runtime.forkThread({
+          sourceProviderThread: {
+            ...harness.providerThread,
+            contextUsage: { usedTokens: 1_000, maxTokens: 258_000 },
+          },
+          sourceProviderTurns: [],
+          targetThreadId: ThreadId.make(`thread-${scenario}-target`),
+          runtimePolicy: policy(1_000_000),
+        });
+        assert.deepEqual(forked.appliedAutoCompact, { tokens: null });
+      }).pipe(Effect.scoped, withLayers),
+    );
+
     it.effect("clamps an out-of-range stored cap instead of forwarding it", () =>
       Effect.gen(function* () {
         const scenario = "auto-compact-clamp";
