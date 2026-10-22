@@ -56,9 +56,10 @@ and change it any time. The ring and the meter's bar show a tick where the threa
 Values at or above the model's context window are not offered, and the same value is kept if
 you switch models or providers.
 
-Claude picks up a change on your next message. If Claude is running background work, the meter
-says the change applies after the session restarts, and T3 Code does not interrupt the
-background work to apply it. Changing **Auto-compact after** in the provider settings does not
+Claude picks up a change on your next message. Until then the meter shows the change as
+pending ("applies after the session restarts"). If Claude is running background work, it stays
+pending until the session restarts, because T3 Code does not interrupt the background work to
+apply it. Changing **Auto-compact after** in the provider settings does not
 reach threads Claude is already running until their session restarts. Agents can read and set the value with `t3_thread_configure`.
 
 You can also send `/compact` in an existing conversation. Web and desktop offer
