@@ -2,6 +2,8 @@ import {
   type ClaudeSettings,
   type ModelCapabilities,
   type ServerProvider,
+  type ServerProviderModel,
+  type ServerProviderThreadAutoCompact,
   type ServerProviderSlashCommand,
   type ServerProviderResetCredits,
 } from "@t3tools/contracts";
@@ -51,6 +53,10 @@ import {
   resolveClaudeModelsForVersion,
   resolveClaudeUpdateRequiredModels,
 } from "./ClaudeModelCatalog.ts";
+import {
+  CLAUDE_THREAD_AUTO_COMPACT_RANGE,
+  claudeInstanceAutoCompactTokens,
+} from "../claudeModelOptions.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -61,6 +67,48 @@ const CLAUDE_PRESENTATION = {
   showInteractionModeToggle: true,
   reportsContextWindow: true,
 } as const;
+
+/**
+ * Per-thread auto-compact support. `defaultTokens` is the instance "Auto-compact
+ * after" value from the same helper the adapter applies, so clients and the
+ * adapter's applied report agree.
+ */
+export function claudeThreadAutoCompactCapability(
+  settings: ClaudeSettings,
+): ServerProviderThreadAutoCompact {
+  const defaultTokens = claudeInstanceAutoCompactTokens(settings);
+  return {
+    minTokens: CLAUDE_THREAD_AUTO_COMPACT_RANGE.minTokens,
+    maxTokens: CLAUDE_THREAD_AUTO_COMPACT_RANGE.maxTokens,
+    ...(defaultTokens === undefined ? {} : { defaultTokens }),
+  };
+}
+
+const claudePresentation = (settings: ClaudeSettings) => ({
+  ...CLAUDE_PRESENTATION,
+  threadAutoCompact: claudeThreadAutoCompactCapability(settings),
+});
+
+/**
+ * Built-in models with their fixed context window, so clients know it before a
+ * turn. Windows come from the bundled catalog, not the runtime (possibly remote)
+ * one: the adapter resolves windows from the bundled catalog when it applies
+ * and reports auto-compact, and both sides must agree on whether a stored
+ * threshold fits the window.
+ */
+function withCatalogContextWindows(
+  models: ReadonlyArray<ServerProviderModel>,
+): ReadonlyArray<ServerProviderModel> {
+  const windows = new Map<string, number>();
+  for (const entry of BUNDLED_CLAUDE_MODEL_CATALOG.models) {
+    const tokens = entry.runtime.fixedContextWindowTokens;
+    if (typeof tokens === "number" && tokens > 0) windows.set(entry.model.slug, tokens);
+  }
+  return models.map((model) => {
+    const contextWindowTokens = windows.get(model.slug);
+    return contextWindowTokens === undefined ? model : { ...model, contextWindowTokens };
+  });
+}
 function toTitleCaseWords(value: string): string {
   const parts: Array<string> = [];
   for (const part of value.split(/[\s_-]+/g)) {
@@ -508,14 +556,14 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const allModels = providerModelsFromSettings(
-    modelCatalog.models.map((entry) => entry.model),
+    withCatalogContextWindows(modelCatalog.models.map((entry) => entry.model)),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
 
   if (!claudeSettings.enabled) {
     return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
+      presentation: claudePresentation(claudeSettings),
       enabled: false,
       checkedAt,
       models: allModels,
@@ -541,7 +589,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       errorTag: error._tag,
     });
     return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
+      presentation: claudePresentation(claudeSettings),
       enabled: claudeSettings.enabled,
       checkedAt,
       models: allModels,
@@ -559,7 +607,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 
   if (Option.isNone(versionProbe.success)) {
     return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
+      presentation: claudePresentation(claudeSettings),
       enabled: claudeSettings.enabled,
       checkedAt,
       models: allModels,
@@ -583,7 +631,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       stderrLength: version.stderr.length,
     });
     return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
+      presentation: claudePresentation(claudeSettings),
       enabled: claudeSettings.enabled,
       checkedAt,
       models: allModels,
@@ -598,7 +646,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   const models = providerModelsFromSettings(
-    resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
+    withCatalogContextWindows(resolveClaudeModelsForVersion(modelCatalog, parsedVersion)),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
@@ -614,7 +662,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 
   if (!capabilities) {
     return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
+      presentation: claudePresentation(claudeSettings),
       enabled: claudeSettings.enabled,
       checkedAt,
       models,
@@ -633,7 +681,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 
   if (claudeAuthStatus(capabilities) === "unauthenticated") {
     return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
+      presentation: claudePresentation(claudeSettings),
       enabled: claudeSettings.enabled,
       checkedAt,
       models,
@@ -670,7 +718,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       ? yield* resolveResetCredits(parsedVersion)
       : undefined;
   return buildServerProvider({
-    presentation: CLAUDE_PRESENTATION,
+    presentation: claudePresentation(claudeSettings),
     enabled: claudeSettings.enabled,
     checkedAt,
     models,
@@ -702,14 +750,14 @@ export const makePendingClaudeProvider = (
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
     const models = providerModelsFromSettings(
-      modelCatalog.models.map((entry) => entry.model),
+      withCatalogContextWindows(modelCatalog.models.map((entry) => entry.model)),
       claudeSettings.customModels,
       DEFAULT_CLAUDE_MODEL_CAPABILITIES,
     );
 
     if (!claudeSettings.enabled) {
       return buildServerProvider({
-        presentation: CLAUDE_PRESENTATION,
+        presentation: claudePresentation(claudeSettings),
         enabled: false,
         checkedAt,
         models,
@@ -724,7 +772,7 @@ export const makePendingClaudeProvider = (
     }
 
     return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
+      presentation: claudePresentation(claudeSettings),
       enabled: true,
       checkedAt,
       models,
