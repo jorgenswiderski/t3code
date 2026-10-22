@@ -304,7 +304,7 @@ describe("resolveWorkEntryToolPresentation", () => {
     ["t3_thread_launch", "Launching a project thread", "Launched a project thread"],
     ["t3_queue_edit", "Editing a queued message", "Edited a queued message"],
     ["t3_pending_request_respond", "Answering pending questions", "Answered pending questions"],
-    ["t3_thread_configure", "Setting thread model", "Set thread model"],
+    ["t3_thread_configure", "Updating thread settings", "Updated thread settings"],
     ["t3_thread_fork", "Forking this thread", "Requested a fork of this thread"],
     ["t3_thread_send_attachments", "Sending attachments", "Sent attachments"],
     ["run_scheduled_task_now", "Running a scheduled task", "Requested a run of a scheduled task"],
