@@ -13,6 +13,37 @@ import {
   deriveThreadTitleFromPrompt,
 } from "./projectThreadStartTurn";
 
+describe("thread creation bootstrap", () => {
+  const spec = {
+    projectId: ProjectId.make("project"),
+    projectCwd: "/workspace",
+    threadId: "thread",
+    commandId: "command",
+    messageId: "message",
+    createdAt: "2026-09-04T00:00:00Z",
+    text: "hello",
+    uploadedAttachments: [],
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+    runtimeMode: "full-access" as const,
+    interactionMode: "default" as const,
+    workspaceMode: "local" as const,
+    branch: null,
+    worktreePath: null,
+    startFromOrigin: false,
+    worktreeBranchName: "unused",
+  };
+
+  it("forwards the auto-compact cap into createThread only when provided", () => {
+    expect(
+      buildProjectThreadStartTurnInput({ ...spec, autoCompactTokens: 300_000 }).bootstrap
+        .createThread.autoCompactTokens,
+    ).toBe(300_000);
+    expect(buildProjectThreadStartTurnInput(spec).bootstrap.createThread).not.toHaveProperty(
+      "autoCompactTokens",
+    );
+  });
+});
+
 describe("project thread title", () => {
   it("keeps ordinary titles and the empty-prompt fallback", () => {
     expect(deriveThreadTitleFromPrompt("  Fix\n the parser  ")).toBe("Fix the parser");

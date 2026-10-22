@@ -186,6 +186,8 @@ type NewTaskFlowContextValue = {
   readonly availableBranches: ReadonlyArray<VcsRef>;
   readonly currentCheckoutBranchName: string | null;
   readonly runtimeMode: RuntimeMode;
+  /** Per-thread auto-compact cap staged for the new task; null = provider default. */
+  readonly autoCompactTokens: number | null;
   readonly interactionMode: ProviderInteractionMode;
   readonly planModeEnabled: boolean;
   readonly expandedProvider: string | null;
@@ -249,6 +251,7 @@ type NewTaskFlowContextValue = {
   readonly loadBranches: () => void;
   readonly loadMoreBranches: () => void;
   readonly setRuntimeMode: (value: RuntimeMode) => void;
+  readonly setAutoCompactTokens: (value: number | null) => void;
   readonly setInteractionMode: (value: ProviderInteractionMode) => void;
   readonly setSelectedModelOptions: (
     value: ReadonlyArray<ProviderOptionSelection> | undefined,
@@ -574,6 +577,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     ? (editingPendingTask.runtimeMode ?? DEFAULT_RUNTIME_MODE)
     : projectSettings.settings.defaultRuntimeMode;
   const runtimeMode = selectedProjectDraft.runtimeMode ?? defaultRuntimeMode;
+  const autoCompactTokens = selectedProjectDraft.autoCompactTokens ?? null;
 
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model. Other providers retain their fallback
@@ -1056,6 +1060,16 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     },
     [selectedProjectDraftKey],
   );
+  const setAutoCompactTokens = useCallback(
+    (value: number | null) => {
+      if (selectedProjectDraftKey) {
+        updateComposerDraftSettings(selectedProjectDraftKey, {
+          autoCompactTokens: value ?? undefined,
+        });
+      }
+    },
+    [selectedProjectDraftKey],
+  );
   const setInteractionMode = useCallback(
     (value: ProviderInteractionMode) => {
       if (selectedProjectDraftKey) {
@@ -1082,6 +1096,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         modelSelection: message.modelSelection,
         runtimeMode: message.runtimeMode,
         interactionMode: message.interactionMode,
+        autoCompactTokens: message.creation.autoCompactTokens,
         workspaceSelection: {
           mode: message.creation.workspaceMode,
           branch: message.creation.branch,
@@ -1178,6 +1193,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           // drain with the same origin mode the composer displayed.
           ...((workspaceSelection?.startFromOrigin ?? startFromOrigin)
             ? { startFromOrigin: true }
+            : {}),
+          // The drain re-checks the provider capability, so the value survives model switches.
+          ...(draft.autoCompactTokens !== undefined
+            ? { autoCompactTokens: draft.autoCompactTokens }
             : {}),
         },
         createdAt: metadata.createdAt,
@@ -1325,6 +1344,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       availableBranches,
       currentCheckoutBranchName,
       runtimeMode,
+      autoCompactTokens,
       interactionMode,
       planModeEnabled,
       expandedProvider,
@@ -1361,12 +1381,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       loadBranches,
       loadMoreBranches,
       setRuntimeMode,
+      setAutoCompactTokens,
       setInteractionMode,
       setSelectedModelOptions,
       setExpandedProvider,
     }),
     [
       attachments,
+      autoCompactTokens,
       availableBranches,
       beginEditingPendingTask,
       branchQuery,
@@ -1414,6 +1436,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setInteractionMode,
       setPrompt,
       setRuntimeMode,
+      setAutoCompactTokens,
       setSelectedModelKey,
       setStartFromOrigin,
       setWorkspaceMode,

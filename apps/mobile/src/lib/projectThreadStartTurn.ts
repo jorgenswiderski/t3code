@@ -32,6 +32,8 @@ export interface ProjectThreadStartTurnSpec {
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin: boolean;
+  /** Per-thread auto-compact cap; omit unless the provider supports it. */
+  readonly autoCompactTokens?: number;
   /** Generated temp branch for worktree mode; unused for local mode. */
   readonly worktreeBranchName: string;
 }
@@ -68,6 +70,9 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
         interactionMode: spec.interactionMode,
         branch: spec.branch,
         worktreePath: isWorktree ? null : spec.worktreePath,
+        ...(spec.autoCompactTokens !== undefined
+          ? { autoCompactTokens: spec.autoCompactTokens }
+          : {}),
         createdAt: spec.createdAt,
       },
       ...(isWorktree
