@@ -3092,7 +3092,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     });
     const resume = (
       harness: {
-        readonly runtime: ProviderAdapter.ProviderAdapterV2Runtime;
+        readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
         readonly providerThread: OrchestrationV2ProviderThread;
       },
       runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
