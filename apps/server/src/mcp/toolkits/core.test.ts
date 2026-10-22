@@ -1,6 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import {
@@ -17,6 +17,7 @@ import {
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadShell,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
@@ -78,10 +79,15 @@ const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 
 // Registration asks for every service the thread tools declare; these cases call none that use them.
-const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
-  Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-  Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-);
+const layerThreadToolkitWithProviders = (providers: ReadonlyArray<ServerProvider>) =>
+  McpHttpServer.layerThreadToolkit.pipe(
+    Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+    Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+    Layer.provide(
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed(providers) }),
+    ),
+  );
+const layerThreadToolkit = layerThreadToolkitWithProviders([]);
 
 it("publishes unique tool names with reference-free object-root inputs", () => {
   const names = new Set<string>();
@@ -523,6 +529,13 @@ it.effect("a read-only client reads threads and is refused every write before it
     });
     expect(declaredFailure(configure)).toMatchObject({ code: "capability_denied" });
     expect(dispatched).toEqual([]);
+
+    const autoCompact = yield* call("t3_thread_configure", {
+      threadId: "other-project-thread",
+      autoCompactTokens: 300000,
+    });
+    expect(declaredFailure(autoCompact)).toMatchObject({ code: "capability_denied" });
+    expect(dispatched).toEqual([]);
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
@@ -879,3 +892,187 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
     ),
   ),
 );
+
+describe("per-thread auto-compact over MCP", () => {
+  const autoCompactThreadId = ThreadId.make("auto-compact-thread");
+  const capability = { minTokens: 100000, maxTokens: 1000000 };
+  const provider = (instanceId: string, threadAutoCompact?: typeof capability) =>
+    ({
+      instanceId: ProviderInstanceId.make(instanceId),
+      ...(threadAutoCompact === undefined ? {} : { threadAutoCompact }),
+    }) as ServerProvider;
+
+  type DispatchedCommand = Parameters<
+    ThreadManagement.ThreadManagementService["Service"]["dispatch"]
+  >[0];
+  const call = (name: string, args: Record<string, unknown>) =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      return yield* server
+        .callTool({ name, arguments: { threadId: autoCompactThreadId, ...args } })
+        .pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            clientScope("full-access"),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    });
+
+  const run = <A, E>(
+    options: {
+      readonly providers: ReadonlyArray<ServerProvider>;
+      readonly thread?: Record<string, unknown>;
+    },
+    body: (input: {
+      readonly call: typeof call;
+      readonly commands: Array<DispatchedCommand>;
+    }) => Effect.Effect<A, E, McpServer.McpServer>,
+  ) => {
+    const commands: Array<DispatchedCommand> = [];
+    return Effect.gen(function* () {
+      return yield* body({ call, commands });
+    }).pipe(
+      Effect.provide(
+        layerThreadToolkitWithProviders(options.providers).pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: () =>
+                Effect.succeed({
+                  id: autoCompactThreadId,
+                  projectId: "auto-compact-project",
+                  deletedAt: null,
+                } as never),
+              getProjectThreadRecords: () =>
+                Effect.succeed({
+                  thread: {
+                    id: autoCompactThreadId,
+                    projectId: "auto-compact-project",
+                    providerInstanceId: "codex",
+                    modelSelection: { instanceId: "codex", model: "gpt-5" },
+                    runtimeMode: "auto",
+                    interactionMode: "default",
+                    deletedAt: null,
+                    ...options.thread,
+                  },
+                } as never),
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  commands.push(command);
+                  return { sequence: commands.length, storedEvents: [] };
+                }),
+            }),
+          ),
+        ),
+      ),
+    );
+  };
+
+  it.effect("configuration returns the stored auto-compact value", () =>
+    Effect.gen(function* () {
+      yield* run({ providers: [], thread: { autoCompactTokens: 300000 } }, ({ call }) =>
+        Effect.gen(function* () {
+          const result = yield* call("t3_thread_configuration", {});
+          expect(result.structuredContent).toMatchObject({ autoCompactTokens: 300000 });
+        }),
+      );
+      yield* run({ providers: [] }, ({ call }) =>
+        Effect.gen(function* () {
+          const result = yield* call("t3_thread_configuration", {});
+          expect(result.structuredContent).toMatchObject({ autoCompactTokens: null });
+        }),
+      );
+    }),
+  );
+
+  it.effect("configure sets autoCompactTokens alone", () =>
+    run({ providers: [provider("codex", capability)] }, ({ call, commands }) =>
+      Effect.gen(function* () {
+        const result = yield* call("t3_thread_configure", { autoCompactTokens: 200000 });
+        expect(result.isError).toBe(false);
+        expect(commands).toMatchObject([
+          {
+            type: "thread.auto-compact.set",
+            threadId: autoCompactThreadId,
+            autoCompactTokens: 200000,
+          },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("configure clears with null even without capability", () =>
+    run({ providers: [provider("codex")] }, ({ call, commands }) =>
+      Effect.gen(function* () {
+        const result = yield* call("t3_thread_configure", { autoCompactTokens: null });
+        expect(result.isError).toBe(false);
+        expect(commands).toMatchObject([
+          { type: "thread.auto-compact.set", autoCompactTokens: null },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("configure refuses a value the provider does not support", () =>
+    run({ providers: [provider("codex")] }, ({ call, commands }) =>
+      Effect.gen(function* () {
+        const result = yield* call("t3_thread_configure", { autoCompactTokens: 200000 });
+        expect(declaredFailure(result)).toMatchObject({ code: "invalid_request" });
+        expect(declaredFailure(result).message).toContain("does not support");
+        expect(commands).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("configure refuses an out-of-range value before switching models", () =>
+    run({ providers: [provider("codex", capability)] }, ({ call, commands }) =>
+      Effect.gen(function* () {
+        const result = yield* call("t3_thread_configure", {
+          modelSelection: { instanceId: "codex", model: "gpt-5.5" },
+          autoCompactTokens: 50000,
+        });
+        expect(declaredFailure(result)).toMatchObject({
+          code: "invalid_request",
+          message: "autoCompactTokens must be between 100000 and 1000000.",
+        });
+        expect(commands).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("configure validates against the newly selected provider", () =>
+    run(
+      {
+        providers: [provider("codex", capability), provider("pi")],
+        thread: {
+          providerInstanceId: "pi",
+          modelSelection: { instanceId: "pi", model: "pi-model" },
+        },
+      },
+      ({ call, commands }) =>
+        Effect.gen(function* () {
+          const result = yield* call("t3_thread_configure", {
+            modelSelection: { instanceId: "codex", model: "gpt-5" },
+            autoCompactTokens: 300000,
+          });
+          expect(result.isError).toBe(false);
+          expect(commands.map((command) => command.type)).toEqual([
+            "provider.switch",
+            "thread.auto-compact.set",
+          ]);
+        }),
+    ),
+  );
+
+  it.effect("configure with neither field is refused", () =>
+    run({ providers: [provider("codex", capability)] }, ({ call, commands }) =>
+      Effect.gen(function* () {
+        const result = yield* call("t3_thread_configure", {});
+        expect(declaredFailure(result)).toMatchObject({ code: "invalid_request" });
+        expect(commands).toEqual([]);
+      }),
+    ),
+  );
+});
