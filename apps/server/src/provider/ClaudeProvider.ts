@@ -89,13 +89,18 @@ const claudePresentation = (settings: ClaudeSettings) => ({
   threadAutoCompact: claudeThreadAutoCompactCapability(settings),
 });
 
-/** Built-in models with the catalog's fixed context window, so clients know it before a turn. */
+/**
+ * Built-in models with their fixed context window, so clients know it before a
+ * turn. Windows come from the bundled catalog, not the runtime (possibly remote)
+ * one: the adapter resolves windows from the bundled catalog when it applies
+ * and reports auto-compact, and both sides must agree on whether a stored
+ * threshold fits the window.
+ */
 function withCatalogContextWindows(
-  catalog: ClaudeModelCatalog,
   models: ReadonlyArray<ServerProviderModel>,
 ): ReadonlyArray<ServerProviderModel> {
   const windows = new Map<string, number>();
-  for (const entry of catalog.models) {
+  for (const entry of BUNDLED_CLAUDE_MODEL_CATALOG.models) {
     const tokens = entry.runtime.fixedContextWindowTokens;
     if (typeof tokens === "number" && tokens > 0) windows.set(entry.model.slug, tokens);
   }
@@ -551,10 +556,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const allModels = providerModelsFromSettings(
-    withCatalogContextWindows(
-      modelCatalog,
-      modelCatalog.models.map((entry) => entry.model),
-    ),
+    withCatalogContextWindows(modelCatalog.models.map((entry) => entry.model)),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
@@ -644,10 +646,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   const models = providerModelsFromSettings(
-    withCatalogContextWindows(
-      modelCatalog,
-      resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
-    ),
+    withCatalogContextWindows(resolveClaudeModelsForVersion(modelCatalog, parsedVersion)),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
@@ -751,10 +750,7 @@ export const makePendingClaudeProvider = (
   Effect.gen(function* () {
     const checkedAt = yield* nowIso;
     const models = providerModelsFromSettings(
-      withCatalogContextWindows(
-        modelCatalog,
-        modelCatalog.models.map((entry) => entry.model),
-      ),
+      withCatalogContextWindows(modelCatalog.models.map((entry) => entry.model)),
       claudeSettings.customModels,
       DEFAULT_CLAUDE_MODEL_CAPABILITIES,
     );
