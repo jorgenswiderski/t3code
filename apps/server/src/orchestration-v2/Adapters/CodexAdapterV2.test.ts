@@ -681,6 +681,7 @@ describe("CodexAdapterV2 process spawning", () => {
     const baseRuntimePolicy = {
       runtimeMode: "full-access",
       interactionMode: "default",
+      cwd: null,
     } as const;
 
     it("adds the limit key to thread config when a cap is set", () => {
@@ -1980,6 +1981,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy = CODEX_TEST_RUNTIME_POLICY,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2039,12 +2041,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         threadId,
         providerSessionId: ProviderSessionId.make(`provider-session-${transcript.scenario}`),
         modelSelection: CODEX_TEST_MODEL_SELECTION,
-        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        runtimePolicy,
       });
       const providerThread = yield* runtime.ensureThread({
         threadId,
         modelSelection: CODEX_TEST_MODEL_SELECTION,
-        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        runtimePolicy,
       });
       const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       const firstTerminal = yield* Deferred.make<void>();
@@ -3029,6 +3031,363 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     ),
   );
+
+  describe("auto-compact limit", () => {
+    const withLayers = Effect.provide(
+      Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+    );
+    const policy = (autoCompactTokens: number | null) =>
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        ...CODEX_TEST_RUNTIME_POLICY,
+        autoCompactTokens,
+      });
+    const threadConfig = (tokens: number | null) =>
+      tokens === null
+        ? CodexAdapterV2.CODEX_THREAD_CONFIG
+        : { ...CodexAdapterV2.CODEX_THREAD_CONFIG, model_auto_compact_token_limit: tokens };
+    /** initialize handshake plus a `thread/start` that must carry `startTokens`. */
+    const sessionStart = (nativeThreadId: string, startTokens: number | null) => {
+      const entries = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: "unused",
+        prompt: "unused",
+      }).slice(0, 5);
+      entries[3] = {
+        type: "expect_outbound",
+        label: "thread/start",
+        frame: { id: 2, method: "thread/start", params: { config: threadConfig(startTokens) } },
+      };
+      return entries;
+    };
+    const resumeRequest = (
+      id: number,
+      nativeThreadId: string,
+      tokens: number | null,
+    ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+      {
+        type: "expect_outbound",
+        label: "thread/resume",
+        frame: {
+          id,
+          method: "thread/resume",
+          params: { threadId: nativeThreadId, excludeTurns: true, config: threadConfig(tokens) },
+        },
+      },
+      {
+        type: "emit_inbound",
+        label: "thread/resume",
+        frame: { id, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+      },
+    ];
+    const otherNativeThread = (
+      providerThread: OrchestrationV2ProviderThread,
+      nativeId: string,
+      contextMaxTokens?: number,
+    ): OrchestrationV2ProviderThread => ({
+      ...providerThread,
+      nativeThreadRef: { driver: CodexAdapterV2.CODEX_DRIVER_KIND, nativeId, strength: "strong" },
+      ...(contextMaxTokens === undefined
+        ? {}
+        : { contextUsage: { usedTokens: 1_000, maxTokens: contextMaxTokens } }),
+    });
+    const resume = (
+      harness: {
+        readonly runtime: ProviderAdapter.ProviderAdapterV2Runtime;
+        readonly providerThread: OrchestrationV2ProviderThread;
+      },
+      runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+      providerThread: OrchestrationV2ProviderThread = harness.providerThread,
+    ) =>
+      harness.runtime.resumeThread({
+        providerThread,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy,
+      });
+
+    it.effect("starts a thread without a cap and still reports null as applied", () =>
+      Effect.gen(function* () {
+        const scenario = "auto-compact-start-default";
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: sessionStart(`native-${scenario}`, null),
+          }),
+        );
+        assert.deepEqual(harness.providerThread.appliedAutoCompact, { tokens: null });
+      }).pipe(Effect.scoped, withLayers),
+    );
+
+    it.effect("starts a thread with its stored cap and reports it as applied", () =>
+      Effect.gen(function* () {
+        const scenario = "auto-compact-start-cap";
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: sessionStart(`native-${scenario}`, 300_000),
+          }),
+          undefined,
+          undefined,
+          undefined,
+          policy(300_000),
+        );
+        assert.deepEqual(harness.providerThread.appliedAutoCompact, { tokens: 300_000 });
+      }).pipe(Effect.scoped, withLayers),
+    );
+
+    it.effect("sends the cap on a fresh resume and reports it", () =>
+      Effect.gen(function* () {
+        const scenario = "auto-compact-fresh-resume";
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...sessionStart(`native-${scenario}`, null),
+              ...resumeRequest(3, "native-other", 300_000),
+            ],
+          }),
+        );
+        const resumed = yield* resume(
+          harness,
+          policy(300_000),
+          otherNativeThread(harness.providerThread, "native-other"),
+        );
+        assert.deepEqual(resumed.appliedAutoCompact, { tokens: 300_000 });
+      }).pipe(Effect.scoped, withLayers),
+    );
+
+    it.effect("keeps reporting the loaded value when the cap changes on a loaded thread", () =>
+      Effect.gen(function* () {
+        const scenario = "auto-compact-loaded-raise";
+        const nativeThreadId = `native-${scenario}`;
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...sessionStart(nativeThreadId, null),
+              // Still sent: Codex ignores the override on a loaded thread.
+              ...resumeRequest(3, nativeThreadId, 300_000),
+            ],
+          }),
+        );
+        const resumed = yield* resume(harness, policy(300_000));
+        assert.deepEqual(resumed.appliedAutoCompact, { tokens: null });
+      }).pipe(Effect.scoped, withLayers),
+    );
+
+    it.effect("keeps reporting the loaded cap when it is cleared on a loaded thread", () =>
+      Effect.gen(function* () {
+        const scenario = "auto-compact-loaded-clear";
+        const nativeThreadId = `native-${scenario}`;
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...sessionStart(nativeThreadId, 300_000),
+              ...resumeRequest(3, nativeThreadId, null),
+            ],
+          }),
+          undefined,
+          undefined,
+          undefined,
+          policy(300_000),
+        );
+        const resumed = yield* resume(harness, policy(null));
+        assert.deepEqual(resumed.appliedAutoCompact, { tokens: 300_000 });
+      }).pipe(Effect.scoped, withLayers),
+    );
+
+    it.effect("clamps an out-of-range stored cap instead of forwarding it", () =>
+      Effect.gen(function* () {
+        const scenario = "auto-compact-clamp";
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...sessionStart(`native-${scenario}`, null),
+              ...resumeRequest(3, "native-low", 100_000),
+              ...resumeRequest(4, "native-high", 1_000_000),
+            ],
+          }),
+        );
+        const low = yield* resume(
+          harness,
+          policy(50_000),
+          otherNativeThread(harness.providerThread, "native-low"),
+        );
+        const high = yield* resume(
+          harness,
+          policy(5_000_000),
+          otherNativeThread(harness.providerThread, "native-high"),
+        );
+        assert.deepEqual(low.appliedAutoCompact, { tokens: 100_000 });
+        assert.deepEqual(high.appliedAutoCompact, { tokens: 1_000_000 });
+      }).pipe(Effect.scoped, withLayers),
+    );
+
+    it.effect("omits a cap at or above the known context window", () =>
+      Effect.gen(function* () {
+        const scenario = "auto-compact-window";
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...sessionStart(`native-${scenario}`, null),
+              ...resumeRequest(3, "native-small-window", null),
+            ],
+          }),
+        );
+        const resumed = yield* resume(
+          harness,
+          policy(300_000),
+          otherNativeThread(harness.providerThread, "native-small-window", 272_000),
+        );
+        assert.deepEqual(resumed.appliedAutoCompact, { tokens: null });
+      }).pipe(Effect.scoped, withLayers),
+    );
+
+    it.effect.each([
+      ["with a cap", 200_000],
+      ["without a cap", null],
+    ] as const)("forks a thread %s", ([, cap]) =>
+      Effect.gen(function* () {
+        const scenario = `auto-compact-fork-${cap ?? "none"}`;
+        const nativeThreadId = `native-${scenario}`;
+        const forkThreadId = `fork-${scenario}`;
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...sessionStart(nativeThreadId, null),
+              {
+                type: "expect_outbound",
+                label: "thread/fork",
+                frame: {
+                  id: 3,
+                  method: "thread/fork",
+                  params: { threadId: nativeThreadId, config: threadConfig(cap) },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "thread/fork",
+                frame: {
+                  id: 3,
+                  result: codexReplayThreadResult({
+                    nativeThreadId: forkThreadId,
+                    forkedFromId: nativeThreadId,
+                  }),
+                },
+              },
+            ],
+          }),
+        );
+        const forked = yield* harness.runtime.forkThread({
+          sourceProviderThread: harness.providerThread,
+          sourceProviderTurns: [],
+          targetThreadId: ThreadId.make(`thread-${scenario}-target`),
+          runtimePolicy: policy(cap),
+        });
+        assert.equal(forked.nativeThreadRef?.nativeId, forkThreadId);
+        assert.deepEqual(forked.appliedAutoCompact, { tokens: cap });
+      }).pipe(Effect.scoped, withLayers),
+    );
+
+    it.effect("sends the cap when a rollback has to re-load the thread", () =>
+      Effect.gen(function* () {
+        const scenario = "auto-compact-rollback";
+        const nativeThreadId = `native-${scenario}`;
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...sessionStart(nativeThreadId, 200_000),
+              {
+                type: "expect_outbound",
+                label: "thread/read",
+                frame: {
+                  id: 3,
+                  method: "thread/read",
+                  params: { threadId: nativeThreadId, includeTurns: false },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "thread/read",
+                frame: {
+                  id: 3,
+                  result: {
+                    thread: {
+                      id: nativeThreadId,
+                      historyMode: "paginated",
+                      status: { type: "notLoaded" },
+                    },
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                label: "thread/resume",
+                frame: {
+                  id: 4,
+                  method: "thread/resume",
+                  params: {
+                    threadId: nativeThreadId,
+                    excludeTurns: true,
+                    config: threadConfig(200_000),
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "thread/resume",
+                frame: { id: 4, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+              },
+              {
+                type: "expect_outbound",
+                label: "thread/revert",
+                frame: {
+                  id: 5,
+                  method: "thread/revert",
+                  params: { threadId: nativeThreadId, numTurns: 1 },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "thread/revert",
+                frame: {
+                  id: 5,
+                  result: codexReplayThreadResult({ nativeThreadId, forkedFromId: null }),
+                },
+              },
+            ],
+          }),
+          undefined,
+          undefined,
+          undefined,
+          policy(200_000),
+        );
+        const now = yield* DateTime.now;
+        const turn = codexReplaySourceTurn({
+          id: "provider-turn-only",
+          ordinal: 1,
+          nativeId: "native-turn-only",
+          providerThreadId: harness.providerThread.id,
+          now,
+        });
+        const rolledBack = yield* harness.runtime.rollbackThread({
+          providerThread: otherNativeThread(harness.providerThread, nativeThreadId),
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint-auto-compact-rollback"),
+            appRunOrdinal: 1,
+            providerTurn: turn,
+          },
+          providerThreadTurns: [turn],
+        });
+        assert.deepEqual(rolledBack.providerThread.appliedAutoCompact, { tokens: 200_000 });
+      }).pipe(Effect.scoped, withLayers),
+    );
+  });
 
   it.effect.each(
     (
@@ -8485,6 +8844,93 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         );
         assert.equal(providerGoals(harness.events).at(-1), "complete");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect("keeps the applied auto-compact report on goal updates", () =>
+      Effect.gen(function* () {
+        const cappedPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          ...CODEX_TEST_RUNTIME_POLICY,
+          autoCompactTokens: 300_000,
+        });
+        const cappedSessionStart = [...sessionStart];
+        cappedSessionStart[3] = {
+          type: "expect_outbound",
+          label: "thread/start",
+          frame: {
+            id: 2,
+            method: "thread/start",
+            params: {
+              config: {
+                ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+                model_auto_compact_token_limit: 300_000,
+              },
+            },
+          },
+        };
+        const transcript = makeCodexReplayTranscript({
+          scenario: "goal-auto-compact-report",
+          entries: [
+            ...cappedSessionStart,
+            ...request(3, "thread/goal/get", { threadId: nativeThreadId }, { goal: null }),
+            ...request(
+              4,
+              "thread/goal/set",
+              { threadId: nativeThreadId, objective, status: "paused" },
+              { goal: codexGoal("paused", 0) },
+            ),
+            ...withReplayRequestId(
+              codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "goal-turn-1",
+                prompt: objective,
+              }).slice(5),
+              5,
+            ),
+            ...request(
+              6,
+              "thread/goal/set",
+              { threadId: nativeThreadId, status: "active" },
+              { goal: codexGoal("active", 0) },
+            ),
+            notification("goal active", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: "goal-turn-1",
+              goal: codexGoal("active", 0),
+            }),
+            notification("goal complete", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: "goal-turn-1",
+              goal: codexGoal("complete", 1200),
+            }),
+            notification("turn done", "turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: "goal-turn-1", status: "completed" }),
+            }),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          undefined,
+          undefined,
+          undefined,
+          cappedPolicy,
+        );
+        yield* harness.runtime.startTurn(yield* goalTurnInput(harness, `/goal ${objective}`));
+        yield* harness.firstTerminal;
+
+        const updates = harness.events.flatMap((event) =>
+          event.type === "provider_thread.updated" ? [event.providerThread] : [],
+        );
+        assert.isAbove(updates.length, 0);
+        for (const update of updates) {
+          assert.deepEqual(update.appliedAutoCompact, { tokens: 300_000 });
+        }
       }).pipe(
         Effect.scoped,
         Effect.provide(

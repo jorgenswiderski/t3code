@@ -845,6 +845,7 @@ function providerThreadFromCodexThread(input: {
     readonly updatedAt: number;
   };
   readonly forkedFrom?: OrchestrationV2ProviderThread["forkedFrom"];
+  readonly appliedAutoCompact?: OrchestrationV2ProviderThread["appliedAutoCompact"];
 }): OrchestrationV2ProviderThread {
   return {
     id: input.idAllocator.derive.providerThread({
@@ -867,6 +868,9 @@ function providerThreadFromCodexThread(input: {
     lastRunOrdinal: null,
     handoffIds: [],
     forkedFrom: input.forkedFrom ?? null,
+    ...(input.appliedAutoCompact === undefined
+      ? {}
+      : { appliedAutoCompact: input.appliedAutoCompact }),
     createdAt: codexTimestamp(input.thread.createdAt),
     updatedAt: codexTimestamp(input.thread.updatedAt),
   };
@@ -1311,8 +1315,8 @@ export const CODEX_AUTO_COMPACT_LIMIT_KEY = "model_auto_compact_token_limit" as 
  * freshly resumed. A missing window is safe: Codex itself caps the limit at 90% of it.
  */
 export function codexEffectiveAutoCompactTokens(input: {
-  readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
-  readonly windowTokens?: number | null;
+  readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy | undefined;
+  readonly windowTokens?: number | null | undefined;
 }): number | null {
   return resolveEffectiveAutoCompactTokens({
     stored: input.runtimePolicy?.autoCompactTokens,
@@ -1839,6 +1843,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
+        // The auto-compact limit each native thread was really loaded with by this app-server
+        // process. Codex ignores config overrides when resuming an already-loaded thread, so
+        // the adapter reports this value, not the one it was just asked to apply; the map
+        // dies with the process, which makes the next resume a fresh load.
+        const loadedAutoCompactByNativeThread = new Map<string, number | null>();
+        /** For `thread/start` and `thread/fork`: the thread is always new to this process. */
+        const recordAutoCompactLoad = (nativeThreadId: string, desired: number | null) => {
+          loadedAutoCompactByNativeThread.set(nativeThreadId, desired);
+          return { tokens: desired };
+        };
+        /** For `thread/resume`: an already-loaded thread keeps the value it was loaded with. */
+        const reportAutoCompactLoad = (nativeThreadId: string, desired: number | null) => {
+          const loaded = loadedAutoCompactByNativeThread.get(nativeThreadId);
+          return loaded === undefined
+            ? recordAutoCompactLoad(nativeThreadId, desired)
+            : { tokens: loaded };
+        };
         const usageStateForThread = (nativeThreadId: string) => {
           let state = turnTokenUsageByThread.get(nativeThreadId);
           if (!state) {
@@ -6489,28 +6510,40 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return false;
             }),
           ensureThread: (threadInput) =>
-            ensureInitialized.pipe(
-              Effect.andThen(mcpSessions.read(threadInput.threadId)),
-              Effect.flatMap((mcpSession) =>
-                client.request(
-                  "thread/start",
-                  codexThreadRuntimeParams({
-                    mcpSession,
-                    modelSelection: threadInput.modelSelection,
-                    runtimePolicy: threadInput.runtimePolicy,
+            Effect.suspend(() => {
+              const desiredAutoCompact = codexEffectiveAutoCompactTokens({
+                runtimePolicy: threadInput.runtimePolicy,
+                windowTokens: threadInput.existingProviderThread?.contextUsage?.maxTokens,
+              });
+              return ensureInitialized.pipe(
+                Effect.andThen(mcpSessions.read(threadInput.threadId)),
+                Effect.flatMap((mcpSession) =>
+                  client.request(
+                    "thread/start",
+                    codexThreadRuntimeParams({
+                      mcpSession,
+                      modelSelection: threadInput.modelSelection,
+                      runtimePolicy: threadInput.runtimePolicy,
+                      autoCompactTokens: desiredAutoCompact,
+                    }),
+                  ),
+                ),
+                Effect.map((response): OrchestrationV2ProviderThread =>
+                  providerThreadFromCodexThread({
+                    appThreadId: threadInput.threadId,
+                    idAllocator,
+                    ownerNodeId: null,
+                    providerSessionId: input.providerSessionId,
+                    providerInstanceId: adapterOptions.instanceId,
+                    thread: response.thread,
+                    appliedAutoCompact: recordAutoCompactLoad(
+                      response.thread.id,
+                      desiredAutoCompact,
+                    ),
                   }),
                 ),
-              ),
-              Effect.map((response): OrchestrationV2ProviderThread =>
-                providerThreadFromCodexThread({
-                  appThreadId: threadInput.threadId,
-                  idAllocator,
-                  ownerNodeId: null,
-                  providerSessionId: input.providerSessionId,
-                  providerInstanceId: adapterOptions.instanceId,
-                  thread: response.thread,
-                }),
-              ),
+              );
+            }).pipe(
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterEnsureThreadError({
@@ -6523,11 +6556,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           resumeThread: (threadInput) =>
             Effect.gen(function* () {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
+              const desiredAutoCompact = codexEffectiveAutoCompactTokens({
+                runtimePolicy: threadInput.runtimePolicy,
+                windowTokens: threadInput.providerThread.contextUsage?.maxTokens,
+              });
               // excludeTurns is not in the generated request schema yet.
               const resume = client.raw.request("thread/resume", {
                 threadId: nativeThreadId,
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
+                  autoCompactTokens: desiredAutoCompact,
                   mcpSession: yield* readMcpSession(
                     threadInput.threadId ?? threadInput.providerThread.appThreadId,
                   ),
@@ -6574,6 +6612,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   strength: "strong",
                 },
                 nativeConversationHeadRef: threadInput.providerThread.nativeConversationHeadRef,
+                appliedAutoCompact: reportAutoCompactLoad(response.thread.id, desiredAutoCompact),
                 updatedAt: codexTimestamp(response.thread.updatedAt),
               } satisfies OrchestrationV2ProviderThread;
             }).pipe(
@@ -7253,6 +7292,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               // `thread/revert` only acts on a thread loaded in this app-server
               // process. After a restart or idle release, load it the same way
               // the next turn would before reverting.
+              const desiredAutoCompact = codexEffectiveAutoCompactTokens({
+                runtimePolicy: input.runtimePolicy,
+                windowTokens: threadInput.providerThread.contextUsage?.maxTokens,
+              });
               if (!loaded) {
                 yield* client.raw.request("thread/resume", {
                   threadId,
@@ -7261,6 +7304,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
+                    autoCompactTokens: desiredAutoCompact,
                   }),
                 });
               }
@@ -7268,6 +7312,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.andThen(revertCodexThread(client, threadId, numTurns)),
               );
               turnTokenUsageByThread.delete(threadId);
+              // A re-load above is known to be fresh, so its override applied. A thread that was
+              // already loaded keeps what this process loaded it with, or whatever was
+              // reported before when this process never loaded it.
+              const alreadyLoadedTokens = loadedAutoCompactByNativeThread.get(response.thread.id);
+              const appliedAutoCompact = !loaded
+                ? recordAutoCompactLoad(response.thread.id, desiredAutoCompact)
+                : alreadyLoadedTokens === undefined
+                  ? threadInput.providerThread.appliedAutoCompact
+                  : { tokens: alreadyLoadedTokens };
               return {
                 providerThread: {
                   ...threadInput.providerThread,
@@ -7277,6 +7330,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     strength: "strong" as const,
                   },
                   nativeConversationHeadRef,
+                  appliedAutoCompact,
                   status: "idle" as const,
                   updatedAt: codexTimestamp(response.thread.updatedAt),
                 },
@@ -7299,6 +7353,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
               const boundary = yield* resolveCodexForkBoundary(threadInput);
+              // The target has no context measurement yet; Codex caps the limit at 90% of its window.
+              const desiredAutoCompact = codexEffectiveAutoCompactTokens({
+                runtimePolicy: threadInput.runtimePolicy,
+                windowTokens: null,
+              });
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
                   client.request("thread/fork", {
@@ -7307,6 +7366,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       ? {}
                       : { lastTurnId: boundary.lastTurnId }),
                     ...codexThreadRuntimeParams({
+                      autoCompactTokens: desiredAutoCompact,
                       mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
                       ...(threadInput.modelSelection === undefined
                         ? {}
@@ -7362,6 +7422,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 providerSessionId: input.providerSessionId,
                 providerInstanceId: adapterOptions.instanceId,
                 thread: forkedThread,
+                appliedAutoCompact: recordAutoCompactLoad(forkedThread.id, desiredAutoCompact),
                 forkedFrom: {
                   providerThreadId: threadInput.sourceProviderThread.id,
                   ...(threadInput.providerTurnId === undefined
