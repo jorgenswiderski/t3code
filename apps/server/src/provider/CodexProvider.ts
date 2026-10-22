@@ -35,6 +35,7 @@ import {
   readCustomModelEntries,
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import type { ThreadAutoCompactRange } from "@t3tools/shared/threadAutoCompact";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
   AUTH_PROBE_TIMEOUT_MS,
@@ -73,10 +74,21 @@ const CODEX_CATALOG_REFRESH_TIMEOUT = "3 seconds" as const;
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
 const CODEX_CLIENT_NAME = "T3 Code";
 
+/**
+ * Range of the per-thread auto-compact value ("compacts at about N tokens") the Codex
+ * adapter accepts. The app-server publishes no minimum, so this is the contract fallback;
+ * the capability and the adapter's clamp both read it.
+ */
+export const CODEX_THREAD_AUTO_COMPACT_RANGE: ThreadAutoCompactRange = {
+  minTokens: 100_000,
+  maxTokens: 1_000_000,
+};
+
 const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
   reportsContextWindow: true,
+  threadAutoCompact: CODEX_THREAD_AUTO_COMPACT_RANGE,
 } as const;
 
 export interface CodexAppServerProviderSnapshot {
