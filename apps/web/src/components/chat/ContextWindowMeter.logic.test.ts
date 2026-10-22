@@ -461,6 +461,30 @@ describe("resolveContextWindowAutoCompact", () => {
     expect(result?.view.tickFraction).toBeNull();
   });
 
+  it("reads a reported cap at or above the snapshot window as the built-in default", () => {
+    // A fresh Codex start loads the stored cap before it knows the model's window.
+    const result = resolveContextWindowAutoCompact({
+      ...base,
+      providerDisplayName: "Codex",
+      stored: 300_000,
+      applied: { tokens: 300_000 },
+      snapshotMaxTokens: 258_400,
+    });
+    expect(result?.view.pending).toBe(false);
+    expect(result?.appliedTokens).toBeNull();
+  });
+
+  it("does not claim an instance default at or above the window as the compaction point", () => {
+    const result = resolveContextWindowAutoCompact({
+      ...base,
+      capability: { ...capability, defaultTokens: 300_000 },
+      applied: { tokens: 300_000 },
+      snapshotMaxTokens: 200_000,
+    });
+    expect(result?.view.pending).toBe(false);
+    expect(result?.appliedTokens).toBeNull();
+  });
+
   it("disables the control with the reason when the connection cannot change threads", () => {
     const result = resolveContextWindowAutoCompact({
       ...base,

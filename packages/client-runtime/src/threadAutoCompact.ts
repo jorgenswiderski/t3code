@@ -103,6 +103,9 @@ export interface ThreadAutoCompactView {
   readonly presets: ReadonlyArray<ThreadAutoCompactPresetState>;
   /** resolveEffectiveAutoCompactTokens */
   readonly effectiveTokens: number | null;
+  /** What the live process compacts at, read against the window: a reported value at or above
+      it behaves like the provider's built-in default (null). null too when nothing was reported. */
+  readonly appliedTokens: number | null;
   readonly pending: boolean;
   /** effectiveTokens / windowTokens when the stored value is non-null and both are known;
       null otherwise (no tick). Uses the stored value, not the applied one. */
@@ -145,11 +148,14 @@ export function deriveThreadAutoCompactView(input: {
     windowTokens,
     defaultTokens,
   });
-  const pending = applied != null && applied.tokens !== desired;
+  // A process loaded before its window was known (a fresh Codex start) can report a cap at or
+  // above the window; it compacts as if none was set, so read the report the same way.
+  const appliedTokens =
+    applied == null ? null : autoCompactTokensBelowWindow({ tokens: applied.tokens, windowTokens });
+  const pending = applied != null && appliedTokens !== desired;
+  const builtInLabel = `${input.providerDisplayName} default`;
   const defaultLabel =
-    defaultTokens != null
-      ? formatAutoCompactTokens(defaultTokens)
-      : `${input.providerDisplayName} default`;
+    defaultTokens != null ? formatAutoCompactTokens(defaultTokens) : builtInLabel;
 
   const presets = THREAD_AUTO_COMPACT_PRESETS.map((tokens) => ({
     tokens,
@@ -169,8 +175,9 @@ export function deriveThreadAutoCompactView(input: {
   if (applied != null && pending) {
     const pendingLabel =
       effectiveTokens != null ? formatAutoCompactTokens(effectiveTokens) : "Default";
+    // A null report is the provider's built-in behaviour, even when an instance default is set now.
     const appliedLabel =
-      applied.tokens != null ? formatAutoCompactTokens(applied.tokens) : defaultLabel;
+      appliedTokens != null ? formatAutoCompactTokens(appliedTokens) : builtInLabel;
     statusText = `${pendingLabel} · applies after the session restarts. Currently compacts at ${appliedLabel}.`;
   } else if (stored != null && effectiveTokens === null) {
     statusText = `${formatAutoCompactTokens(stored)} is at or above this model's window, so this thread uses the default (${defaultLabel}).`;
@@ -182,6 +189,7 @@ export function deriveThreadAutoCompactView(input: {
     choice: choiceFor(stored),
     presets,
     effectiveTokens,
+    appliedTokens,
     pending,
     tickFraction,
     statusText,

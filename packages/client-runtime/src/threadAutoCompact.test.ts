@@ -270,4 +270,46 @@ describe("deriveThreadAutoCompactView", () => {
     });
     expect(view?.statusText).toBe("This thread compacts at 150k (default: Claude default).");
   });
+
+  it("14: a cap a fresh Codex process loaded at or above the window is not pending", () => {
+    const view = deriveThreadAutoCompactView({
+      ...base,
+      capability: { minTokens: 100_000, maxTokens: 1_000_000 },
+      providerDisplayName: "Codex",
+      stored: 300_000,
+      applied: { tokens: 300_000 },
+      windowTokens: 258_400,
+    });
+    expect(view).toMatchObject({
+      effectiveTokens: null,
+      appliedTokens: null,
+      pending: false,
+      statusText:
+        "300k is at or above this model's window, so this thread uses the default (Codex default).",
+    });
+  });
+
+  it("15: a process opened with an instance default at or above the window is not pending", () => {
+    const view = deriveThreadAutoCompactView({
+      ...base,
+      capability: { ...capability, defaultTokens: 300_000 },
+      applied: { tokens: 300_000 },
+      windowTokens: 200_000,
+    });
+    expect(view).toMatchObject({ appliedTokens: null, pending: false, statusText: null });
+  });
+
+  it("16: a null report reads as the built-in default while a new instance default is pending", () => {
+    const view = deriveThreadAutoCompactView({
+      ...base,
+      capability: { ...capability, defaultTokens: 150_000 },
+      applied: { tokens: null },
+      windowTokens: 200_000,
+    });
+    expect(view).toMatchObject({
+      pending: true,
+      statusText:
+        "Default · applies after the session restarts. Currently compacts at Claude default.",
+    });
+  });
 });

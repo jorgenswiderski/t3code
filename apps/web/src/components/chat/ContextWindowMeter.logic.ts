@@ -162,7 +162,8 @@ export function formatContextWindowCost(cost: {
 
 /**
  * The per-thread auto-compact control's state for the meter popover. `view` is derived from the
- * stored value (it drives the tick and presets); `appliedTokens` is what the live session reports.
+ * stored value (it drives the tick and presets); `appliedTokens` is what the live session compacts
+ * at, read against the window (see `ThreadAutoCompactView.appliedTokens`).
  */
 export interface ContextWindowAutoCompact {
   readonly view: ThreadAutoCompactView;
@@ -253,7 +254,7 @@ export function resolveContextWindowAutoCompact(input: {
     view,
     capability,
     windowTokens,
-    appliedTokens: applied?.tokens ?? null,
+    appliedTokens: view.appliedTokens,
     disabled: !input.canChange,
     disabledReason: input.canChange ? null : input.changeDeniedReason,
     onChange: input.onChange,
