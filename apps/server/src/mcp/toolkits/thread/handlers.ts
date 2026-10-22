@@ -203,7 +203,8 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         threads,
         projection: { thread },
       } = yield* readThread(input.threadId);
-      const { modelSelection, autoCompactTokens } = input;
+      const { modelSelection } = input;
+      const autoCompactTokens = input.autoCompactTokens === "null" ? null : input.autoCompactTokens;
       if (modelSelection === undefined && autoCompactTokens === undefined) {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",

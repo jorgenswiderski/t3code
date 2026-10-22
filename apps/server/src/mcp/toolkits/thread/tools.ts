@@ -200,8 +200,16 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     modelSelection: Schema.optional(ModelSelection),
-    /** null = Default. Omit to leave unchanged. */
-    autoCompactTokens: Schema.optional(Schema.NullOr(ThreadAutoCompactTokens)),
+    /** null = Default. Omit to leave unchanged. Claude Code sends this union's
+        values as strings ("null", "300000"), so both string forms decode too. */
+    autoCompactTokens: Schema.optional(
+      Schema.Union([
+        ThreadAutoCompactTokens,
+        Schema.Null,
+        Schema.Literal("null"),
+        Schema.FiniteFromString.pipe(Schema.decodeTo(ThreadAutoCompactTokens)),
+      ]),
+    ),
   }),
   dependencies: [...commandTool.dependencies, ProviderRegistry.ProviderRegistry],
 }).annotate(Tool.Destructive, true);

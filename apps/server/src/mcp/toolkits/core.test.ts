@@ -1015,6 +1015,30 @@ describe("per-thread auto-compact over MCP", () => {
     ),
   );
 
+  it.effect("configure treats the string null from Claude as a clear", () =>
+    run({ providers: [provider("codex")] }, ({ call, commands }) =>
+      Effect.gen(function* () {
+        const result = yield* call("t3_thread_configure", { autoCompactTokens: "null" });
+        expect(result.isError).toBe(false);
+        expect(commands).toMatchObject([
+          { type: "thread.auto-compact.set", autoCompactTokens: null },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("configure accepts a value Claude sends as a string", () =>
+    run({ providers: [provider("codex", capability)] }, ({ call, commands }) =>
+      Effect.gen(function* () {
+        const result = yield* call("t3_thread_configure", { autoCompactTokens: "300000" });
+        expect(result.isError).toBe(false);
+        expect(commands).toMatchObject([
+          { type: "thread.auto-compact.set", autoCompactTokens: 300000 },
+        ]);
+      }),
+    ),
+  );
+
   it.effect("configure refuses a value the provider does not support", () =>
     run({ providers: [provider("codex")] }, ({ call, commands }) =>
       Effect.gen(function* () {
