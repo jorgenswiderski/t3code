@@ -28,9 +28,14 @@ export function MaterialSegmentedControl<Value extends number | string>(
             accessible
             accessibilityRole={props.role ?? "button"}
             accessibilityLabel={option.accessibilityLabel ?? option.label}
-            accessibilityState={{ selected: option.value === props.selected }}
+            accessibilityState={{
+              selected: option.value === props.selected,
+              disabled: option.disabled === true,
+            }}
             accessibilityActions={[{ name: "activate" }]}
-            onAccessibilityAction={() => props.onSelect(option.value)}
+            onAccessibilityAction={() => {
+              if (!option.disabled) props.onSelect(option.value);
+            }}
             className="flex-1"
           />
         ))}
