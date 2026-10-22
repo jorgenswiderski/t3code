@@ -264,6 +264,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   autoCompactTokens: Schema.optionalKey(ThreadAutoCompactTokens),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
+const isThreadAutoCompactTokens = Schema.is(ThreadAutoCompactTokens);
 
 /**
  * Per-provider record of generic option selections. Used as a transient
@@ -2016,7 +2017,7 @@ function normalizePersistedDraftsByThreadId(
       draftCandidate.interactionMode === "plan" || draftCandidate.interactionMode === "default"
         ? draftCandidate.interactionMode
         : null;
-    const autoCompactTokens = Schema.is(ThreadAutoCompactTokens)(draftCandidate.autoCompactTokens)
+    const autoCompactTokens = isThreadAutoCompactTokens(draftCandidate.autoCompactTokens)
       ? draftCandidate.autoCompactTokens
       : null;
     const contextIds = new Map<string, string>();
