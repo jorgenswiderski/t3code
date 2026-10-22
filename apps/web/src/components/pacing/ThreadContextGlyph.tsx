@@ -11,6 +11,7 @@ import {
   dotFillClass,
   formatGlyphTooltip,
   glyphGeometry,
+  glyphTickSegment,
   resolveThreadContextGlyph,
   type GlyphSize,
   type ThreadContextGlyphModel,
@@ -29,14 +30,21 @@ export function ThreadContextGlyph({
   size,
   model,
   spinning = false,
+  tickFraction = null,
+  emptyOutline = false,
   className,
 }: {
   size: GlyphSize;
   model: ThreadContextGlyphModel;
   spinning?: boolean | undefined;
+  /** Where the thread's auto-compact cap sits on the window (0 to 1); null draws no tick. */
+  tickFraction?: number | null | undefined;
+  /** Dims the track more strongly so a thread with no usage yet still reads as a ring. */
+  emptyOutline?: boolean | undefined;
   className?: string | undefined;
 }) {
   const g = glyphGeometry(size);
+  const tick = glyphTickSegment(size, tickFraction);
   const dash = arcDashArray(model.fraction, g.circumference);
   const dotClass = dotFillClass(model.cacheState);
   // With no arc to colour (window size unknown), tint the track with the tier
@@ -56,6 +64,7 @@ export function ThreadContextGlyph({
       ref={spinning ? observeVisibleAnimation : undefined}
       className={cn(
         "shrink-0",
+        tick !== null && "overflow-visible",
         SIZE_CLASS[size],
         spinning && "motion-safe:visible-animate-stepped-spin",
         className,
@@ -67,7 +76,10 @@ export function ThreadContextGlyph({
         r={g.radius}
         fill="none"
         strokeWidth={g.strokeWidth}
-        className={cn("opacity-25", PACE_TIER_CLASSES[trackColor].stroke)}
+        className={cn(
+          emptyOutline ? "opacity-45" : "opacity-25",
+          PACE_TIER_CLASSES[trackColor].stroke,
+        )}
       />
       {dash === null ? null : (
         <circle
@@ -87,6 +99,17 @@ export function ThreadContextGlyph({
       )}
       {dotClass === null ? null : (
         <circle cx={g.center} cy={g.center} r={g.dotRadius} className={dotClass} />
+      )}
+      {tick === null ? null : (
+        <line
+          x1={tick.x1}
+          y1={tick.y1}
+          x2={tick.x2}
+          y2={tick.y2}
+          strokeWidth={tick.strokeWidth}
+          strokeLinecap="round"
+          className="stroke-foreground"
+        />
       )}
     </svg>
   );
