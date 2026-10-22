@@ -1,9 +1,11 @@
 import type { ClientSettings, ModelSelection } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useMemo } from "react";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useNowTick } from "~/hooks/useNowTick";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { cn } from "~/lib/utils";
+import { environmentServerConfigsAtom } from "~/state/server";
 import type { SidebarThreadSummary } from "~/types";
 import { PACE_TIER_CLASSES } from "./paceTierClasses";
 import {
@@ -11,7 +13,9 @@ import {
   dotFillClass,
   formatGlyphTooltip,
   glyphGeometry,
+  glyphTickSegment,
   resolveThreadContextGlyph,
+  threadGlyphTickFraction,
   type GlyphSize,
   type ThreadContextGlyphModel,
   type ThreadContextUsage,
@@ -29,14 +33,21 @@ export function ThreadContextGlyph({
   size,
   model,
   spinning = false,
+  tickFraction = null,
+  emptyOutline = false,
   className,
 }: {
   size: GlyphSize;
   model: ThreadContextGlyphModel;
   spinning?: boolean | undefined;
+  /** Where the thread's auto-compact cap sits on the window (0 to 1); null draws no tick. */
+  tickFraction?: number | null | undefined;
+  /** Dims the track more strongly so a thread with no usage yet still reads as a ring. */
+  emptyOutline?: boolean | undefined;
   className?: string | undefined;
 }) {
   const g = glyphGeometry(size);
+  const tick = glyphTickSegment(size, tickFraction);
   const dash = arcDashArray(model.fraction, g.circumference);
   const dotClass = dotFillClass(model.cacheState);
   // With no arc to colour (window size unknown), tint the track with the tier
@@ -56,6 +67,7 @@ export function ThreadContextGlyph({
       ref={spinning ? observeVisibleAnimation : undefined}
       className={cn(
         "shrink-0",
+        tick !== null && "overflow-visible",
         SIZE_CLASS[size],
         spinning && "motion-safe:visible-animate-stepped-spin",
         className,
@@ -67,7 +79,10 @@ export function ThreadContextGlyph({
         r={g.radius}
         fill="none"
         strokeWidth={g.strokeWidth}
-        className={cn("opacity-25", PACE_TIER_CLASSES[trackColor].stroke)}
+        className={cn(
+          emptyOutline ? "opacity-45" : "opacity-25",
+          PACE_TIER_CLASSES[trackColor].stroke,
+        )}
       />
       {dash === null ? null : (
         <circle
@@ -88,6 +103,17 @@ export function ThreadContextGlyph({
       {dotClass === null ? null : (
         <circle cx={g.center} cy={g.center} r={g.dotRadius} className={dotClass} />
       )}
+      {tick === null ? null : (
+        <line
+          x1={tick.x1}
+          y1={tick.y1}
+          x2={tick.x2}
+          y2={tick.y2}
+          strokeWidth={tick.strokeWidth}
+          strokeLinecap="round"
+          className="stroke-foreground"
+        />
+      )}
     </svg>
   );
 }
@@ -104,22 +130,77 @@ export function useThreadContextGlyphModel(
   );
 }
 
-type GlyphThread = Pick<SidebarThreadSummary, "latestTokenUsage" | "modelSelection">;
+type GlyphThread = Pick<
+  SidebarThreadSummary,
+  "latestTokenUsage" | "modelSelection" | "autoCompactTokens" | "environmentId"
+>;
+
+/**
+ * Tick position for a capped thread. Only threads with a cap mount this, so rows without one never
+ * subscribe to the environment configs.
+ */
+function useThreadAutoCompactTickFraction(
+  thread: GlyphThread,
+  usage: ThreadContextUsage,
+): number | null {
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const capability = serverConfigs
+    .get(thread.environmentId)
+    ?.providers.find(
+      (provider) => provider.instanceId === thread.modelSelection.instanceId,
+    )?.threadAutoCompact;
+  return threadGlyphTickFraction({
+    capability,
+    stored: thread.autoCompactTokens,
+    maxTokens: usage.maxTokens,
+  });
+}
 
 function ThreadContextGlyphLive({
   usage,
   nextSelection,
   working,
+  tickFraction,
   className,
 }: {
   usage: ThreadContextUsage;
   nextSelection: ModelSelection;
   working: boolean;
+  tickFraction?: number | null | undefined;
   className?: string | undefined;
 }) {
   const model = useThreadContextGlyphModel(usage, nextSelection);
   return model === null ? null : (
-    <ThreadContextGlyph size={14} model={model} spinning={working} className={className} />
+    <ThreadContextGlyph
+      size={14}
+      model={model}
+      spinning={working}
+      tickFraction={tickFraction}
+      className={className}
+    />
+  );
+}
+
+function CappedThreadContextGlyph({
+  thread,
+  usage,
+  working,
+  className,
+}: {
+  thread: GlyphThread;
+  usage: ThreadContextUsage;
+  working: boolean;
+  className?: string | undefined;
+}) {
+  const tickFraction = useThreadAutoCompactTickFraction(thread, usage);
+  return (
+    <ThreadContextGlyphLive
+      usage={usage}
+      nextSelection={thread.modelSelection}
+      working={working}
+      tickFraction={tickFraction}
+      className={className}
+    />
   );
 }
 
@@ -138,6 +219,16 @@ export function ThreadContextGlyphBadge({
 }) {
   // Checked before any hook subscription so rows without usage never subscribe to the clock.
   if (!thread.latestTokenUsage) return null;
+  if (thread.autoCompactTokens != null) {
+    return (
+      <CappedThreadContextGlyph
+        thread={thread}
+        usage={thread.latestTokenUsage}
+        working={working}
+        className={className}
+      />
+    );
+  }
   return (
     <ThreadContextGlyphLive
       usage={thread.latestTokenUsage}
@@ -151,16 +242,23 @@ export function ThreadContextGlyphBadge({
 function ThreadContextTooltipLineLive({
   usage,
   nextSelection,
+  tickFraction,
 }: {
   usage: ThreadContextUsage;
   nextSelection: ModelSelection;
+  tickFraction?: number | null | undefined;
 }) {
   const model = useThreadContextGlyphModel(usage, nextSelection);
   const timestampFormat = useClientSettings(selectTimestampFormat);
   if (model === null) return null;
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <ThreadContextGlyph size={14} model={model} className="shrink-0" />
+      <ThreadContextGlyph
+        size={14}
+        model={model}
+        tickFraction={tickFraction}
+        className="shrink-0"
+      />
       <div className="min-w-0 truncate text-foreground/75">
         {formatGlyphTooltip(model, timestampFormat)}
       </div>
@@ -171,10 +269,30 @@ function ThreadContextTooltipLineLive({
 /** Hover-card row: glyph + the tooltip string; renders nothing without usage. */
 export function ThreadContextTooltipLine({ thread }: { thread: GlyphThread }) {
   if (!thread.latestTokenUsage) return null;
+  if (thread.autoCompactTokens != null) {
+    return <CappedThreadContextTooltipLine thread={thread} usage={thread.latestTokenUsage} />;
+  }
   return (
     <ThreadContextTooltipLineLive
       usage={thread.latestTokenUsage}
       nextSelection={thread.modelSelection}
+    />
+  );
+}
+
+function CappedThreadContextTooltipLine({
+  thread,
+  usage,
+}: {
+  thread: GlyphThread;
+  usage: ThreadContextUsage;
+}) {
+  const tickFraction = useThreadAutoCompactTickFraction(thread, usage);
+  return (
+    <ThreadContextTooltipLineLive
+      usage={usage}
+      nextSelection={thread.modelSelection}
+      tickFraction={tickFraction}
     />
   );
 }

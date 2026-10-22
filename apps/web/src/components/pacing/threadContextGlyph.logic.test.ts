@@ -5,10 +5,13 @@ import {
   arcDashArray,
   composerGlyphUsage,
   dotFillClass,
+  emptyThreadContextGlyphModel,
   formatGlyphTooltip,
   glyphCacheClause,
   glyphGeometry,
+  glyphTickSegment,
   resolveThreadContextGlyph,
+  threadGlyphTickFraction,
   type ThreadContextUsage,
 } from "./threadContextGlyph.logic";
 
@@ -302,5 +305,60 @@ describe("formatGlyphTooltip / glyphCacheClause", () => {
     const model = resolve({ usedTokens: 250_000, maxTokens: null, updatedAt: ago(60) });
     expect(formatGlyphTooltip(model, "24-hour")).toBe("Context 250k");
     expect(glyphCacheClause(model, "24-hour")).toBeNull();
+  });
+});
+
+describe("glyphTickSegment", () => {
+  it.each([
+    [18, 0.25, 15.2, 9, 18.8, 9, 1.4],
+    [18, 0.5, 9, 15.2, 9, 18.8, 1.4],
+    [18, 0.75, 2.8, 9, -0.8, 9, 1.4],
+    [14, 0.25, 11.76, 7, 14.64, 7, 1.12],
+  ] as const)("size %s fraction %s", (size, fraction, x1, y1, x2, y2, strokeWidth) => {
+    const segment = glyphTickSegment(size, fraction);
+    expect(segment?.x1).toBeCloseTo(x1);
+    expect(segment?.y1).toBeCloseTo(y1);
+    expect(segment?.x2).toBeCloseTo(x2);
+    expect(segment?.y2).toBeCloseTo(y2);
+    expect(segment?.strokeWidth).toBeCloseTo(strokeWidth);
+  });
+
+  it.each([0, 1, null, Number.NaN, -0.1, 1.2])("draws nothing for fraction %s", (fraction) => {
+    expect(glyphTickSegment(18, fraction)).toBeNull();
+  });
+});
+
+describe("emptyThreadContextGlyphModel", () => {
+  it("is an unfilled ring when the window is known", () => {
+    const model = emptyThreadContextGlyphModel(1_000_000);
+    expect(model).toMatchObject({
+      usedTokens: 0,
+      maxTokens: 1_000_000,
+      tier: 0,
+      fraction: 0,
+      cacheState: "unknown",
+      expiresAtMs: null,
+    });
+    expect(arcDashArray(model.fraction, 100)).toBeNull();
+  });
+
+  it("has no fraction when the window is unknown", () => {
+    const model = emptyThreadContextGlyphModel(null);
+    expect(model.fraction).toBeNull();
+    expect(arcDashArray(model.fraction, 100)).toBeNull();
+  });
+});
+
+describe("threadGlyphTickFraction", () => {
+  const capability = { minTokens: 100_000, maxTokens: 1_000_000 };
+
+  it.each([
+    [capability, 400_000, 1_000_000, 0.4],
+    [capability, null, 1_000_000, null],
+    [capability, 400_000, null, null],
+    [capability, 1_000_000, 1_000_000, null],
+    [undefined, 400_000, 1_000_000, null],
+  ] as const)("capability %j stored %s window %s", (cap, stored, maxTokens, expected) => {
+    expect(threadGlyphTickFraction({ capability: cap, stored, maxTokens })).toBe(expected);
   });
 });
