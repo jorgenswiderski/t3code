@@ -163,7 +163,8 @@ function AutoCompactBody(props: {
 
   const [customOpen, setCustomOpen] = useState(false);
   // The choice the user just made. It is shown while the set is in flight and, once it
-  // succeeds, until the stored value moves off what it was when the choice was made.
+  // succeeds, until the stored value first moves off what it was when the choice was made.
+  // It is then dropped for good, so a later change back to that old value is not masked.
   const [inFlight, setInFlight] = useState<{
     readonly selected: AutoCompactSegmentValue;
     readonly storedBefore: number | null;
@@ -179,6 +180,9 @@ function AutoCompactBody(props: {
     },
     [onSet, stored],
   );
+
+  // Adjusting state during render (not in an effect) drops the override before it can paint.
+  if (inFlight?.settled === true && stored !== inFlight.storedBefore) setInFlight(null);
 
   if (view === null || capability === undefined) return null;
 
@@ -218,6 +222,7 @@ function AutoCompactBody(props: {
             key={model.customInput.initialText}
             initialText={model.customInput.initialText}
             disabled={!props.canEdit}
+            onDismiss={() => setCustomOpen(false)}
             onCommit={(text) => {
               const commit = resolveCustomCommit({ text, capability, windowTokens, stored });
               if (commit.kind === "invalid") return commit.message;
@@ -234,10 +239,14 @@ function AutoCompactBody(props: {
   );
 }
 
-/** Free-form value entry; commits on Done and on blur, and shows why a value was rejected. */
+/**
+ * Free-form value entry; commits on Done and on blur, and shows why a value was rejected.
+ * Leaving it blank or unedited dismisses it instead of committing.
+ */
 function CustomTokensInput(props: {
   readonly initialText: string;
   readonly disabled: boolean;
+  readonly onDismiss: () => void;
   /** Returns a validation message, or null when the value was accepted or unchanged. */
   readonly onCommit: (text: string) => string | null;
 }) {
@@ -248,6 +257,10 @@ function CustomTokensInput(props: {
 
   const commit = () => {
     if (committedText === text) return;
+    if (text.trim() === "" || text === props.initialText) {
+      props.onDismiss();
+      return;
+    }
     setCommittedText(text);
     setError(props.onCommit(text));
   };
