@@ -39,6 +39,10 @@
       "types": "./src/model.ts",
       "import": "./src/model.ts"
     },
+    "./threadAutoCompact": {
+      "types": "./src/threadAutoCompact.ts",
+      "import": "./src/threadAutoCompact.ts"
+    },
     "./advertisedEndpoint": {
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"
