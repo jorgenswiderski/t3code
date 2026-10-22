@@ -8285,13 +8285,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           // The CLI reads autoCompactWindow only at query start (applyFlagSettings
           // accepts it but ignores it; per-thread auto-compact spike, CLI 2.1.306),
-          // so a threshold change applies at the next process open. Never fold it
-          // into queryPolicyKey or selectionKey.
+          // so a threshold change applies at the next process open. An idle
+          // process with a stale window is replaced here (via resume, like a
+          // selection change); a process with background work is never replaced
+          // for it and keeps its window until a natural restart. The threshold
+          // stays out of queryPolicyKey and selectionKey, so it can never reach
+          // the background-work refusal below.
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
             existing.queryPolicyKey === queryPolicyKey &&
-            existing.selectionKey === compiledSelection.queryIdentity
+            existing.selectionKey === compiledSelection.queryIdentity &&
+            (existing.autoCompactWindow === autoCompact.sdkWindow ||
+              existing.stopping ||
+              (yield* liveProcessRunsBackgroundWork(existing)))
           ) {
             // Claude can switch its own mode mid-session (EnterPlanMode), and
             // a denied ExitPlanMode leaves it there. Put the live process back

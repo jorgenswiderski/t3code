@@ -3143,6 +3143,122 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.lengthOf(providerThreadUpdates(harness.events), 0);
       }).pipe(Effect.scoped, Effect.provide(layer)),
     );
+
+    it.effect("a stale threshold replaces an idle process at the next turn", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: null }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        const mark = harness.events.length;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 2, now, autoCompactTokens: 200_000 }),
+        );
+        assert.lengthOf(harness.processQueues, 2);
+        assert.equal(openedWindow(harness.getOpenedOptions()), 233_000);
+        assert.equal(harness.getOpenedOptions()?.resume, WAKE_NATIVE_SESSION);
+        yield* awaitUntil(
+          () =>
+            providerThreadUpdates(harness.events, mark).some(
+              (thread) => thread.appliedAutoCompact?.tokens === 200_000,
+            ),
+          "report after idle replacement",
+        );
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
+    it.effect("an unchanged SDK window reuses the process", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: AUTO_COMPACT_CLAUDE_SETTINGS,
+          freshQueueOnReopen: true,
+        });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: null }),
+        );
+        const originalOptions = harness.getOpenedOptions();
+        assert.equal(openedWindow(originalOptions), 333_000);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 2, now, autoCompactTokens: 300_000 }),
+        );
+        assert.strictEqual(harness.getOpenedOptions(), originalOptions);
+        assert.lengthOf(harness.processQueues, 1);
+        assert.lengthOf(harness.offeredMessages, 2);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
+    it.effect("a stale threshold never triggers the background-work refusal", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: null }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        const mark = harness.events.length;
+        const started = yield* harness.runtime
+          .startTurn(autoCompactTurn(harness, { ordinal: 2, now, autoCompactTokens: 200_000 }))
+          .pipe(Effect.result);
+        assert.equal(started._tag, "Success");
+        assert.lengthOf(harness.processQueues, 1);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        assert.isFalse(
+          providerThreadUpdates(harness.events, mark).some(
+            (thread) => thread.appliedAutoCompact?.tokens === 200_000,
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
+    it.effect("a pending threshold applies once background work has ended", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: null }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 2, now, autoCompactTokens: 200_000 }),
+        );
+        assert.lengthOf(harness.processQueues, 1);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        // The background shell finishes, so the process runs no background work.
+        yield* harness.offerAndWait(wakeNotification);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+
+        const mark = harness.events.length;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 3, now, autoCompactTokens: 200_000 }),
+        );
+        assert.lengthOf(harness.processQueues, 2);
+        assert.equal(openedWindow(harness.getOpenedOptions()), 233_000);
+        yield* awaitUntil(
+          () =>
+            providerThreadUpdates(harness.events, mark).some(
+              (thread) => thread.appliedAutoCompact?.tokens === 200_000,
+            ),
+          "report after background work ended",
+        );
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
   });
 
   it.effect.each(["completed", "interrupted"] as const)(
