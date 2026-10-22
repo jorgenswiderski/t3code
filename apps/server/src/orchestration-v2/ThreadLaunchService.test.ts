@@ -2675,6 +2675,68 @@ it.effect("a retried launch keeps the value and does not fail", () =>
   }),
 );
 
+it.effect("a retry after the message was accepted still applies the value", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const threadId = ThreadId.make("thread:launch:auto-compact-retry-partial");
+      yield* createEmptyThread(threadId, null);
+      const base = {
+        ...launchInput({
+          command: "command:launch:auto-compact-retry-partial",
+          thread: threadId,
+          message: "Hello",
+        }),
+        reuseExistingThread: true,
+      };
+      // The first attempt stops after the initial message is accepted and
+      // before the auto-compact dispatch: same command id, no value applied.
+      yield* launches.launch(base);
+      assert.equal((yield* threads.getThreadProjection(threadId)).thread.autoCompactTokens, null);
+      yield* launches.launch({ ...base, autoCompactTokens: 200_000 });
+      const projection = yield* threads.getThreadProjection(threadId);
+      assert.equal(projection.thread.autoCompactTokens, 200_000);
+      assert.equal(yield* countAutoCompactEvents(threadId), 1);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("a retry does not overwrite a value changed after the launch applied it", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const threadId = ThreadId.make("thread:launch:auto-compact-retry-changed");
+      yield* createEmptyThread(threadId, null);
+      const input = {
+        ...launchInput({
+          command: "command:launch:auto-compact-retry-changed",
+          thread: threadId,
+          message: "Hello",
+        }),
+        reuseExistingThread: true,
+        autoCompactTokens: 200_000,
+      };
+      yield* launches.launch(input);
+      yield* threads.dispatch({
+        type: "thread.auto-compact.set",
+        commandId: CommandId.make("command:launch:auto-compact-retry-changed:reset"),
+        threadId,
+        autoCompactTokens: null,
+      });
+      // The retry's derived auto-compact command id already has a receipt, so
+      // it dedupes instead of reapplying the launch's value.
+      yield* launches.launch(input);
+      const projection = yield* threads.getThreadProjection(threadId);
+      assert.equal(projection.thread.autoCompactTokens, null);
+      assert.equal(yield* countAutoCompactEvents(threadId), 2);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("a rejected initial message leaves a reused thread's value unchanged", () =>
   Effect.gen(function* () {
     const harness = makeHarness();
