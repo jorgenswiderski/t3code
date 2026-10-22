@@ -436,6 +436,7 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { resolveCreateAutoCompactTokens } from "./chat/autoCompactCreate.logic";
 import { createPageScrollController, type PageScrollKey } from "./chat/pageScrollController";
 import { isTimelineScrollTarget } from "./chat/timelineScrollTarget";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
@@ -9424,6 +9425,15 @@ export default function ChatView(props: ChatViewProps) {
       };
     };
 
+    // Read at send time so a cap picked while the send was being prepared is not lost.
+    const draftAutoCompactForCreate = (instanceId: ProviderInstanceId) =>
+      resolveCreateAutoCompactTokens({
+        draftTokens: useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+          ?.autoCompactTokens,
+        capability: providerInstanceEntries.find((entry) => entry.instanceId === instanceId)
+          ?.snapshot.threadAutoCompact,
+      });
+
     const multipleTargets = [];
     for (const selection of multipleModelSelections ?? []) {
       const provider = providerInstanceEntries.find(
@@ -9676,6 +9686,7 @@ export default function ChatView(props: ChatViewProps) {
                       modelSelection: target.selection,
                       runtimeMode,
                       interactionMode: target.interactionMode,
+                      ...draftAutoCompactForCreate(target.selection.instanceId),
                       branch: activeThreadBranch,
                       worktreePath: null,
                       createdAt: messageCreatedAt,
@@ -10016,6 +10027,7 @@ export default function ChatView(props: ChatViewProps) {
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode: sendInteractionMode,
+                      ...draftAutoCompactForCreate(threadCreateModelSelection.instanceId),
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
