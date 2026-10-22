@@ -66,6 +66,7 @@ import {
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderRetry,
   type OrchestrationV2ProviderSession,
+  type OrchestrationV2AppliedAutoCompact,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2ProviderTurnRequestIdentity,
@@ -3024,6 +3025,8 @@ interface ClaudeLiveQueryContext {
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
   readonly selectionKey: string;
+  // SDK autoCompactWindow this process was opened with; fixed for its lifetime.
+  readonly autoCompactWindow: number | undefined;
   readonly closed: Deferred.Deferred<void, never>;
   // Retained for process-exit cleanup even when its last turn failed.
   lastTurn: ActiveClaudeTurnContext | null;
@@ -3514,6 +3517,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         );
         // Native `/goal` per session, seeded from the persisted provider thread.
         const goalsByNativeThread = new Map<string, OrchestrationV2ProviderGoal | null>();
+        // Threshold each native session's current CLI process was opened with, in
+        // user-facing tokens. Set on every process open (the CLI reads
+        // autoCompactWindow only at query start; applyFlagSettings does not change
+        // it). The ingestor replaces the provider thread wholesale, so every
+        // provider_thread.updated this adapter emits must pass through
+        // withAppliedAutoCompact, including any new emit site.
+        const appliedAutoCompactByNativeThread = new Map<
+          string,
+          OrchestrationV2AppliedAutoCompact
+        >();
+        const withAppliedAutoCompact = (
+          nativeThreadId: string | null,
+          providerThread: OrchestrationV2ProviderThread,
+        ): OrchestrationV2ProviderThread => {
+          const applied =
+            nativeThreadId === null
+              ? undefined
+              : appliedAutoCompactByNativeThread.get(nativeThreadId);
+          return applied === undefined
+            ? providerThread
+            : { ...providerThread, appliedAutoCompact: applied };
+        };
         // Turns whose model output met an active goal's Stop hook check at its end.
         const goalCheckedTurns = new Set<string>();
         // Subagent registry that survives turn settle: a background subagent
@@ -3925,7 +3950,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             input.nativeThreadId,
           );
           const now = yield* DateTime.now;
-          const providerThread: OrchestrationV2ProviderThread = {
+          const providerThread = withAppliedAutoCompact(input.nativeThreadId, {
             ...input.providerThread,
             providerSessionId: session.id,
             ...(input.status === undefined ? {} : { status: input.status }),
@@ -3934,7 +3959,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? { goal: goalsByNativeThread.get(input.nativeThreadId) ?? null }
               : {}),
             updatedAt: now,
-          };
+          });
           yield* rememberProviderThread(providerThread);
           yield* emitProviderEvent({
             type: "provider_thread.updated",
@@ -3965,7 +3990,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             input.nativeThreadId,
           );
           if (providerThread === undefined) return;
-          const updated = { ...providerThread, goal: next, updatedAt: yield* DateTime.now };
+          const updated = withAppliedAutoCompact(input.nativeThreadId, {
+            ...providerThread,
+            goal: next,
+            updatedAt: yield* DateTime.now,
+          });
           yield* rememberProviderThread(updated);
           yield* emitProviderEvent({
             type: "provider_thread.updated",
@@ -5974,7 +6003,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     ...(goal.checks === undefined ? {} : { checks: goal.checks }),
                   });
                 }
-                const providerThread: OrchestrationV2ProviderThread = {
+                const providerThread = withAppliedAutoCompact(nativeThreadId, {
                   ...input.context.input.providerThread,
                   providerSessionId: session.id,
                   ...(clearConversationHead ? { nativeConversationHeadRef: null } : {}),
@@ -5988,7 +6017,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster),
                   status: input.status === "completed" ? "active" : "idle",
                   updatedAt: input.completedAt,
-                };
+                });
                 yield* rememberProviderThread(providerThread);
                 yield* emitProviderEvent({
                   type: "provider_thread.updated" as const,
@@ -8238,6 +8267,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
+          const autoCompact = resolveClaudeAutoCompact({
+            stored: turnInput.runtimePolicy.autoCompactTokens,
+            modelSelection: turnInput.modelSelection,
+            settings: adapterOptions.settings,
+          });
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
           // A continuation prompts nothing: it drains output the live process
@@ -8249,6 +8283,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             return existing;
           }
+          // The CLI reads autoCompactWindow only at query start (applyFlagSettings
+          // accepts it but ignores it; per-thread auto-compact spike, CLI 2.1.306),
+          // so a threshold change applies at the next process open. Never fold it
+          // into queryPolicyKey or selectionKey.
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
@@ -8313,6 +8351,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
             settings: adapterOptions.settings,
+            threadAutoCompactTokens: turnInput.runtimePolicy.autoCompactTokens ?? null,
             environment: adapterOptions.environment,
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...(mcpOverrides.allowedTools === undefined
@@ -8372,15 +8411,37 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // marked the provider thread active, and before activeTurn is set.
           // Buffered local_bash task_notification classification is preserved
           // across this reset (see resetBackgroundTaskStateForNativeThreadProcess).
+          // The applied threshold is recorded first so a roster emit from the
+          // reset already carries it.
+          appliedAutoCompactByNativeThread.set(nativeThreadId, {
+            tokens: autoCompact.appliedTokens,
+          });
           yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
             status: "active",
           });
+          const rememberedAtOpen = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
+            nativeThreadId,
+          );
+          if (
+            rememberedAtOpen !== undefined &&
+            (rememberedAtOpen.appliedAutoCompact == null ||
+              rememberedAtOpen.appliedAutoCompact.tokens !== autoCompact.appliedTokens)
+          ) {
+            // Report what this process runs with. Same shape and status as the
+            // process-reset roster emit just above.
+            yield* emitProviderThreadRoster({
+              nativeThreadId,
+              providerThread: rememberedAtOpen,
+              status: "active",
+            });
+          }
           const closed = yield* Deferred.make<void, never>();
           const context: ClaudeLiveQueryContext = {
             nativeThreadId,
             query: querySession,
             queryPolicyKey,
             selectionKey: compiledSelection.queryIdentity,
+            autoCompactWindow: autoCompact.sdkWindow,
             closed,
             lastTurn: null,
             promptEchoMode: "unknown",

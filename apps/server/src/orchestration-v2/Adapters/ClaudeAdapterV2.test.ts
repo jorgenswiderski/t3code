@@ -138,6 +138,8 @@ const CLAUDE_1M_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
   model: "claude-opus-5-5",
 } satisfies ModelSelection;
+const hasAutoCompactWindowKey = (settings: unknown) =>
+  typeof settings === "object" && settings !== null && "autoCompactWindow" in settings;
 const CLAUDE_TEST_RUNTIME_POLICY = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
   runtimeMode: "full-access",
   interactionMode: "default",
@@ -343,7 +345,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       cwd: "/workspace",
       settings: DEFAULT_CLAUDE_SETTINGS,
     });
-    assert.isFalse("autoCompactWindow" in (options.settings ?? {}));
+    assert.isFalse(hasAutoCompactWindowKey(options.settings));
   });
 
   it("keeps selection settings alongside the thread window", () => {
@@ -2870,6 +2872,278 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
   );
+
+  describe("per-thread auto-compact", () => {
+    const OPUS = {
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      model: "claude-opus-5-5",
+    } satisfies ModelSelection;
+    const OPUS_FAST = {
+      ...OPUS,
+      options: [{ id: "fastMode", value: true }],
+    } satisfies ModelSelection;
+    const autoCompactTurn = (
+      harness: {
+        readonly threadId: ThreadId;
+        readonly providerThread: OrchestrationV2ProviderThread;
+      },
+      input: {
+        readonly ordinal: number;
+        readonly now: DateTime.Utc;
+        readonly autoCompactTokens: number | null;
+        readonly modelSelection?: ModelSelection;
+        readonly providerThread?: OrchestrationV2ProviderThread;
+      },
+    ) =>
+      makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: input.providerThread ?? harness.providerThread,
+        now: input.now,
+        attemptId: RunAttemptId.make(`attempt-auto-compact:${input.ordinal}`),
+        text: `Request ${input.ordinal}`,
+        attachments: [],
+        providerTurnOrdinal: input.ordinal,
+        modelSelection: input.modelSelection ?? OPUS,
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          ...CLAUDE_TEST_RUNTIME_POLICY,
+          autoCompactTokens: input.autoCompactTokens,
+        }),
+      });
+    const providerThreadUpdates = (
+      events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+      from = 0,
+    ) =>
+      events
+        .slice(from)
+        .flatMap((event) =>
+          event.type === "provider_thread.updated" ? [event.providerThread] : [],
+        );
+    const openedWindow = (options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined) =>
+      (options?.settings as { autoCompactWindow?: number } | undefined)?.autoCompactWindow;
+    const settle = Effect.fnUntraced(function* () {
+      let quietYields = 0;
+      yield* awaitUntil(() => quietYields++ >= 50, "quiet");
+    });
+    const layer = Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer);
+
+    it.effect("opens with the thread's auto-compact window and reports it", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: AUTO_COMPACT_CLAUDE_SETTINGS,
+        });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: 200_000 }),
+        );
+        assert.equal(openedWindow(harness.getOpenedOptions()), 233_000);
+        yield* settle();
+        const updates = providerThreadUpdates(harness.events);
+        assert.lengthOf(updates, 1);
+        assert.deepEqual(updates[0]?.appliedAutoCompact, { tokens: 200_000 });
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
+    it.effect("a selection change applies the new stored value at replacement", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: null }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        const mark = harness.events.length;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, {
+            ordinal: 2,
+            now,
+            autoCompactTokens: 200_000,
+            modelSelection: OPUS_FAST,
+          }),
+        );
+        assert.lengthOf(harness.processQueues, 2);
+        assert.equal(openedWindow(harness.getOpenedOptions()), 233_000);
+        yield* awaitUntil(
+          () =>
+            providerThreadUpdates(harness.events, mark).some(
+              (thread) => thread.appliedAutoCompact?.tokens === 200_000,
+            ),
+          "report after replacement",
+        );
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
+    it.effect("reports the instance default when the thread has none", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: AUTO_COMPACT_CLAUDE_SETTINGS,
+        });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: null }),
+        );
+        assert.equal(openedWindow(harness.getOpenedOptions()), 333_000);
+        yield* settle();
+        assert.deepEqual(
+          providerThreadUpdates(harness.events).map((thread) => thread.appliedAutoCompact),
+          [{ tokens: 300_000 }],
+        );
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
+    it.effect("reports null when nothing is configured", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: null }),
+        );
+        assert.isFalse(hasAutoCompactWindowKey(harness.getOpenedOptions()?.settings));
+        yield* settle();
+        assert.deepEqual(
+          providerThreadUpdates(harness.events).map((thread) => thread.appliedAutoCompact),
+          [{ tokens: null }],
+        );
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
+    it.effect(
+      "changing the stored value does not replace a live process, even with background work",
+      () =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+          yield* harness.runtime.startTurn(
+            autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: null }),
+          );
+          const originalOptions = harness.getOpenedOptions();
+          yield* harness.offerAndWait(wakeTaskStarted);
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          const mark = harness.events.length;
+
+          yield* harness.runtime.startTurn(
+            autoCompactTurn(harness, { ordinal: 2, now, autoCompactTokens: 200_000 }),
+          );
+          assert.strictEqual(harness.getOpenedOptions(), originalOptions);
+          assert.lengthOf(harness.offeredMessages, 2);
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          const later = providerThreadUpdates(harness.events, mark);
+          assert.isNotEmpty(later);
+          for (const thread of later) {
+            assert.deepEqual(thread.appliedAutoCompact, { tokens: null });
+          }
+        }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
+    it.effect("reports after a process reopen", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: null }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* Queue.shutdown(harness.sdkMessages);
+        yield* settle();
+        const mark = harness.events.length;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 2, now, autoCompactTokens: 200_000 }),
+        );
+        assert.lengthOf(harness.processQueues, 2);
+        assert.equal(openedWindow(harness.getOpenedOptions()), 233_000);
+        yield* awaitUntil(
+          () =>
+            providerThreadUpdates(harness.events, mark).some(
+              (thread) => thread.appliedAutoCompact?.tokens === 200_000,
+            ),
+          "report after reopen",
+        );
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
+    it.effect("turn completion keeps the applied report", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        assert.isNull(harness.providerThread.appliedAutoCompact ?? null);
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: 200_000 }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        const last = providerThreadUpdates(harness.events).at(-1);
+        assert.equal(last?.status, "active");
+        assert.equal(last?.lastRunOrdinal, 1);
+        assert.deepEqual(last?.appliedAutoCompact, { tokens: 200_000 });
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
+    it.effect("goal and roster updates keep the applied report", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, { ordinal: 1, now, autoCompactTokens: 200_000 }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "<synthetic>",
+              id: "auto-compact-goal-set",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "text", text: "Goal set: all tests pass" }],
+              stop_reason: "end_turn",
+              stop_sequence: null,
+              usage: {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+              },
+            },
+            parent_tool_use_id: null,
+            uuid: "auto-compact-goal-set",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        const updates = providerThreadUpdates(harness.events);
+        assert.isTrue(updates.some((thread) => thread.goal?.status === "active"));
+        assert.isTrue(updates.some((thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0));
+        for (const thread of updates) {
+          assert.deepEqual(thread.appliedAutoCompact, { tokens: 200_000 });
+        }
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
+    it.effect("does not re-emit when the reopened value matches the projection", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: AUTO_COMPACT_CLAUDE_SETTINGS,
+        });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          autoCompactTurn(harness, {
+            ordinal: 1,
+            now,
+            autoCompactTokens: null,
+            providerThread: { ...harness.providerThread, appliedAutoCompact: { tokens: 300_000 } },
+          }),
+        );
+        yield* settle();
+        assert.lengthOf(providerThreadUpdates(harness.events), 0);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+  });
 
   it.effect.each(["completed", "interrupted"] as const)(
     "projects Claude thinking blocks when %s",
