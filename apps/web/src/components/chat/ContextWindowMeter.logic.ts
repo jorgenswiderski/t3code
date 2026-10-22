@@ -1,4 +1,10 @@
-import type { ModelSelection, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import type { ThreadAutoCompactView } from "@t3tools/client-runtime/thread-auto-compact";
+import type {
+  ModelSelection,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ServerProviderThreadAutoCompact,
+} from "@t3tools/contracts";
 import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
   isClaudeResumeCompactionQuestion,
@@ -146,4 +152,39 @@ export function formatContextWindowCost(cost: {
 }): string {
   const fractionDigits = Math.abs(cost.amount) > 0 && Math.abs(cost.amount) < 0.01 ? 4 : 2;
   return `${cost.currency} ${cost.amount.toFixed(fractionDigits)}`;
+}
+
+/**
+ * The per-thread auto-compact control's state for the meter popover. `view` is derived from the
+ * stored value (it drives the tick and presets); `appliedTokens` is what the live session reports.
+ */
+export interface ContextWindowAutoCompact {
+  readonly view: ThreadAutoCompactView;
+  readonly capability: ServerProviderThreadAutoCompact;
+  readonly windowTokens: number | null;
+  readonly appliedTokens: number | null;
+  readonly disabled: boolean;
+  readonly disabledReason: string | null;
+  readonly onChange: (tokens: number | null) => void;
+}
+
+/** Left offset in percent for the cap mark on the popover bar; null draws no mark. */
+export function barTickLeftPercent(fraction: number | null): number | null {
+  if (fraction === null || !Number.isFinite(fraction) || fraction <= 0 || fraction >= 1) {
+    return null;
+  }
+  return fraction * 100;
+}
+
+/**
+ * The meter opens on hover, so pointer drift would close it under a half-typed custom value.
+ * Only the hover close is held back while the custom input has focus; escape, outside press and a
+ * trigger click still close it. `reason` is Base UI's open-change reason.
+ */
+export function shouldIgnoreMeterClose(input: {
+  readonly nextOpen: boolean;
+  readonly reason: string;
+  readonly editing: boolean;
+}): boolean {
+  return !input.nextOpen && input.reason === "trigger-hover" && input.editing;
 }

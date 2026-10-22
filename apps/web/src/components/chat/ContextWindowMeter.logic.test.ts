@@ -2,11 +2,13 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  barTickLeftPercent,
   formatContextWindowCompactionMessage,
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
   formatContextWindowCost,
   resolveContextWindowModelDisplayName,
+  shouldIgnoreMeterClose,
   shouldOfferResumeCompaction,
   shouldReserveContextWindowMeter,
 } from "./ContextWindowMeter.logic";
@@ -305,5 +307,36 @@ describe("formatContextWindowCost", () => {
   it("keeps ordinary and sub-cent ACP costs readable", () => {
     expect(formatContextWindowCost({ amount: 0.42, currency: "USD" })).toBe("USD 0.42");
     expect(formatContextWindowCost({ amount: 0.0042, currency: "USD" })).toBe("USD 0.0042");
+  });
+});
+
+describe("barTickLeftPercent", () => {
+  it.each([
+    [0.4, 40],
+    [0.3, 30],
+  ])("fraction %s sits at %s percent", (fraction, expected) => {
+    expect(barTickLeftPercent(fraction)).toBeCloseTo(expected);
+  });
+
+  it.each([0, 1, null, Number.NaN, 1.5])("draws nothing for %s", (fraction) => {
+    expect(barTickLeftPercent(fraction)).toBeNull();
+  });
+});
+
+describe("shouldIgnoreMeterClose", () => {
+  it.each([
+    ["trigger-hover", true, true],
+    ["trigger-hover", false, false],
+    ["escape-key", true, false],
+    ["outside-press", true, false],
+    ["trigger-press", true, false],
+  ])("closing for %s while editing=%s is ignored=%s", (reason, editing, expected) => {
+    expect(shouldIgnoreMeterClose({ nextOpen: false, reason, editing })).toBe(expected);
+  });
+
+  it("never blocks opening", () => {
+    expect(shouldIgnoreMeterClose({ nextOpen: true, reason: "trigger-hover", editing: true })).toBe(
+      false,
+    );
   });
 });
