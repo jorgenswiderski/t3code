@@ -1,5 +1,5 @@
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { Input } from "../ui/input";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
 import { Switch } from "../ui/switch";
@@ -19,13 +19,12 @@ import { WeekdayToggleGroup } from "./WeekdayToggleGroup";
 
 export function UsagePacingSettingsPanel() {
   const settings = useClientSettings();
-  const updateSettings = useUpdateClientSettings();
   const workHours = workHoursToTimeInputs(settings.usagePacingWorkHours);
 
   const commitWorkHours = (start: string, end: string) => {
     const next = workHoursFromTimeInputs(start, end);
     if (next !== null && next !== settings.usagePacingWorkHours) {
-      void updateSettings({ usagePacingWorkHours: next });
+      void updateClientSettings({ usagePacingWorkHours: next });
     }
   };
 
@@ -39,7 +38,7 @@ export function UsagePacingSettingsPanel() {
             <Switch
               checked={settings.usagePacingShowSession}
               onCheckedChange={(checked) =>
-                void updateSettings({ usagePacingShowSession: Boolean(checked) })
+                void updateClientSettings({ usagePacingShowSession: Boolean(checked) })
               }
               aria-label="Show session window"
             />
@@ -52,7 +51,7 @@ export function UsagePacingSettingsPanel() {
             <Switch
               checked={settings.usagePacingShowWeekly}
               onCheckedChange={(checked) =>
-                void updateSettings({ usagePacingShowWeekly: Boolean(checked) })
+                void updateClientSettings({ usagePacingShowWeekly: Boolean(checked) })
               }
               aria-label="Show weekly window"
             />
@@ -65,7 +64,7 @@ export function UsagePacingSettingsPanel() {
             <Switch
               checked={settings.usagePacingShowModelScoped}
               onCheckedChange={(checked) =>
-                void updateSettings({ usagePacingShowModelScoped: Boolean(checked) })
+                void updateClientSettings({ usagePacingShowModelScoped: Boolean(checked) })
               }
               aria-label="Show model-scoped weekly windows"
             />
@@ -103,7 +102,7 @@ export function UsagePacingSettingsPanel() {
             <WeekdayToggleGroup
               aria-label="Work days"
               value={settings.usagePacingWorkDays}
-              onChange={(days) => void updateSettings({ usagePacingWorkDays: days })}
+              onChange={(days) => void updateClientSettings({ usagePacingWorkDays: days })}
             />
           }
         />
@@ -122,7 +121,8 @@ export function UsagePacingSettingsPanel() {
               format={{ minimumFractionDigits: 0, maximumFractionDigits: 2 }}
               onValueCommitted={(value) => {
                 const weight = value === null ? null : snapOffHoursWeight(value);
-                if (weight !== null) void updateSettings({ usagePacingOffHoursWeight: weight });
+                if (weight !== null)
+                  void updateClientSettings({ usagePacingOffHoursWeight: weight });
               }}
             >
               <NumberFieldGroup>
@@ -140,7 +140,7 @@ export function UsagePacingSettingsPanel() {
               <SettingResetButton
                 label="context ring in composer"
                 onClick={() =>
-                  void updateSettings({
+                  void updateClientSettings({
                     composerContextRingEnabled: DEFAULT_UNIFIED_SETTINGS.composerContextRingEnabled,
                   })
                 }
@@ -151,7 +151,7 @@ export function UsagePacingSettingsPanel() {
             <Switch
               checked={settings.composerContextRingEnabled}
               onCheckedChange={(checked) =>
-                void updateSettings({ composerContextRingEnabled: Boolean(checked) })
+                void updateClientSettings({ composerContextRingEnabled: Boolean(checked) })
               }
               aria-label="Show context ring in composer"
             />

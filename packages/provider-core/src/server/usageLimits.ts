@@ -48,16 +48,6 @@ export function makeUnavailableUsageLimits(input: {
   };
 }
 
-/**
- * Fold a sparse runtime update into the limits a provider currently
- * publishes. Windows upsert by `id`; a window the update omits keeps its
- * previous values, and a window that arrives without `resetsAt` or
- * `windowDurationMins` keeps whatever the last probe resolved for it. An
- * update with no windows leaves `previous` untouched.
- *
- * An `unsupported` snapshot stays unsupported: an account that cannot have
- * subscription windows will not start reporting them mid-turn.
- */
 export function applyUsageLimitsUpdate(input: {
   readonly previous: ServerProviderUsageLimits | undefined;
   readonly update: ProviderUsageLimitsUpdate;
@@ -68,9 +58,7 @@ export function applyUsageLimitsUpdate(input: {
     return previous;
   }
   const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
-  // Codex sends this notification beside every token-usage tick, almost
-  // always with unchanged numbers. Decide "nothing changed" per window on
-  // the way through so the no-op case never allocates a new snapshot.
+  // Codex repeats unchanged limits on token ticks; avoid allocating snapshots for no-ops.
   let changed = false;
   for (const window of update.windows) {
     const existing = merged.get(window.id);
@@ -89,12 +77,15 @@ export function applyUsageLimitsUpdate(input: {
       changed = true;
     }
   }
-  if (!changed && previous !== undefined && previous.unavailable === undefined) {
+  if (!changed && previous !== undefined) {
     return previous;
   }
+  const unavailable =
+    previous === undefined ? { reason: "probeFailed" as const } : previous.unavailable;
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
+    ...(unavailable !== undefined ? { unavailable } : {}),
   };
 }
 
@@ -131,20 +122,6 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
   );
 }
 
-/**
- * Choose what to publish after a status probe finishes. A probe that failed
- * this time must not wipe bars a previous probe or a turn already
- * established, so the last good snapshot stays; `unsupported` is
- * authoritative and replaces them.
- *
- * A successful probe replaces the published windows outright, including any
- * runtime update that landed while it was running. That is a deliberate
- * trade-off: the Codex and Claude reads take a few seconds at most, the
- * probe is the fresher full read in every case except that window, and the
- * per-window epoch bookkeeping needed to reconcile the two was more code
- * than the sub-second regression it prevented. The next runtime event
- * corrects it.
- */
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
   readonly probed: ServerProviderUsageLimits | undefined;
@@ -152,6 +129,15 @@ export function resolveUsageLimitsAfterProbe(input: {
   const { published, probed } = input;
   if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
     return published;
+  }
+  if (
+    published &&
+    probed &&
+    !published.unavailable &&
+    !probed.unavailable &&
+    Date.parse(published.checkedAt) > Date.parse(probed.checkedAt)
+  ) {
+    return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
   }
   return probed;
 }
@@ -169,10 +155,8 @@ const USAGE_HISTORY_LAG_TOLERANCE = 1;
 
 /**
  * The reading to record against the previous sample of the same reset period.
- * A runtime event reports the usage its thread last saw, so with several
- * threads running a lower one is usually another thread's stale reading:
- * events only ever raise the window. A probe reads the account directly, so
- * only its rounding lag is held.
+ * A lower runtime-event reading is usually another thread's stale one, so events
+ * only raise the window; a probe reads the account directly, so only rounding lag is held.
  */
 function heldReading(previous: number | undefined, reading: number, fromProbe: boolean): number {
   if (previous === undefined || reading >= previous) return reading;
@@ -196,13 +180,10 @@ function sameWindowReset(a: string | undefined, b: string | undefined): boolean 
 }
 
 /**
- * Add one sample per session window to `history`, from the merged `limits`
- * that were just published. A runtime update passes the ids it carried; a
- * probe passes `undefined`, a full read that also drops lists of session
- * windows `limits` no longer reports. Returns `history` itself when nothing
- * changed, so callers can skip a publish. `applyUsageLimitsUpdate` stays
- * history-agnostic: `usageWindowEquals` deliberately ignores `history`, and
- * callers re-attach it with `attachUsageHistory`.
+ * Add one sample per session window to `history`, from the just-published `limits`.
+ * A runtime update passes the ids it carried; a probe passes `undefined` (full read, also
+ * drops windows no longer reported). Returns `history` itself when unchanged. History is
+ * attached separately by `attachUsageHistory` (`usageWindowEquals` ignores it).
  */
 export function recordUsageSamples(input: {
   readonly history: UsageHistory;
@@ -258,11 +239,9 @@ export function recordUsageSamples(input: {
 }
 
 /**
- * Publish `history` on the session windows of `limits`, and strip it from any
- * window that should not carry it. A session reading below the newest sample
- * of the same reset period is raised to it: a drop the history accepted is
- * already the newest sample, so the published value equals the newest sample.
- * Returns `limits` itself when no window changes.
+ * Publish `history` on the session windows of `limits`, stripping it from any other
+ * window. A session reading below the newest sample of the same reset period is
+ * raised to it. Returns `limits` itself when no window changes.
  */
 export function attachUsageHistory(
   limits: ServerProviderUsageLimits | undefined,

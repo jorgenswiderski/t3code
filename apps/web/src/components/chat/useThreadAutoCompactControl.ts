@@ -3,13 +3,13 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useCallback } from "react";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { useComposerDraftStore, type ComposerThreadTarget } from "../../composerDraftStore";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
-export const AUTO_COMPACT_NO_OPERATE_REASON = "This connection cannot change threads.";
+const AUTO_COMPACT_NO_OPERATE_REASON = "This connection cannot change threads.";
 
 /**
  * The auto-compact value the composer shows and how it changes. Before the thread exists the value
@@ -38,37 +38,27 @@ export function useThreadAutoCompactControl(input: {
     reportFailure: false,
   });
 
-  const onChange = useCallback(
-    (tokens: number | null) => {
-      if (isLocalDraftThread) {
-        setDraftAutoCompactTokens(composerDraftTarget, tokens);
-        return;
-      }
-      void (async () => {
-        const result = await setThreadAutoCompact({
-          environmentId,
-          input: { threadId, autoCompactTokens: tokens, createdAt: new Date().toISOString() },
-        });
-        if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not change auto-compact",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      })();
-    },
-    [
-      composerDraftTarget,
-      environmentId,
-      isLocalDraftThread,
-      setDraftAutoCompactTokens,
-      setThreadAutoCompact,
-      threadId,
-    ],
-  );
+  const onChange = useStableCallback((tokens: number | null) => {
+    if (isLocalDraftThread) {
+      setDraftAutoCompactTokens(composerDraftTarget, tokens);
+      return;
+    }
+    void (async () => {
+      const result = await setThreadAutoCompact({
+        environmentId,
+        input: { threadId, autoCompactTokens: tokens, createdAt: new Date().toISOString() },
+      });
+      if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not change auto-compact",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    })();
+  });
 
   return {
     stored: isLocalDraftThread ? draftStored : (input.serverStored ?? null),

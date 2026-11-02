@@ -11,7 +11,7 @@ import {
   resolveEffectiveAutoCompactTokens,
 } from "@t3tools/shared/threadAutoCompact";
 
-export const THREAD_AUTO_COMPACT_PRESETS = [200_000, 300_000, 400_000] as const;
+const THREAD_AUTO_COMPACT_PRESETS = [200_000, 300_000, 400_000] as const;
 
 const CONTEXT_WINDOW_OPTION_ID = "contextWindow";
 

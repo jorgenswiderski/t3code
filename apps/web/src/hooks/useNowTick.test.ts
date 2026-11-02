@@ -1,81 +1,62 @@
-import { act, createElement } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { useNowTick } from "./useNowTick";
+import { nowTickClock } from "./useNowTick";
 
 const T0 = 1_800_000_000_000;
 
-describe("useNowTick", () => {
+describe("nowTickClock", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(T0);
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   });
   afterEach(() => {
     vi.useRealTimers();
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
   });
 
-  function mount(interval: number, renders: number[] = []) {
-    function Probe() {
-      const now = useNowTick(interval);
-      renders.push(now);
-      return createElement("span", null, String(now));
-    }
-    let renderer: ReactTestRenderer | undefined;
-    act(() => {
-      renderer = create(createElement(Probe));
-    });
-    return { renderer: renderer!, renders, last: () => renders[renders.length - 1] };
-  }
-
-  it("renders the current time, ticks on the interval and not before", () => {
-    const a = mount(30_000);
-    expect(a.last()).toBe(T0);
-    act(() => vi.advanceTimersByTime(29_999));
-    expect(a.last()).toBe(T0);
-    act(() => vi.advanceTimersByTime(1));
-    expect(a.last()).toBe(T0 + 30_000);
-    expect(a.last()).toBe(Date.now());
-    act(() => a.renderer.unmount());
+  it("reads the current time, ticks on the interval and not before", () => {
+    const clock = nowTickClock(30_000);
+    const listener = vi.fn();
+    const unsubscribe = clock.subscribe(listener);
+    expect(clock.getSnapshot()).toBe(T0);
+    vi.advanceTimersByTime(29_999);
+    expect(listener).not.toHaveBeenCalled();
+    expect(clock.getSnapshot()).toBe(T0);
+    vi.advanceTimersByTime(1);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(clock.getSnapshot()).toBe(T0 + 30_000);
+    unsubscribe();
   });
 
-  it("shares one timer per interval and stops it after the last unmount", () => {
-    const a = mount(30_000);
-    const b = mount(30_000);
+  it("shares one timer per interval and stops it after the last unsubscribe", () => {
+    const a = nowTickClock(30_000).subscribe(() => {});
+    const b = nowTickClock(30_000).subscribe(() => {});
     expect(vi.getTimerCount()).toBe(1);
-    const c = mount(60_000);
+    const slow = vi.fn();
+    const c = nowTickClock(60_000).subscribe(slow);
     expect(vi.getTimerCount()).toBe(2);
-    const cCount = c.renders.length;
-    act(() => vi.advanceTimersByTime(30_000));
-    expect(a.last()).toBe(T0 + 30_000);
-    expect(c.renders.length).toBe(cCount);
-    act(() => {
-      a.renderer.unmount();
-      b.renderer.unmount();
-      c.renderer.unmount();
-    });
+    vi.advanceTimersByTime(30_000);
+    expect(nowTickClock(30_000).getSnapshot()).toBe(T0 + 30_000);
+    expect(slow).not.toHaveBeenCalled();
+    a();
+    b();
+    c();
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("reads a fresh time after every consumer unmounted", () => {
-    const a = mount(30_000);
-    act(() => a.renderer.unmount());
+  it("reads a fresh time after every consumer unsubscribed", () => {
+    nowTickClock(45_000).subscribe(() => {})();
     vi.setSystemTime(T0 + 100_000);
-    const b = mount(30_000);
-    expect(b.last()).toBe(T0 + 100_000);
-    act(() => b.renderer.unmount());
+    const unsubscribe = nowTickClock(45_000).subscribe(() => {});
+    expect(nowTickClock(45_000).getSnapshot()).toBe(T0 + 100_000);
+    unsubscribe();
   });
 
   it("keeps the snapshot stable between ticks", () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const a = mount(30_000);
-    act(() => vi.advanceTimersByTime(10_000));
-    act(() => a.renderer.update(createElement("div")));
-    const messages = errorSpy.mock.calls.map((call) => String(call[0]));
-    expect(messages.filter((message) => message.includes("getSnapshot"))).toEqual([]);
-    act(() => a.renderer.unmount());
+    const clock = nowTickClock(20_000);
+    const unsubscribe = clock.subscribe(() => {});
+    const first = clock.getSnapshot();
+    vi.advanceTimersByTime(10_000);
+    expect(clock.getSnapshot()).toBe(first);
+    unsubscribe();
   });
 });

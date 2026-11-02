@@ -52,7 +52,7 @@ export interface PacingModel {
 }
 
 /** Three rows fit the 40px desktop title bar; more go to the popover only. */
-export const MAX_PACING_HEADER_ROWS = 3;
+const MAX_PACING_HEADER_ROWS = 3;
 
 const EMPTY_MODEL: PacingModel = { headerRows: [], popoverSections: [] };
 
@@ -120,8 +120,8 @@ export function buildPacingModel(input: {
 export type PacingLayout = "full" | "compact" | "hidden";
 // The full widget is ~324px wide and the compact one ~236px. Each threshold leaves the rest of
 // the header the room it had at the old 238px / 168px sizes (420 / 560).
-export const PACING_HIDE_BELOW_PX = 490;
-export const PACING_COMPACT_BELOW_PX = 650;
+const PACING_HIDE_BELOW_PX = 490;
+const PACING_COMPACT_BELOW_PX = 650;
 
 /** Layout from the border-box width of `<header data-chat-header>`; null = not measured yet. */
 export function pacingLayoutForHeaderWidth(headerWidthPx: number | null): PacingLayout {
@@ -134,7 +134,7 @@ export function pacingLayoutForHeaderWidth(headerWidthPx: number | null): Pacing
 export const PACING_RESERVE_CSS_VAR = "--pacing-widget-reserve";
 
 /** Minimum space between the widget and the breadcrumb or the header's right-side controls. */
-export const PACING_EDGE_GAP_PX = 16;
+const PACING_EDGE_GAP_PX = 16;
 
 /** Reserve for a widget laid out in flow at the header's right (the panel-header placement). */
 export function pacingReservePx(widgetWidthPx: number): number {
@@ -146,11 +146,11 @@ export function pacingReservePx(widgetWidthPx: number): number {
  * separator and a few words of thread title. Below it the title reads as a fragment, so the
  * widget moves right instead.
  */
-export const PACING_TITLE_MIN_PX = 240;
+const PACING_TITLE_MIN_PX = 240;
 /** ChatHeader's breadcrumb `pr-24`: toggle clearance that sits inside the published reserve. */
-export const CHAT_HEADER_TITLE_END_PAD_PX = 96;
+const CHAT_HEADER_TITLE_END_PAD_PX = 96;
 /** Space between a right-aligned widget and the toggles (the cluster's former gap-1 + mr-2). */
-export const PACING_CONTROLS_GAP_PX = 12;
+const PACING_CONTROLS_GAP_PX = 12;
 
 /** Measured in px; x positions are relative to the header's left border edge. */
 export interface PacingHeaderGeometry {
@@ -244,7 +244,7 @@ export function reducePacingPopover(
  * in the 52px web header, tightened to 3 x 13 = 39px in the 40px desktop title bar (`wco:`).
  * Full literal class strings so Tailwind emits them.
  */
-export const PACING_ROW_SPACING = {
+const PACING_ROW_SPACING = {
   spacious: { stack: "gap-1", row: "leading-4" },
   tight: { stack: "gap-0", row: "leading-4 wco:leading-3.25" },
 } as const;

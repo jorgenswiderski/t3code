@@ -1,5 +1,5 @@
 import type { ServerProviderUsageLimits } from "@t3tools/contracts";
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 import { useNowTick } from "~/hooks/useNowTick";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -21,15 +21,9 @@ import {
 } from "./pacingRows.logic";
 
 /**
- * Chat header usage pacing rows for the thread's provider. `headerRef` is `<header
- * data-chat-header>`: its width picks the layout, and the widget publishes the room it takes on
- * it as PACING_RESERVE_CSS_VAR so the breadcrumb (ChatHeader) truncates instead of overlapping.
- *
- * With `controlsRef` (the header's right-side toggles) the widget must be a direct child of the
- * header and positions itself there: centered, or against the toggles when centering does not fit
- * (resolvePacingHeaderPosition), or right-aligned if the toggles are not mounted. Without it, it
- * sits in flow at the right. Pixel offsets go straight to the DOM, so a header width animation
- * re-renders nothing unless the layout or alignment changes.
+ * Chat header usage pacing. Publishes its width on `headerRef` as PACING_RESERVE_CSS_VAR so the
+ * breadcrumb truncates instead of overlapping. With `controlsRef` it must be a direct child of the
+ * header and positions itself (resolvePacingHeaderPosition); offsets go straight to the DOM.
  */
 export const PacingWidget = memo(function PacingWidget(props: {
   readonly usageLimits: ServerProviderUsageLimits | undefined;
@@ -46,29 +40,16 @@ export const PacingWidget = memo(function PacingWidget(props: {
   const offHoursWeight = useClientSettings((settings) => settings.usagePacingOffHoursWeight);
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
 
-  const model = useMemo(
-    () =>
-      buildPacingModel({
-        usageLimits,
-        settings: { showSession, showWeekly, showModelScoped, workHours, workDays, offHoursWeight },
-        nowMs,
-        timestampFormat,
-      }),
-    [
-      usageLimits,
-      showSession,
-      showWeekly,
-      showModelScoped,
-      workHours,
-      workDays,
-      offHoursWeight,
-      nowMs,
-      timestampFormat,
-    ],
-  );
+  const model = buildPacingModel({
+    usageLimits,
+    settings: { showSession, showWeekly, showModelScoped, workHours, workDays, offHoursWeight },
+    nowMs,
+    timestampFormat,
+  });
 
   // Only the derived layout is state: an unchanged layout bails out of rendering.
   const [layout, setLayout] = useState<PacingLayout>("hidden");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the header element's width with a ResizeObserver to pick the layout
   useEffect(() => {
     const header = headerRef.current;
     if (!header) return;
@@ -88,6 +69,7 @@ export const PacingWidget = memo(function PacingWidget(props: {
   const [alignment, setAlignment] = useState<PacingHeaderPosition["alignment"] | null>(null);
   // Writes to <header>, which React does not own here, so it must clean up on unmount/hide.
   // A layout effect, so a positioned widget is placed before its first paint.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the header, toggles and widget DOM nodes, writes the widget's offset and the header's reserve CSS var, and removes the var on unmount
   useLayoutEffect(() => {
     const header = headerRef.current;
     const root = rootRef.current;

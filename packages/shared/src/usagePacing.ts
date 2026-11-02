@@ -16,28 +16,19 @@ import {
 } from "./model.ts";
 import { formatDuration } from "./usageLimits.ts";
 
-// ---- burn colour ladder -----------------------------------------------------------
-
 export type PaceTier = 0 | 1 | 2 | 3;
 
 export const BURN_TIER_YELLOW = 1.15;
 export const BURN_TIER_ORANGE = 1.3;
 
-// +1e-9 nudges a mathematically-exact tenths tie (e.g. 13.5) that floating point
-// computes one ULP low (13.499999999999998) back up to the tie before rounding, so it
-// lands on 14 as it should instead of silently falling to 13 and flipping a colour-tier
-// boundary. 1e-9 is far above float error (~1e-15) and far below the 0.5 tie gap, so it
-// cannot change any other rounding outcome.
+// +1e-9 pulls an exact tenths tie (13.5) that floats compute one ULP low back up to the
+// tie, so it rounds to 14 instead of flipping a colour-tier boundary. It is far above float
+// error and far below the 0.5 tie gap, so no other rounding outcome changes.
 export const roundBurn = (x: number): number => Math.round(x * 10 + 1e-9) / 10;
 
-// `greenCut` and `exponent` carry the session model's dynamic cutoffs, which widen the bands
-// early in a window when little has elapsed and the projection is correspondingly noisy.
-// The weekly model has no such correction and is the degenerate case: greenCut 1.0,
-// exponent 1.
-//
-// Callers pass the *rounded* burn. Tiering off the same number that is displayed is what
-// keeps the colour and the digits telling one story; tiering off the unrounded value can
-// print 1.1x in green because 1.05 was still under the cutoff.
+// `greenCut`/`exponent` are the session model's dynamic cutoffs (weekly: 1.0 and 1).
+// Callers must pass the *rounded* burn so the colour matches the displayed digits; the
+// unrounded value can print 1.1x in green because 1.05 was still under the cutoff.
 export function burnTier(burn: number, greenCut = 1.0, exponent = 1): PaceTier {
   const yellowCut =
     exponent === 1 ? BURN_TIER_YELLOW : Math.exp(Math.log(BURN_TIER_YELLOW) * exponent);
@@ -67,8 +58,6 @@ export const CONTEXT_TIER_COLORS: Readonly<Record<PaceTier, PaceTierColor>> = {
 export function formatBurn(burn: number): string {
   return `${burn.toFixed(1)}x`;
 }
-
-// ---- context tier -----------------------------------------------------------------
 
 function maxTier(a: PaceTier, b: PaceTier): PaceTier {
   return a >= b ? a : b;
@@ -102,8 +91,6 @@ export function contextFraction(usage: {
   const used = Number.isFinite(usage.usedTokens) && usage.usedTokens > 0 ? usage.usedTokens : 0;
   return Math.min(1, used / max);
 }
-
-// ---- work schedule ----------------------------------------------------------------
 
 export interface WorkHours {
   /** Minutes past local midnight, 0..1439. */
@@ -223,8 +210,6 @@ export function scheduleWeight(fromSec: number, toSec: number, schedule: WorkSch
   return total;
 }
 
-// ---- session and weekly burn (epoch seconds) ---------------------------------------
-
 export interface BurnResult {
   /** Rounded to one decimal (roundBurn). */
   readonly burn: number;
@@ -237,11 +222,9 @@ const MIN_OBS_SEC = 90;
 const FALLBACK_MIN_ELAPSED_SEC = 1800;
 
 /**
- * Port of the statusline's computeBurn: an exponentially recency-weighted rate over the
- * recent samples, falling back to the whole-window average. Deviations from the original:
- * zero samples fall through to the linear used/elapsed fallback instead of null (upstream
- * servers send no history); there is no upper `t <= now` sample filter (a sample's age is
- * clamped >= 0 so client clock skew cannot drop the newest sample); non-finite used -> null.
+ * Port of the statusline's computeBurn (recency-weighted rate, whole-window fallback).
+ * Zero samples use the linear used/elapsed fallback, not null; sample age is clamped >= 0
+ * (no `t <= now` filter) so clock skew cannot drop the newest sample; non-finite used -> null.
  */
 export function computeSessionBurn(input: {
   readonly nowSec: number;
@@ -343,8 +326,6 @@ export function computeWeeklyBurn(input: {
   return { burn, tier: burnTier(burn) };
 }
 
-// ---- clocks and formatters ---------------------------------------------------------
-
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 let localeUses12Hour: boolean | undefined;
@@ -409,8 +390,6 @@ export function formatTokenCount(tokens: number): string {
   if (tokens < 999_500) return `${compactUnit(tokens / 1000)}k`;
   return `${compactUnit(tokens / 1_000_000)}M`;
 }
-
-// ---- request identity and cache warmth -----------------------------------------------
 
 export interface RequestIdentity {
   readonly model?: string | undefined;
@@ -521,8 +500,6 @@ export function formatThreadContextTooltip(input: {
   return cache === null ? context : `${context} \u00b7 ${cache}`;
 }
 
-// ---- per-window pace --------------------------------------------------------------
-
 export interface PaceWindowInput {
   readonly kind: "session" | "weekly" | "monthly" | "other";
   readonly usedPercent: number;
@@ -569,12 +546,9 @@ function toSamples(
 }
 
 /**
- * session -> computeSessionBurn over history, tick = wall-clock elapsed fraction;
- * weekly -> computeWeeklyBurn with the schedule, tick = schedule-weighted fraction (the tick is
- *           drawn even while the 0.02 floor suppresses the burn);
- * monthly / other -> computeWeeklyBurn with schedule null, tick = wall-clock fraction.
- * Window length: windowDurationMins * 60, falling back to 18000 (session) or 604800 (others) when
- * the duration is missing, 0, non-finite or above 400 days.
+ * session uses computeSessionBurn; weekly uses the schedule (its tick is drawn even while the
+ * 0.02 floor suppresses the burn); monthly/other use computeWeeklyBurn with no schedule.
+ * Window length falls back to 18000s (session) or 604800s when missing, 0, non-finite or > 400 days.
  */
 export function computeWindowPace(
   window: PaceWindowInput,
@@ -610,8 +584,6 @@ export function computeWindowPace(
     resetsAtMs,
   };
 }
-
-// ---- roles and labels -------------------------------------------------------------
 
 export type PaceWindowRole = "session" | "weekly" | "modelScoped" | "other";
 

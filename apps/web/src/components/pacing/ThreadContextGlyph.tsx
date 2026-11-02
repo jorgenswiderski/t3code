@@ -1,6 +1,5 @@
 import type { ClientSettings, ModelSelection } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useMemo } from "react";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useNowTick } from "~/hooks/useNowTick";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
@@ -124,10 +123,7 @@ export function useThreadContextGlyphModel(
   nextSelection: ModelSelection | null | undefined,
 ): ThreadContextGlyphModel | null {
   const nowMs = useNowTick(30_000);
-  return useMemo(
-    () => resolveThreadContextGlyph(usage, nextSelection, nowMs),
-    [usage, nextSelection, nowMs],
-  );
+  return resolveThreadContextGlyph(usage, nextSelection, nowMs);
 }
 
 type GlyphThread = Pick<

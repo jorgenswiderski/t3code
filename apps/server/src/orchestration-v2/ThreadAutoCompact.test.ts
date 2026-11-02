@@ -204,7 +204,7 @@ it.layer(layerTest)("per-thread auto-compact", (it) => {
       yield* maintenance.rebuild;
       assert.deepEqual(yield* readValues(threadId), { thread: 300_000, shell: 300_000 });
 
-      yield* maintenance.compactEventStore;
+      yield* maintenance.compactEventStore();
       const remaining = yield* sql<{ readonly payload_json: string }>`
         SELECT payload_json FROM orchestration_events
         WHERE stream_id = ${threadId} AND event_type = 'thread.auto-compact-updated'

@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 
 /** Epoch-ms clock refreshed every `intervalMs`. One timer per distinct interval, shared by every
     consumer and stopped when the last one unsubscribes. */
-interface TickClock {
+export interface TickClock {
   value: number;
   timerId: ReturnType<typeof setInterval> | null;
   readonly listeners: Set<() => void>;
@@ -49,11 +49,17 @@ function createClock(intervalMs: number): TickClock {
   return clock;
 }
 
-export function useNowTick(intervalMs: number): number {
+/** The shared clock for `intervalMs`, created on first use. */
+export function nowTickClock(intervalMs: number): TickClock {
   let clock = clocks.get(intervalMs);
   if (!clock) {
     clock = createClock(intervalMs);
     clocks.set(intervalMs, clock);
   }
+  return clock;
+}
+
+export function useNowTick(intervalMs: number): number {
+  const clock = nowTickClock(intervalMs);
   return useSyncExternalStore(clock.subscribe, clock.getSnapshot, clock.getSnapshot);
 }

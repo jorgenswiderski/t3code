@@ -18,10 +18,11 @@ import {
 import * as Haptics from "expo-haptics";
 import * as Option from "effect/Option";
 import { useCallback, useMemo, useState } from "react";
-import { Alert, TextInput, View } from "react-native";
+import { TextInput, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { SegmentedControl } from "../../components/SegmentedControl";
+import { AppText as Text } from "../../components/ui/AppText";
+import * as Dialog from "../../components/ui/Dialog";
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { useThreadShell } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
@@ -114,7 +115,7 @@ function ExistingThreadAutoCompact(props: {
         failure instanceof Error && failure.message.length > 0
           ? failure.message
           : "The auto-compact setting could not be changed.";
-      Alert.alert("Could not update auto-compact", message);
+      Dialog.alert("Could not update auto-compact", message);
       return message;
     },
     [environmentId, setAutoCompact, threadId],
@@ -208,6 +209,7 @@ function AutoCompactBody(props: {
       <View className="mx-4 gap-2 overflow-hidden rounded-2xl bg-grouped-card p-3">
         <SegmentedControl
           size="compact"
+          variant="card"
           options={model.options}
           selected={selected}
           onSelect={(value) => {

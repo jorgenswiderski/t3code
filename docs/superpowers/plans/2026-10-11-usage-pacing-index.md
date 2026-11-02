@@ -753,7 +753,7 @@ Semantics:
   threads; the Claude adapter also only reports top-level usage).
 - **`requestIdentity`** on Claude's top-level assistant usage:
   - `model` = `resolveClaudeModelSlug(subagentModelCatalog, <trimmed model with a trailing
-"[...]" suffix removed by /\[.*$/, the same regex as P1's sameRequestIdentity>)`
+    "[...]" suffix removed by /\[.*$/, the same regex as P1's sameRequestIdentity>)`
     (the canonical catalog slug, the same vocabulary as `ModelSelection.model`; the adapter
     already resolves subagent models this way via `canonicalClaudeSubagentModel`, line
     ~3030), omitted when the trimmed model is empty;

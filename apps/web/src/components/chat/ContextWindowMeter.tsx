@@ -13,7 +13,7 @@ import { AutoCompactControl } from "./AutoCompactControl";
 import type { ModelSelection, TimestampFormat } from "@t3tools/contracts";
 import type { RequestIdentity } from "@t3tools/shared/usagePacing";
 import { Minimize2Icon } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { PACE_TIER_CLASSES } from "../pacing/paceTierClasses";
 import { ThreadContextGlyph, useThreadContextGlyphModel } from "../pacing/ThreadContextGlyph";
 import {
@@ -72,21 +72,15 @@ export function ContextWindowMeter(props: {
     compactDisabled,
     compactDisabledReason,
   } = props;
-  const glyphUsage = useMemo(
-    () => (usage === null ? null : composerGlyphUsage(usage, liveUsage)),
-    [usage, liveUsage],
-  );
+  const glyphUsage = usage === null ? null : composerGlyphUsage(usage, liveUsage);
   const liveModel = useThreadContextGlyphModel(glyphUsage, nextModelSelection);
   const emptyWindowTokens = autoCompact?.windowTokens ?? null;
-  const emptyModel = useMemo(
-    () => emptyThreadContextGlyphModel(emptyWindowTokens),
-    [emptyWindowTokens],
-  );
+  const emptyModel = emptyThreadContextGlyphModel(emptyWindowTokens);
   const [open, setOpen] = useState(false);
   const customInputFocusedRef = useRef(false);
-  const onCustomInputFocusChange = useCallback((focused: boolean) => {
+  const onCustomInputFocusChange = (focused: boolean) => {
     customInputFocusedRef.current = focused;
-  }, []);
+  };
   const model = usage === null ? (autoCompact ? emptyModel : null) : liveModel;
   if (model === null) return null;
   const isEmpty = usage === null;
@@ -272,7 +266,6 @@ export function ContextWindowMeter(props: {
   );
 }
 
-/** Holds the meter's footprint while a thread's activities are still loading. */
 export function ContextWindowMeterPlaceholder() {
   return <span aria-hidden="true" className="size-7 shrink-0" />;
 }

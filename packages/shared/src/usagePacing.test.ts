@@ -166,8 +166,6 @@ describe("contextFraction", () => {
   });
 });
 
-// ---- work schedule ----------------------------------------------------------------
-
 /** Local-time epoch seconds; evaluate inside the test body after any TZ stub. */
 const localSec = (y: number, m: number, d: number, h = 0, min = 0) =>
   Math.trunc(new Date(y, m, d, h, min, 0, 0).getTime() / 1000);
@@ -402,8 +400,6 @@ describe("scheduleWeight with configurable work days", () => {
     ).toBeCloseTo(303840, 6);
   });
 });
-
-// ---- session and weekly burn --------------------------------------------------------
 
 describe("computeSessionBurn", () => {
   const NOW = 1_750_000_000;
@@ -747,8 +743,6 @@ describe("computeWeeklyBurn", () => {
   });
 });
 
-// ---- clocks and formatters ----------------------------------------------------------
-
 describe("formatClockTime", () => {
   const at = (h: number, m: number) => new Date(2026, 6, 6, h, m).getTime();
 
@@ -835,8 +829,6 @@ describe("formatTokenCount", () => {
     expect(formatTokenCount(tokens)).toBe(expected);
   });
 });
-
-// ---- request identity, cache warmth, tooltip ----------------------------------------
 
 describe("request identity", () => {
   const selection = (options?: Parameters<typeof createModelSelection>[2]) =>
@@ -970,8 +962,6 @@ describe("formatThreadContextTooltip", () => {
     expect(formatThreadContextTooltip({ ...base, ...overrides })).toBe(expected);
   });
 });
-
-// ---- per-window pace, roles and labels ------------------------------------------------
 
 describe("computeWindowPace", () => {
   const T = new Date(2026, 6, 6, 12).getTime();

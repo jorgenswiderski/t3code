@@ -29,7 +29,6 @@ export interface CompiledClaudeModelSelection {
   readonly queryIdentity: string;
 }
 
-/** Compile every Claude model option at the provider boundary. */
 export function compileClaudeModelSelection(
   selection: ModelSelection,
   catalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -68,7 +67,7 @@ export function compileClaudeModelSelection(
  * as a constant from 100k to 1M windows (per-thread auto-compact spike, CLI
  * 2.1.306 / SDK 0.3.276). The only place this buffer appears.
  */
-export const CLAUDE_AUTO_COMPACT_BUFFER_TOKENS = 33_000;
+const CLAUDE_AUTO_COMPACT_BUFFER_TOKENS = 33_000;
 /** SDK-accepted autoCompactWindow bounds; anything else is silently ignored by the CLI. */
 export const CLAUDE_AUTO_COMPACT_WINDOW_MIN = 100_000;
 export const CLAUDE_AUTO_COMPACT_WINDOW_MAX = 1_000_000;
@@ -91,7 +90,7 @@ export function claudeInstanceAutoCompactTokens(
 }
 
 /** User-facing tokens → SDK `autoCompactWindow`, clamped to the range the SDK accepts. */
-export function claudeAutoCompactWindowForTokens(tokens: number): number {
+function claudeAutoCompactWindowForTokens(tokens: number): number {
   return Math.min(
     Math.max(tokens + CLAUDE_AUTO_COMPACT_BUFFER_TOKENS, CLAUDE_AUTO_COMPACT_WINDOW_MIN),
     CLAUDE_AUTO_COMPACT_WINDOW_MAX,

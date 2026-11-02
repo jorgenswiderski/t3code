@@ -1,8 +1,8 @@
+import type { ThreadStructure, ThreadStructureTurnItem } from "@t3tools/client-runtime/state/shell";
 import type {
   OrchestrationV2ProviderTurn,
   OrchestrationV2ProviderTurnTokenUsage,
   OrchestrationV2ProviderThread,
-  OrchestrationV2TurnItem,
   ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -24,10 +24,11 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
   readonly updatedAt: string;
 };
 
-/** Newest usage report across a thread's provider turns. Snapshots order turns
-    by provider thread, not time, so pick by timestamp. */
+/** Newest report by timestamp; snapshots order turns by provider thread. */
 export function latestProviderTurnTokenUsage(
   turns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "tokenUsage">>,
+  projection?: Pick<ThreadStructure, "thread" | "contextTransfers"> | null,
+  providerThread?: Pick<OrchestrationV2ProviderThread, "contextUsage"> | null,
 ): OrchestrationV2ProviderTurnTokenUsage | null {
   let latest: OrchestrationV2ProviderTurnTokenUsage | null = null;
   for (const { tokenUsage } of turns) {
@@ -37,7 +38,20 @@ export function latestProviderTurnTokenUsage(
       latest = tokenUsage;
     }
   }
-  return latest;
+  if (latest !== null || projection == null || providerThread?.contextUsage != null) return latest;
+  const forkedFrom = projection.thread.forkedFrom;
+  if (forkedFrom?.type !== "run") return null;
+  return (
+    projection.contextTransfers.find(
+      (transfer) =>
+        transfer.type === "fork" &&
+        transfer.targetThreadId === projection.thread.id &&
+        transfer.sourceThreadId === forkedFrom.threadId &&
+        transfer.sourcePoint.runId === forkedFrom.runId &&
+        transfer.sourceProviderInstanceId === projection.thread.modelSelection.instanceId &&
+        (transfer.status === "pending" || transfer.resolution?.strategy === "native_fork"),
+    )?.sourceTokenUsage ?? null
+  );
 }
 
 type ProviderThreadContext = Pick<OrchestrationV2ProviderThread, "contextUsage" | "updatedAt">;
@@ -61,7 +75,7 @@ export function contextWindowLiveReport(
 /** Ranked as contextWindowLiveReport; falls back to the last compaction item. */
 export function deriveLatestContextWindowSnapshot(
   entries: ReadonlyArray<{
-    readonly item: OrchestrationV2TurnItem;
+    readonly item: ThreadStructureTurnItem;
   }>,
   windowUsage?: OrchestrationV2ProviderTurnTokenUsage | null,
   providerThread?: ProviderThreadContext | null,
@@ -95,7 +109,7 @@ export function deriveLatestContextWindowSnapshot(
       toolUses: null,
       durationMs: null,
       compactsAutomatically: true,
-      autoCompactThreshold: null,
+      autoCompactThreshold: liveUsage.autoCompactThreshold ?? null,
       cost: null,
       updatedAt: liveUsage.updatedAt,
     };
@@ -191,7 +205,7 @@ export function formatContextWindowTokens(value: number | null): string {
   if (value < 10_000) {
     return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
   }
-  if (value < 1_000_000) {
+  if (value < 999_500) {
     return `${Math.round(value / 1_000)}k`;
   }
   return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;

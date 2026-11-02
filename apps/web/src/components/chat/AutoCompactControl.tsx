@@ -4,7 +4,8 @@ import {
   type ThreadAutoCompactView,
 } from "@t3tools/client-runtime/thread-auto-compact";
 import type { ServerProviderThreadAutoCompact } from "@t3tools/contracts";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { Input } from "../ui/input";
 import { Separator } from "../ui/separator";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
@@ -37,11 +38,9 @@ function CustomTokensInput(props: {
   const [error, setError] = useState<string | null>(null);
 
   // The input can unmount while focused (a committed value remounts it); release the focus hold.
-  const latestOnEditingChange = useRef(onEditingChange);
-  useEffect(() => {
-    latestOnEditingChange.current = onEditingChange;
-  });
-  useEffect(() => () => latestOnEditingChange.current?.(false), []);
+  const releaseEditing = useStableCallback(() => onEditingChange?.(false));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the popover's focus hold on unmount, which runs no blur handler
+  useEffect(() => releaseEditing, [releaseEditing]);
 
   const commit = () => {
     if (text.trim().length === 0) {
