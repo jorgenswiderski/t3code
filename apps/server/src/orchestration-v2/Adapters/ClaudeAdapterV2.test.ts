@@ -4778,6 +4778,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.lengthOf(harness.processQueues, 2);
         assert.equal(openedWindow(harness.getOpenedOptions()), 233_000);
+        assert.deepEqual(harness.liveSelectionChanges, []);
         yield* harness.until(() =>
           providerThreadUpdates(harness.events, mark).some(
             (thread) => thread.appliedAutoCompact?.tokens === 200_000,

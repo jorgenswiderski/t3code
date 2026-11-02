@@ -9936,7 +9936,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existing.selection.queryIdentity !== compiledSelection.queryIdentity &&
             canApplyClaudeSelectionLive(existing.selection, compiledSelection) &&
             (existing.selection.apiModelId === compiledSelection.apiModelId ||
-              existing.openedPermissionMode === queryPolicy.permissionMode)
+              existing.openedPermissionMode === queryPolicy.permissionMode) &&
+            // Skip the live apply when the stale-window check below replaces this process anyway.
+            (existing.autoCompactWindow === autoCompact.sdkWindow ||
+              (yield* liveProcessRunsBackgroundWork(existing)))
           ) {
             const live = existing;
             yield* live.query.setModel(compiledSelection.apiModelId).pipe(
