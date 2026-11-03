@@ -4,7 +4,10 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import type { Dispatch } from "react";
 import type { ComposerHandleRef } from "../../composerHandleContext";
-import type { selectThreadTerminalUiState } from "../../terminalUiStateStore";
+import {
+  selectTerminalEnvironmentId,
+  type selectThreadTerminalUiState,
+} from "../../terminalUiStateStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useThreadTerminalActions } from "../terminal/useThreadTerminalActions";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -167,11 +170,17 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const toggleTerminalVisibilityStable = useStableCallback(toggleTerminalVisibility);
   const splitTerminal = (direction: "horizontal" | "vertical" = "horizontal") => {
     if (!activeThreadRef || hasReachedSplitLimit) return;
+    const terminalEnvironmentId = selectTerminalEnvironmentId(
+      terminalUiState,
+      activeThreadRef,
+      terminalUiState.activeTerminalId,
+    );
     const launched = terminalActions.launchTerminal({
+      environmentId: terminalEnvironmentId,
       place: (terminalId) =>
         direction === "vertical"
-          ? storeSplitTerminalVertical(activeThreadRef, terminalId)
-          : storeSplitTerminal(activeThreadRef, terminalId),
+          ? storeSplitTerminalVertical(activeThreadRef, terminalId, terminalEnvironmentId)
+          : storeSplitTerminal(activeThreadRef, terminalId, terminalEnvironmentId),
     });
     if (!launched) return;
     focusTerminal(activeThreadRef, launched.terminalId);
@@ -180,8 +189,14 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const splitTerminalStable = useStableCallback(splitTerminal);
   const createNewTerminal = () => {
     if (!activeThreadRef) return;
+    const terminalEnvironmentId = selectTerminalEnvironmentId(
+      terminalUiState,
+      activeThreadRef,
+      terminalUiState.activeTerminalId,
+    );
     const launched = terminalActions.launchTerminal({
-      place: (terminalId) => storeNewTerminal(activeThreadRef, terminalId),
+      environmentId: terminalEnvironmentId,
+      place: (terminalId) => storeNewTerminal(activeThreadRef, terminalId, terminalEnvironmentId),
     });
     if (!launched) return;
     focusTerminal(activeThreadRef, launched.terminalId);
@@ -221,9 +236,10 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         : findReusableProjectScriptTerminal({
             // Server sessions cover drawer terminals this client has not opened yet, such as a
             // worktree setup shell; the helper drops the panel-owned ones.
+            // Script launch overrides only apply on the thread's environment.
             drawerTerminalIds: [
               ...new Set([...terminalUiState.terminalIds, ...activeServerOrderedTerminalIds]),
-            ],
+            ].filter((terminalId) => !(terminalId in terminalUiState.terminalEnvironmentIdById)),
             activeTerminalId: terminalUiState.activeTerminalId,
             panelTerminalIds,
             runningTerminalIds,

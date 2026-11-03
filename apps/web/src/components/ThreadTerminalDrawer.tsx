@@ -24,6 +24,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
   type ContextMenuItem,
+  type EnvironmentId,
   type ProviderInstanceId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
@@ -87,6 +88,7 @@ import { readEnvironmentScope } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { useEnvironmentScope } from "../state/session";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
+import type { TerminalEnvironmentTarget } from "./terminal/terminalEnvironmentTargets";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { observeResize } from "../lib/observeResize";
@@ -453,7 +455,9 @@ export function shouldHandleTerminalExit(
 
 interface TerminalViewportProps {
   advancedTypography: boolean;
+  /** Focus and UI state stay keyed by the thread; the session lives on `environmentId`. */
   threadRef: ScopedThreadRef;
+  environmentId: EnvironmentId;
   threadId: ThreadId;
   terminalId: string;
   terminalLabel: string;
@@ -470,6 +474,7 @@ interface TerminalViewportProps {
 }
 
 interface TerminalLaunchLocation {
+  readonly environmentId?: EnvironmentId;
   readonly cwd: string;
   readonly worktreePath?: string | null;
   readonly runtimeEnv?: Record<string, string>;
@@ -477,7 +482,7 @@ interface TerminalLaunchLocation {
 
 export function TerminalViewport(props: TerminalViewportProps) {
   const sessionKey = JSON.stringify([
-    props.threadRef.environmentId,
+    props.environmentId,
     props.threadId,
     props.terminalId,
     props.cwd,
@@ -490,6 +495,7 @@ export function TerminalViewport(props: TerminalViewportProps) {
 function TerminalSessionViewport({
   advancedTypography,
   threadRef,
+  environmentId,
   threadId,
   terminalId,
   terminalLabel,
@@ -507,7 +513,6 @@ function TerminalSessionViewport({
   const autoFocusedRef = useRef(false);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
   const visibleRef = useRef(visible);
-  const environmentId = threadRef.environmentId;
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const hasTerminalWriteAccess = useEffectEvent(() =>
     readEnvironmentScope(environmentId, AuthTerminalOperateScope),
@@ -611,6 +616,12 @@ function TerminalSessionViewport({
       }
       if (version > 0) synchronizedStatusRef.current = status;
     },
+  );
+  // Previews belong to the thread's environment, which cannot reach another machine's localhost.
+  const canOpenLinkInPreview = useEffectEvent(
+    () =>
+      environmentId === threadRef.environmentId &&
+      readEnvironmentScope(environmentId, AuthPreviewOperateScope),
   );
   const openLinkInPreview = useEffectEvent(
     (url: string, forceBrowser: boolean, fallbackToBrowser: () => void) =>
@@ -992,7 +1003,7 @@ function TerminalSessionViewport({
               );
             });
           };
-          if (!readEnvironmentScope(environmentId, AuthPreviewOperateScope)) {
+          if (!canOpenLinkInPreview()) {
             fallbackToBrowser();
             return;
           }
@@ -1118,7 +1129,7 @@ function TerminalSessionViewport({
         mount.focus({ preventScroll: true });
       }
     };
-  }, [cwd, environmentId, terminalId]);
+  }, [cwd, terminalId]);
 
   const attachContainer = (mount: HTMLDivElement) => {
     containerRef.current = mount;
@@ -1184,6 +1195,9 @@ interface ThreadTerminalDrawerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalLabelsById?: ReadonlyMap<string, string>;
   terminalLaunchLocationsById?: ReadonlyMap<string, TerminalLaunchLocation>;
+  environmentTargets?: ReadonlyArray<TerminalEnvironmentTarget>;
+  activeTerminalEnvironmentId?: EnvironmentId;
+  onNewTerminalOnEnvironment?: (environmentId: EnvironmentId) => void;
 }
 
 interface TerminalActionButtonProps {
@@ -1292,6 +1306,7 @@ function TerminalSplitPanes({
               <TerminalViewport
                 advancedTypography={advancedTypography}
                 threadRef={threadRef}
+                environmentId={terminalLaunchLocation.environmentId ?? threadRef.environmentId}
                 threadId={threadId}
                 terminalId={terminalId}
                 terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
@@ -1441,7 +1456,6 @@ export default function ThreadTerminalDrawer({
   terminalLabelsById,
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
-  const canOperateTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
   const terminalArea = workspaceAreaProps("terminal", 5, "Terminal");
   const isPanel = mode === "panel";
   const [advancedTypography] = useLocalStorage(
@@ -1593,6 +1607,13 @@ export default function ThreadTerminalDrawer({
       ...(worktreePath !== undefined ? { worktreePath } : {}),
       ...(runtimeEnv ? { runtimeEnv } : {}),
     };
+  const terminalEnvironmentIdOf = (terminalId: string) =>
+    resolveTerminalLaunchLocation(terminalId).environmentId ?? threadRef.environmentId;
+  // Split and new open on the active terminal's environment.
+  const canOperateTerminal = useEnvironmentScope(
+    terminalEnvironmentIdOf(resolvedActiveTerminalId),
+    AuthTerminalOperateScope,
+  );
   const splitTerminalActionLabel = hasReachedSplitLimit
     ? `Split Terminal Horizontally (max ${MAX_TERMINALS_PER_GROUP} per group)`
     : splitShortcutLabel
@@ -1622,10 +1643,11 @@ export default function ThreadTerminalDrawer({
     onNewTerminal();
   };
   const confirmCloseTerminal = (terminalId: string) => {
-    if (!canOperateTerminal) return;
+    const environmentId = terminalEnvironmentIdOf(terminalId);
+    if (!readEnvironmentScope(environmentId, AuthTerminalOperateScope)) return;
     const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
     void confirmTerminalClose([label]).then((confirmed) => {
-      if (confirmed && readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)) {
+      if (confirmed && readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
         onCloseTerminal(terminalId);
       }
     });

@@ -19,10 +19,20 @@ import {
   useRightPanelStore,
   type RightPanelSurface,
 } from "../rightPanelStore";
-import { useProject, useQuietThreadShell } from "../state/entities";
-import { useEnvironmentScope } from "../state/session";
-import { useKnownTerminalSessions } from "../state/terminalSessions";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useProject, useProjects, useQuietThreadShell } from "../state/entities";
+import { useConnectedEnvironmentIds, useEnvironments } from "../state/environments";
+import { useEnvironmentScope, useEnvironmentsWithScope } from "../state/session";
+import {
+  useKnownTerminalSessions,
+  useKnownTerminalSessionsAcross,
+} from "../state/terminalSessions";
+import {
+  selectTerminalEnvironmentId,
+  selectThreadTerminalUiState,
+  useTerminalUiStateStore,
+} from "../terminalUiStateStore";
+import { drawerTerminalIdsToReconcile } from "./terminal/drawerTerminalReconcile";
+import { resolveTerminalEnvironmentTargets } from "./terminal/terminalEnvironmentTargets";
 import { useThreadTerminalActions } from "./terminal/useThreadTerminalActions";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { resolveTerminalWorktreePath } from "./ChatView.logic";
@@ -33,41 +43,8 @@ export type PersistentTerminalLaunchContext = {
   readonly worktreePath: string | null;
 };
 
-function terminalIdListsEqual(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-  if (left.length === 0) {
-    return true;
-  }
-  const sortedLeft = left.toSorted((a, b) => a.localeCompare(b));
-  const sortedRight = right.toSorted((a, b) => a.localeCompare(b));
-  for (let index = 0; index < sortedLeft.length; index += 1) {
-    if (sortedLeft[index] !== sortedRight[index]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/** Server sessions lag terminal.open; reconciling strict subsets would discard new split layouts. */
-function serverTerminalIdsStrictSubsetOfClient(
-  serverIds: readonly string[],
-  clientIds: readonly string[],
-): boolean {
-  if (serverIds.length >= clientIds.length || clientIds.length === 0) {
-    return false;
-  }
-  const clientSet = new Set(clientIds);
-  for (const id of serverIds) {
-    if (!clientSet.has(id)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 interface TerminalLaunchLocationWithEnv {
+  readonly environmentId?: EnvironmentId;
   readonly cwd: string;
   readonly worktreePath: string | null;
   readonly runtimeEnv: Record<string, string>;
@@ -114,19 +91,55 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
   );
   const visible = active && terminalUiState.terminalOpen;
-  const knownTerminalSessions = useKnownTerminalSessions({
-    environmentId: threadRef.environmentId,
-    threadId,
-  });
+  const environmentIds = [
+    ...new Set([
+      threadRef.environmentId,
+      ...Object.values(terminalUiState.terminalEnvironmentIdById),
+    ]),
+  ];
+  const sessionsByEnvironment = useKnownTerminalSessionsAcross({ environmentIds, threadId });
+  const terminalEnvironmentIdOf = (terminalId: string) =>
+    selectTerminalEnvironmentId(terminalUiState, threadRef, terminalId);
+  const activeTerminalEnvironmentId = terminalEnvironmentIdOf(terminalUiState.activeTerminalId);
   const panelSurfaces = useRightPanelStore(
     (state) => selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces,
   );
   const panelTerminalIds = new Set(
     panelSurfaces.flatMap((surface) => (surface.kind === "terminal" ? surface.terminalIds : [])),
   );
-  const drawerTerminalSessions =
-    knownTerminalSessions?.filter((session) => !panelTerminalIds.has(session.target.terminalId)) ??
-    [];
+  const clientTerminalIds = new Set(terminalUiState.terminalIds);
+  // A session belongs to the drawer when it sits on its tab's environment; unknown ids only come from the thread's.
+  const drawerTerminalSessions = sessionsByEnvironment.flatMap((sessions, index) => {
+    const environmentId = environmentIds[index]!;
+    return (sessions ?? []).filter((session) => {
+      const terminalId = session.target.terminalId;
+      if (panelTerminalIds.has(terminalId)) return false;
+      return clientTerminalIds.has(terminalId)
+        ? terminalEnvironmentIdOf(terminalId) === environmentId
+        : environmentId === threadRef.environmentId;
+    });
+  });
+  const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const projects = useProjects();
+  const { environments } = useEnvironments();
+  const connectedEnvironmentIds = useConnectedEnvironmentIds();
+  const operableEnvironmentIds = useEnvironmentsWithScope(
+    connectedEnvironmentIds.map((environmentId) => ({ environmentId })),
+    AuthTerminalOperateScope,
+  );
+  const environmentTargets = project
+    ? resolveTerminalEnvironmentTargets({
+        threadEnvironmentId: threadRef.environmentId,
+        threadProject: project,
+        threadWorktreePath: worktreePath,
+        projects,
+        environments,
+        connectedEnvironmentIds: new Set(connectedEnvironmentIds),
+        operableEnvironmentIds,
+      })
+    : [];
+  const otherEnvironmentLocation = (environmentId: EnvironmentId) =>
+    environmentTargets.find((target) => target.environmentId === environmentId)?.location ?? null;
   const terminalLabelsById = new Map<string, string>();
   for (const session of drawerTerminalSessions) {
     terminalLabelsById.set(
@@ -138,14 +151,45 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   for (const session of drawerTerminalSessions) {
     const summary = session.state.summary;
     if (!project || !summary) continue;
+    const environmentId = session.target.environmentId;
+    if (environmentId !== threadRef.environmentId) {
+      terminalLaunchLocationsById.set(session.target.terminalId, {
+        environmentId,
+        cwd: summary.cwd,
+        worktreePath: summary.worktreePath,
+        runtimeEnv: projectScriptRuntimeEnv({
+          project: { cwd: otherEnvironmentLocation(environmentId)?.projectRoot ?? summary.cwd },
+          worktreePath: summary.worktreePath,
+        }),
+      });
+      continue;
+    }
     const worktreePathForLaunch =
       launchContext !== null ? launchContext.worktreePath : summary.worktreePath;
     terminalLaunchLocationsById.set(session.target.terminalId, {
+      environmentId,
       cwd: launchContext?.cwd ?? summary.cwd,
       worktreePath: worktreePathForLaunch,
       runtimeEnv: projectScriptRuntimeEnv({
         project: { cwd: project.workspaceRoot },
         worktreePath: worktreePathForLaunch,
+      }),
+    });
+  }
+  // Tabs on another environment attach there even before its session list catches up.
+  for (const [terminalId, environmentId] of Object.entries(
+    terminalUiState.terminalEnvironmentIdById,
+  )) {
+    if (terminalLaunchLocationsById.has(terminalId)) continue;
+    const location = otherEnvironmentLocation(environmentId);
+    if (!location) continue;
+    terminalLaunchLocationsById.set(terminalId, {
+      environmentId,
+      cwd: location.cwd,
+      worktreePath: location.worktreePath,
+      runtimeEnv: projectScriptRuntimeEnv({
+        project: { cwd: location.projectRoot },
+        worktreePath: location.worktreePath,
       }),
     });
   }
@@ -162,19 +206,16 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
   const reconcileTerminalIds = useTerminalUiStateStore((state) => state.reconcileTerminalIds);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the terminal UI store's ids with the server's terminal list when they diverge
+  const reconciledTerminalIds = drawerTerminalIdsToReconcile({
+    sessionsByEnvironment,
+    panelTerminalIds,
+    clientIds: terminalUiState.terminalIds,
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the terminal UI store's ids with the servers' terminal lists when they diverge
   useEffect(() => {
-    if (terminalIdListsEqual(serverOrderedTerminalIds, terminalUiState.terminalIds)) {
-      return;
-    }
-    if (
-      serverTerminalIdsStrictSubsetOfClient(serverOrderedTerminalIds, terminalUiState.terminalIds)
-    ) {
-      return;
-    }
-    reconcileTerminalIds(threadRef, serverOrderedTerminalIds);
-  }, [reconcileTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds, threadRef]);
-  const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+    if (reconciledTerminalIds === null) return;
+    reconcileTerminalIds(threadRef, reconciledTerminalIds);
+  }, [reconcileTerminalIds, reconciledTerminalIds, threadRef]);
   const effectiveWorktreePath = launchContext !== null ? launchContext.worktreePath : worktreePath;
   const cwd =
     launchContext?.cwd ??
@@ -195,24 +236,41 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     storeSetTerminalHeight(threadRef, height);
   };
 
-  const launchDrawerTerminal = (place: (terminalId: string) => void) => {
-    if (!cwd) return;
+  const launchDrawerTerminal = (
+    place: (terminalId: string, environmentId: EnvironmentId) => void,
+    environmentId: EnvironmentId = activeTerminalEnvironmentId,
+  ) => {
+    const location =
+      environmentId === threadRef.environmentId
+        ? cwd
+          ? { cwd, worktreePath: effectiveWorktreePath }
+          : null
+        : otherEnvironmentLocation(environmentId);
+    if (!location) return;
     const launched = terminalActions.launchTerminal({
-      place,
-      location: { cwd, worktreePath: effectiveWorktreePath },
+      place: (terminalId) => place(terminalId, environmentId),
+      location,
+      environmentId,
     });
     if (!launched) return;
     if (visible) focusTerminal(threadRef, launched.terminalId);
     void launched.result;
   };
   const splitTerminal = useStableCallback(() =>
-    launchDrawerTerminal((terminalId) => storeSplitTerminal(threadRef, terminalId)),
+    launchDrawerTerminal((terminalId, environmentId) =>
+      storeSplitTerminal(threadRef, terminalId, environmentId),
+    ),
   );
   const splitTerminalVertical = useStableCallback(() =>
-    launchDrawerTerminal((terminalId) => storeSplitTerminalVertical(threadRef, terminalId)),
+    launchDrawerTerminal((terminalId, environmentId) =>
+      storeSplitTerminalVertical(threadRef, terminalId, environmentId),
+    ),
   );
-  const createNewTerminal = useStableCallback(() =>
-    launchDrawerTerminal((terminalId) => storeNewTerminal(threadRef, terminalId)),
+  const placeNewTerminal = (terminalId: string, environmentId: EnvironmentId) =>
+    storeNewTerminal(threadRef, terminalId, environmentId);
+  const createNewTerminal = useStableCallback(() => launchDrawerTerminal(placeNewTerminal));
+  const createTerminalOnEnvironment = useStableCallback((environmentId: EnvironmentId) =>
+    launchDrawerTerminal(placeNewTerminal, environmentId),
   );
 
   const activateTerminal = (terminalId: string) => {
@@ -221,7 +279,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   };
 
   const closeTerminal = useStableCallback((terminalId: string) => {
-    if (!terminalActions.canWrite()) return;
+    if (!terminalActions.canWrite(terminalEnvironmentIdOf(terminalId))) return;
     terminalActions.closeTerminalSession(terminalId);
     storeCloseTerminal(threadRef, terminalId);
     if (visible) focusActiveDrawerTerminal(threadRef);
@@ -277,6 +335,9 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
           onAddTerminalContext={handleAddTerminalContext}
           terminalLabelsById={terminalLabelsById}
           terminalLaunchLocationsById={terminalLaunchLocationsById}
+          environmentTargets={environmentTargets}
+          activeTerminalEnvironmentId={activeTerminalEnvironmentId}
+          onNewTerminalOnEnvironment={createTerminalOnEnvironment}
         />
       </div>
     </div>
