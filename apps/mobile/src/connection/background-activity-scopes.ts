@@ -1,5 +1,11 @@
 import type { EnvironmentRpcSubscriptionObservation } from "@t3tools/client-runtime/rpc";
-import { type BackgroundScope, type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import {
+  type BackgroundScope,
+  type EnvironmentId,
+  ORCHESTRATION_V2_WS_METHODS,
+  ThreadId,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 interface RetainedScope {
@@ -39,6 +45,12 @@ function scopeForSubscription(
 ): BackgroundScope | null {
   if (observation.method === WS_METHODS.subscribeResourceTelemetry) {
     return { type: "diagnostics" };
+  }
+  if (observation.method === ORCHESTRATION_V2_WS_METHODS.subscribeThread) {
+    const input = observation.input as { readonly threadId?: unknown };
+    return typeof input.threadId === "string"
+      ? { type: "thread", threadId: ThreadId.make(input.threadId) }
+      : null;
   }
   if (observation.method !== WS_METHODS.subscribeVcsStatus) {
     return null;

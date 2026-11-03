@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as TestClock from "effect/testing/TestClock";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
@@ -176,6 +177,68 @@ it.effect("reads checks and PR state without diff, mergeability, or permission r
       retryAt: 120_000,
     });
   }),
+);
+
+it.effect(
+  "reads sync summaries without checks or permissions, re-reading stats when commits move",
+  () =>
+    Effect.gen(function* () {
+      const pullRequestAt = (head: string) =>
+        Result.getOrThrow(
+          decodePullRequestJson(`{
+          "id": 1, "title": "Summary", "state": "OPEN",
+          "source": { "branch": { "name": "feature" }, "commit": { "hash": "${head}" } },
+          "destination": { "branch": { "name": "main" }, "commit": { "hash": "base1" } },
+          "created_on": "2026-09-16T00:00:00Z", "updated_on": "2026-09-16T00:00:00Z",
+          "links": { "html": { "href": "https://bitbucket.org/acme/web/pull-requests/1" } }
+        }`),
+        );
+      let head = "head1";
+      const reads = { pullRequest: 0, diffStat: 0, mergeability: 0 };
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({
+            getPullRequest: () =>
+              Effect.sync(() => {
+                reads.pullRequest += 1;
+                return pullRequestAt(head);
+              }),
+            getDiffStat: () =>
+              Effect.sync(() => {
+                reads.diffStat += 1;
+                return { additions: 3, deletions: 1, changedFiles: 2 };
+              }),
+            getMergeability: () =>
+              Effect.sync(() => {
+                reads.mergeability += 1;
+                return "conflicting" as const;
+              }),
+          }),
+        ),
+      );
+      const read = provider.getChangeRequestSummary;
+      if (read === undefined) return yield* Effect.die("summary read missing");
+      const input = { cwd: "/repo", repository: "acme/web", host: "bitbucket.org", number: 1 };
+
+      expect(yield* read(input)).toMatchObject({
+        state: "open",
+        additions: 3,
+        deletions: 1,
+        changedFiles: 2,
+        mergeability: "conflicting",
+      });
+      yield* read(input);
+      expect(reads).toEqual({ pullRequest: 2, diffStat: 1, mergeability: 1 });
+
+      head = "head2";
+      yield* read(input);
+      expect(reads).toEqual({ pullRequest: 3, diffStat: 2, mergeability: 2 });
+
+      // The destination can move and conflict with the same commits.
+      yield* TestClock.adjust("10 minutes");
+      yield* read(input);
+      expect(reads).toEqual({ pullRequest: 4, diffStat: 3, mergeability: 3 });
+    }),
 );
 
 describe("bitbucketProviderFailure", () => {

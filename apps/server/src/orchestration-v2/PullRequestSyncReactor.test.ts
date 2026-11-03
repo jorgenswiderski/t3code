@@ -35,6 +35,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
@@ -187,6 +188,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const stackCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
   const stateChanges = yield* Queue.unbounded<ThreadPullRequestKey>();
+  const foregroundThreads = yield* Ref.make<ReadonlySet<ThreadId>>(new Set());
 
   const summary: PullRequestService.PullRequestService["Service"]["summary"] = (
     input,
@@ -265,6 +267,12 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
       dispatch,
       streamDomainEvents: Stream.fromQueue(domainEvents),
     }),
+    Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+      shouldRunScopeWork: (scope) =>
+        Ref.get(foregroundThreads).pipe(
+          Effect.map((threads) => scope.type === "thread" && threads.has(scope.threadId)),
+        ),
+    }),
     Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
     Layer.succeed(Crypto.Crypto, testCrypto),
   );
@@ -280,6 +288,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     stackCalls,
     domainEvents,
     stateChanges,
+    foregroundThreads,
     layer: PullRequestSyncReactor.layer.pipe(Layer.provide(layerDependencies)),
   };
 });
@@ -797,6 +806,7 @@ describe("PullRequestSyncReactor", () => {
         });
 
         yield* Effect.gen(function* () {
+          yield* Ref.set(fixture.foregroundThreads, new Set([ThreadId.make("one")]));
           const reactor = yield* startAndSweep(fixture);
           const firstSweep = yield* Ref.get(fixture.syncCommands);
           assert.strictEqual(firstSweep.length, 1);
@@ -863,6 +873,57 @@ describe("PullRequestSyncReactor", () => {
             snapshot.threads.map((thread) => thread.pullRequests[0]?.snapshot?.state),
             ["open", "open"],
           );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("reads open links every sweep while a foreground client has their thread open", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("focused", {
+              pullRequests: [makeLink(1, {}), makeLink(4, { state: "closed" })],
+            }),
+            makeThread("opened-later", { pullRequests: [makeLink(2, {})] }),
+            makeThread("background", { pullRequests: [makeLink(3, {})] }),
+          ]),
+          summary: (input) =>
+            Effect.succeed(makeSummary(input, { state: input.number === 4 ? "closed" : "open" })),
+        });
+
+        yield* Effect.gen(function* () {
+          yield* Ref.set(fixture.foregroundThreads, new Set([ThreadId.make("focused")]));
+          const reactor = yield* startAndSweep(fixture);
+          const readsBySweep: Array<ReadonlyArray<number>> = [];
+          const recordSweep = Effect.gen(function* () {
+            readsBySweep.push(
+              (yield* Ref.get(fixture.summaryCalls)).map((call) => call.number).toSorted(),
+            );
+            yield* Ref.set(fixture.summaryCalls, []);
+          });
+          yield* recordSweep;
+          yield* sweepAgain(fixture, reactor);
+          yield* recordSweep;
+          yield* Ref.set(
+            fixture.foregroundThreads,
+            new Set([ThreadId.make("focused"), ThreadId.make("opened-later")]),
+          );
+          for (let minute = 2; minute <= 15; minute++) {
+            yield* sweepAgain(fixture, reactor);
+            yield* recordSweep;
+          }
+
+          // Closed links and threads no client has open wait for the 15-minute cadence.
+          assert.deepStrictEqual(readsBySweep, [
+            [1, 2, 3, 4],
+            [1],
+            ...Array.from({ length: 13 }, () => [1, 2]),
+            [1, 2, 3, 4],
+          ]);
+          assert.deepStrictEqual(yield* Ref.get(fixture.syncCommands), []);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -1308,6 +1369,7 @@ describe("PullRequestSyncReactor", () => {
         });
 
         yield* Effect.gen(function* () {
+          yield* Ref.set(fixture.foregroundThreads, new Set([ThreadId.make("one")]));
           const reactor = yield* startAndSweep(fixture);
           yield* applyRecordedSyncs(fixture);
 
@@ -1392,11 +1454,18 @@ describe("PullRequestSyncReactor", () => {
         });
 
         yield* Effect.gen(function* () {
-          yield* startAndSweep(fixture);
+          const reactor = yield* startAndSweep(fixture);
 
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.syncCommands)).map((command) => command.number),
             [8],
+          );
+          // A failed read waits for the cadence instead of retrying every sweep.
+          yield* Ref.set(fixture.summaryCalls, []);
+          yield* sweepAgain(fixture, reactor);
+          assert.notInclude(
+            (yield* Ref.get(fixture.summaryCalls)).map((call) => call.number),
+            7,
           );
         }).pipe(Effect.provide(fixture.layer));
       }),

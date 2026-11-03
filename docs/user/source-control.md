@@ -279,8 +279,9 @@ links. Clicking a badge with more than one review opens the **Linked pull reques
 Linking and unlinking are available in the web and desktop clients.
 
 The **Linked pull requests** panel lists every review and groups stacks. Unlink a review from its
-row menu. An unlinked stack layer stays out of later syncs. Open linked reviews refresh on the server;
-closed reviews refresh periodically so reopening one on the host is detected. Merged reviews refresh
+row menu. An unlinked stack layer stays out of later syncs. Open linked reviews refresh on the server about
+once a minute while you're viewing their thread and every 15 minutes otherwise; closed reviews
+refresh every 15 minutes so reopening one on the host is detected. Merged reviews refresh
 when requested. A settled thread's reviews stop refreshing until you unsettle it. With **Auto-settle merged threads** enabled, a thread can settle after every linked
 review is terminal. An open or unsynced link keeps it active.
 
