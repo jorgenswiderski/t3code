@@ -24,12 +24,14 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitManager from "../git/GitManager.ts";
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -38,12 +40,9 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { isTerminalRunStatus } from "./ThreadManagementService.ts";
 
+// Hosts cap reads per account (Bitbucket: ~1,000/hour), so only open pull requests in a thread a
+// foreground client has open are read every sweep; requested refreshes still read at once.
 const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
-// Every server polls every open linked pull request, and most of them sit untouched for days.
-// One nobody has updated for QUIET_AFTER_MS is read on the quiet cadence instead of each sweep;
-// requested refreshes, watches and a host CLI's merge command still read it at once.
-const QUIET_AFTER_MS = 30 * 60 * 1_000;
-const QUIET_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
 
 const isChangeRequestCloseCommand = (command: string) =>
   sourceControlDefinitions.definitions.some(
@@ -317,6 +316,7 @@ export const make = Effect.gen(function* () {
   const pullRequests = yield* PullRequestService.PullRequestService;
   const git = yield* GitManager.GitManager;
   const crypto = yield* Crypto.Crypto;
+  const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
 
   const lastSyncedAt = new Map<string, number>();
   const requested = new Set<string>();
@@ -329,9 +329,13 @@ export const make = Effect.gen(function* () {
   // Pause per project and host because credentials are project-specific; leave paused PRs due until reset.
   const pausedUntil = new Map<string, number>();
 
-  const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
-    if (requested.has(key) || retryStacks.has(key)) return true;
-    if (entries.some((entry) => entry.link.snapshot === null)) return true;
+  const isDue = (
+    key: string,
+    entries: ReadonlyArray<LinkEntry>,
+    nowMs: number,
+  ): Effect.Effect<boolean> => {
+    if (requested.has(key) || retryStacks.has(key)) return Effect.succeed(true);
+    if (entries.some((entry) => entry.link.snapshot === null)) return Effect.succeed(true);
     const active = entries.filter((entry) => isUnsettled(entry.thread));
     // Merged snapshots without mergedAt cannot settle threads; reread slowly until supplied.
     if (
@@ -339,19 +343,14 @@ export const make = Effect.gen(function* () {
         (entry) => entry.link.snapshot?.state === "merged" && entry.link.snapshot.mergedAt != null,
       )
     ) {
-      return false;
+      return Effect.succeed(false);
     }
     const last = lastSyncedAt.get(key);
-    const sinceLastMs = last === undefined ? Number.POSITIVE_INFINITY : nowMs - last;
+    if (last === undefined || nowMs - last >= SLOW_SYNC_INTERVAL_MS) return Effect.succeed(true);
     const open = active.filter((entry) => entry.link.snapshot?.state === "open");
-    if (open.length > 0) {
-      const quiet = open.every((entry) => {
-        const updatedAt = entry.link.snapshot?.updatedAt;
-        return updatedAt != null && nowMs - Date.parse(updatedAt) >= QUIET_AFTER_MS;
-      });
-      return !quiet || sinceLastMs >= QUIET_SYNC_INTERVAL_MS;
-    }
-    return sinceLastMs >= SLOW_SYNC_INTERVAL_MS;
+    return Effect.findFirst(open, (entry) =>
+      backgroundPolicy.shouldRunScopeWork({ type: "thread", threadId: entry.thread.id }),
+    ).pipe(Effect.map(Option.isSome));
   };
 
   const logSkipped =
@@ -560,6 +559,8 @@ export const make = Effect.gen(function* () {
       syncGroup(key, entries).pipe(
         Effect.catchCause((cause) => {
           if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
+          // A failed read waits for the cadence too, or a broken link is read every sweep.
+          lastSyncedAt.set(key, nowMs);
           const retryAt = rateLimitRetryAt(cause);
           if (retryAt !== undefined) {
             pausedUntil.set(pauseKey, Math.max(retryAt, pausedUntil.get(pauseKey) ?? 0));
@@ -574,19 +575,15 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       groups,
       ([key, entries]) => {
-        if (!((scope === "all" || requested.has(key)) && isDue(key, entries, nowMs))) {
-          return Effect.void;
-        }
+        if (scope !== "all" && !requested.has(key)) return Effect.void;
         const first = entries[0]!;
         const pauseKey = `${first.thread.projectId}\0${normalizeThreadPullRequestKey(first.link).host}`;
-        // Check pauses at each read so changes during the sweep apply immediately.
-        return Clock.currentTimeMillis.pipe(
-          Effect.flatMap((startedAtMs) =>
-            (pausedUntil.get(pauseKey) ?? 0) > startedAtMs
-              ? Effect.void
-              : readGroup(key, entries, pauseKey),
-          ),
-        );
+        return Effect.gen(function* () {
+          if (!(yield* isDue(key, entries, nowMs))) return;
+          // Check pauses at each read so changes during the sweep apply immediately.
+          if ((pausedUntil.get(pauseKey) ?? 0) > (yield* Clock.currentTimeMillis)) return;
+          yield* readGroup(key, entries, pauseKey);
+        });
       },
       // Match summary batch width so GitHub reads coalesce into one request.
       { concurrency: 25, discard: true },

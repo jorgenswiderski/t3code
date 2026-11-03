@@ -1,5 +1,10 @@
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
-import { EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ORCHESTRATION_V2_WS_METHODS,
+  ThreadId,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -37,6 +42,31 @@ describe("wasRecentlyInteracted", () => {
       expect(retainedBackgroundScopes(environmentId)).toEqual([scope]);
 
       yield* release;
+      expect(retainedBackgroundScopes(environmentId)).toEqual([]);
+    }),
+  );
+
+  it.effect("reports an open thread subscription as a thread scope", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("environment-thread-scope-test");
+      const threadId = ThreadId.make("thread-1");
+      const input = { threadId, afterSequence: 4 };
+      const releaseFirst = yield* observeBackgroundActivitySubscription({
+        environmentId,
+        method: ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+        input,
+      });
+      const releaseSecond = yield* observeBackgroundActivitySubscription({
+        environmentId,
+        method: ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+        input,
+      });
+      expect(retainedBackgroundScopes(environmentId)).toEqual([{ type: "thread", threadId }]);
+
+      yield* releaseFirst;
+      expect(retainedBackgroundScopes(environmentId)).toEqual([{ type: "thread", threadId }]);
+
+      yield* releaseSecond;
       expect(retainedBackgroundScopes(environmentId)).toEqual([]);
     }),
   );

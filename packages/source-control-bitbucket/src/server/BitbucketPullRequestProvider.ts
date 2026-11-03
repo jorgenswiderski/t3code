@@ -1,5 +1,8 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
@@ -32,6 +35,9 @@ const CAPABILITIES: PullRequestCapabilities = {
   // Bitbucket PR properties are shared, not per-reader viewed marks.
   viewedFiles: "environment",
 };
+
+const REVISION_DETAILS_TTL = Duration.minutes(10);
+const REVISION_DETAILS_CAPACITY = 256;
 
 const UNAVAILABLE_REQUIREMENT = {
   missing: "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
@@ -81,6 +87,13 @@ export function bitbucketProviderFailure(
     return { reason: "not-found" };
   }
   return { reason: "failed" };
+}
+
+function terminalTimes(pullRequest: BitbucketPullRequest) {
+  return {
+    mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
+    closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
+  };
 }
 
 function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeRequest {
@@ -144,6 +157,25 @@ export const make = Effect.gen(function* () {
       BitbucketDiffCommitError: recover,
     });
   };
+
+  const readRevisionDetails = (target: { readonly repository: string; readonly number: number }) =>
+    Effect.all(
+      [api.getDiffStat(target), recoverRead(api.getMergeability(target), "unknown" as const)],
+      { concurrency: 2 },
+    );
+  // Sync can read a pull request every minute against Bitbucket's hourly per-account quota,
+  // so stats and conflicts are read again only once the commits move.
+  const revisionDetails = yield* Cache.makeWith(
+    (key: string) => {
+      const [repository, number] = JSON.parse(key) as [string, number];
+      return readRevisionDetails({ repository, number });
+    },
+    {
+      capacity: REVISION_DETAILS_CAPACITY,
+      // The destination branch can move into conflict without changing the commits read.
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? REVISION_DETAILS_TTL : Duration.zero),
+    },
+  );
 
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("bitbucket"),
@@ -223,8 +255,7 @@ export const make = Effect.gen(function* () {
             deletions: diffStat.deletions,
             changedFiles: diffStat.changedFiles,
             body: pullRequest.body,
-            mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
-            closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
+            ...terminalTimes(pullRequest),
             reviewers: pullRequest.reviewers,
             checks,
             // Bitbucket exposes no strategy permissions; unsupported strategies fail at merge.
@@ -232,6 +263,36 @@ export const make = Effect.gen(function* () {
             viewerPermissions: bitbucketViewerPermissions({ canWrite }),
           }),
         ),
+      );
+    },
+
+    getChangeRequestSummary: (input) => {
+      const target = { repository: input.repository, number: input.number };
+      return api.getPullRequest(target).pipe(
+        Effect.flatMap((pullRequest) =>
+          (pullRequest.headSha === null
+            ? readRevisionDetails(target)
+            : Cache.get(
+                revisionDetails,
+                JSON.stringify([
+                  target.repository,
+                  target.number,
+                  pullRequest.headSha,
+                  pullRequest.baseSha,
+                ]),
+              )
+          ).pipe(
+            Effect.map(([diffStat, mergeability]) => ({
+              ...toChangeRequest(pullRequest),
+              ...terminalTimes(pullRequest),
+              mergeability,
+              additions: diffStat.additions,
+              deletions: diffStat.deletions,
+              changedFiles: diffStat.changedFiles,
+            })),
+          ),
+        ),
+        Effect.mapError(fail("getChangeRequestSummary")),
       );
     },
 

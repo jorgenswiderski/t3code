@@ -1,4 +1,9 @@
-import { EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ORCHESTRATION_V2_WS_METHODS,
+  ThreadId,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -34,6 +39,31 @@ describe("mobile background activity", () => {
       ]);
 
       yield* release;
+      expect(retainedMobileBackgroundScopes(environmentId)).toEqual([]);
+    }),
+  );
+
+  it.effect("reports an open thread subscription as a thread scope", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("mobile-thread-scope-environment");
+      const threadId = ThreadId.make("thread-1");
+      const input = { threadId, afterSequence: 4 };
+      const releaseFirst = yield* observeMobileBackgroundActivitySubscription({
+        environmentId,
+        method: ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+        input,
+      });
+      const releaseSecond = yield* observeMobileBackgroundActivitySubscription({
+        environmentId,
+        method: ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+        input,
+      });
+      expect(retainedMobileBackgroundScopes(environmentId)).toEqual([{ type: "thread", threadId }]);
+
+      yield* releaseFirst;
+      expect(retainedMobileBackgroundScopes(environmentId)).toEqual([{ type: "thread", threadId }]);
+
+      yield* releaseSecond;
       expect(retainedMobileBackgroundScopes(environmentId)).toEqual([]);
     }),
   );
