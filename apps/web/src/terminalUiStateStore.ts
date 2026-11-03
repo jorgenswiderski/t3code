@@ -1,5 +1,5 @@
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { type ScopedThreadRef } from "@t3tools/contracts";
+import { type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
@@ -17,6 +17,8 @@ interface ThreadTerminalUiState {
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
   activeTerminalGroupId: string;
+  /** Tabs not on the thread's own environment; an absent key means the thread's environment. */
+  terminalEnvironmentIdById: Record<string, EnvironmentId>;
 }
 
 const TERMINAL_UI_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
@@ -38,9 +40,12 @@ export function migratePersistedTerminalUiStateStoreState(
   const persistedUiStateByThreadKey =
     candidate.terminalUiStateByThreadKey ?? candidate.terminalStateByThreadKey ?? {};
   const terminalUiStateByThreadKey = Object.fromEntries(
-    Object.entries(persistedUiStateByThreadKey).filter(([threadKey]) =>
-      parseScopedThreadKey(threadKey),
-    ),
+    Object.entries(persistedUiStateByThreadKey)
+      .filter(([threadKey]) => parseScopedThreadKey(threadKey))
+      .map(([threadKey, state]) => [
+        threadKey,
+        { ...state, terminalEnvironmentIdById: state.terminalEnvironmentIdById ?? {} },
+      ]),
   );
 
   return { terminalUiStateByThreadKey };
@@ -158,6 +163,15 @@ function terminalGroupsEqual(left: ThreadTerminalGroup[], right: ThreadTerminalG
   return true;
 }
 
+function environmentIdMapsEqual(
+  left: Record<string, EnvironmentId>,
+  right: Record<string, EnvironmentId>,
+): boolean {
+  const leftKeys = Object.keys(left);
+  if (leftKeys.length !== Object.keys(right).length) return false;
+  return leftKeys.every((key) => left[key] === right[key]);
+}
+
 function threadTerminalUiStateEqual(
   left: ThreadTerminalUiState,
   right: ThreadTerminalUiState,
@@ -168,7 +182,8 @@ function threadTerminalUiStateEqual(
     left.activeTerminalId === right.activeTerminalId &&
     left.activeTerminalGroupId === right.activeTerminalGroupId &&
     arraysEqual(left.terminalIds, right.terminalIds) &&
-    terminalGroupsEqual(left.terminalGroups, right.terminalGroups)
+    terminalGroupsEqual(left.terminalGroups, right.terminalGroups) &&
+    environmentIdMapsEqual(left.terminalEnvironmentIdById, right.terminalEnvironmentIdById)
   );
 }
 
@@ -179,6 +194,7 @@ const DEFAULT_THREAD_TERMINAL_UI_STATE: ThreadTerminalUiState = Object.freeze({
   activeTerminalId: "",
   terminalGroups: [],
   activeTerminalGroupId: "",
+  terminalEnvironmentIdById: {},
 });
 
 function createDefaultThreadTerminalUiState(): ThreadTerminalUiState {
@@ -186,6 +202,7 @@ function createDefaultThreadTerminalUiState(): ThreadTerminalUiState {
     ...DEFAULT_THREAD_TERMINAL_UI_STATE,
     terminalIds: [...DEFAULT_THREAD_TERMINAL_UI_STATE.terminalIds],
     terminalGroups: copyTerminalGroups(DEFAULT_THREAD_TERMINAL_UI_STATE.terminalGroups),
+    terminalEnvironmentIdById: {},
   };
 }
 
@@ -207,6 +224,12 @@ function normalizeThreadTerminalUiState(state: ThreadTerminalUiState): ThreadTer
   const activeGroupIdFromTerminal =
     terminalGroups.find((group) => group.terminalIds.includes(activeTerminalId))?.id ?? null;
 
+  const terminalEnvironmentIdById = Object.fromEntries(
+    Object.entries(state.terminalEnvironmentIdById).filter(([terminalId]) =>
+      nextTerminalIds.includes(terminalId),
+    ),
+  );
+
   const normalized: ThreadTerminalUiState = {
     terminalOpen: state.terminalOpen,
     terminalHeight:
@@ -218,6 +241,7 @@ function normalizeThreadTerminalUiState(state: ThreadTerminalUiState): ThreadTer
     terminalGroups,
     activeTerminalGroupId:
       activeGroupIdFromState ?? activeGroupIdFromTerminal ?? terminalGroups[0]?.id ?? "",
+    terminalEnvironmentIdById,
   };
   return threadTerminalUiStateEqual(state, normalized) ? state : normalized;
 }
@@ -248,12 +272,19 @@ function upsertTerminalIntoGroups(
   terminalId: string,
   mode: "split" | "new",
   splitDirection: "horizontal" | "vertical" = "horizontal",
+  environmentId: EnvironmentId | null = null,
 ): ThreadTerminalUiState {
   const normalized = normalizeThreadTerminalUiState(state);
   const effectiveMode: "split" | "new" = normalized.terminalIds.length === 0 ? "new" : mode;
   if (!isValidTerminalId(terminalId)) {
     return normalized;
   }
+
+  const { [terminalId]: _previousEnvironmentId, ...otherEnvironmentIds } =
+    normalized.terminalEnvironmentIdById;
+  const terminalEnvironmentIdById = environmentId
+    ? { ...otherEnvironmentIds, [terminalId]: environmentId }
+    : otherEnvironmentIds;
 
   const isNewTerminal = !normalized.terminalIds.includes(terminalId);
   const terminalIds = isNewTerminal
@@ -282,6 +313,7 @@ function upsertTerminalIntoGroups(
       activeTerminalId: terminalId,
       terminalGroups,
       activeTerminalGroupId: nextGroupId,
+      terminalEnvironmentIdById,
     });
   }
 
@@ -336,6 +368,7 @@ function upsertTerminalIntoGroups(
     activeTerminalId: terminalId,
     terminalGroups,
     activeTerminalGroupId: destinationGroup.id,
+    terminalEnvironmentIdById,
   });
 }
 
@@ -363,15 +396,17 @@ function splitThreadTerminal(
   state: ThreadTerminalUiState,
   terminalId: string,
   direction: "horizontal" | "vertical" = "horizontal",
+  environmentId: EnvironmentId | null = null,
 ): ThreadTerminalUiState {
-  return upsertTerminalIntoGroups(state, terminalId, "split", direction);
+  return upsertTerminalIntoGroups(state, terminalId, "split", direction, environmentId);
 }
 
 function newThreadTerminal(
   state: ThreadTerminalUiState,
   terminalId: string,
+  environmentId: EnvironmentId | null = null,
 ): ThreadTerminalUiState {
-  return upsertTerminalIntoGroups(state, terminalId, "new");
+  return upsertTerminalIntoGroups(state, terminalId, "new", "horizontal", environmentId);
 }
 
 function setThreadActiveTerminal(
@@ -440,6 +475,7 @@ function closeThreadTerminal(
     activeTerminalId: nextActiveTerminalId,
     terminalGroups,
     activeTerminalGroupId: nextActiveTerminalGroupId,
+    terminalEnvironmentIdById: normalized.terminalEnvironmentIdById,
   });
 }
 
@@ -467,6 +503,21 @@ function reconcileThreadTerminalSessionIds(
     terminalGroups,
     activeTerminalGroupId: activeGroupIdFromTerminal ?? terminalGroups[0]?.id ?? "",
   });
+}
+
+export function selectTerminalEnvironmentId(
+  state: ThreadTerminalUiState,
+  threadRef: ScopedThreadRef,
+  terminalId: string,
+): EnvironmentId {
+  return state.terminalEnvironmentIdById[terminalId] ?? threadRef.environmentId;
+}
+
+function nonThreadEnvironmentId(
+  threadRef: ScopedThreadRef,
+  environmentId: EnvironmentId | undefined,
+): EnvironmentId | null {
+  return environmentId && environmentId !== threadRef.environmentId ? environmentId : null;
 }
 
 export function selectThreadTerminalUiState(
@@ -557,9 +608,21 @@ interface TerminalUiStateStoreState {
   suppressedTerminalIdsByThreadKey: Record<string, string[]>;
   setTerminalOpen: (threadRef: ScopedThreadRef, open: boolean) => void;
   setTerminalHeight: (threadRef: ScopedThreadRef, height: number) => void;
-  splitTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
-  splitTerminalVertical: (threadRef: ScopedThreadRef, terminalId: string) => void;
-  newTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
+  splitTerminal: (
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+    environmentId?: EnvironmentId,
+  ) => void;
+  splitTerminalVertical: (
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+    environmentId?: EnvironmentId,
+  ) => void;
+  newTerminal: (
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+    environmentId?: EnvironmentId,
+  ) => void;
   ensureTerminal: (
     threadRef: ScopedThreadRef,
     terminalId: string,
@@ -631,21 +694,41 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
         },
         setTerminalHeight: (threadRef, height) =>
           updateTerminal(threadRef, (state) => setThreadTerminalHeight(state, height)),
-        splitTerminal: (threadRef, terminalId) =>
-          updateTerminal(threadRef, (state) => splitThreadTerminal(state, terminalId), {
-            terminalId,
-            suppressed: false,
-          }),
-        splitTerminalVertical: (threadRef, terminalId) =>
-          updateTerminal(threadRef, (state) => splitThreadTerminal(state, terminalId, "vertical"), {
-            terminalId,
-            suppressed: false,
-          }),
-        newTerminal: (threadRef, terminalId) =>
-          updateTerminal(threadRef, (state) => newThreadTerminal(state, terminalId), {
-            terminalId,
-            suppressed: false,
-          }),
+        splitTerminal: (threadRef, terminalId, environmentId) =>
+          updateTerminal(
+            threadRef,
+            (state) =>
+              splitThreadTerminal(
+                state,
+                terminalId,
+                "horizontal",
+                nonThreadEnvironmentId(threadRef, environmentId),
+              ),
+            { terminalId, suppressed: false },
+          ),
+        splitTerminalVertical: (threadRef, terminalId, environmentId) =>
+          updateTerminal(
+            threadRef,
+            (state) =>
+              splitThreadTerminal(
+                state,
+                terminalId,
+                "vertical",
+                nonThreadEnvironmentId(threadRef, environmentId),
+              ),
+            { terminalId, suppressed: false },
+          ),
+        newTerminal: (threadRef, terminalId, environmentId) =>
+          updateTerminal(
+            threadRef,
+            (state) =>
+              newThreadTerminal(
+                state,
+                terminalId,
+                nonThreadEnvironmentId(threadRef, environmentId),
+              ),
+            { terminalId, suppressed: false },
+          ),
         ensureTerminal: (threadRef, terminalId, options) =>
           updateTerminal(
             threadRef,
@@ -761,7 +844,7 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
     },
     {
       name: TERMINAL_UI_STATE_STORAGE_KEY,
-      version: 4,
+      version: 5,
       storage: createJSONStorage(createTerminalUiStateStorage),
       migrate: migratePersistedTerminalUiStateStoreState,
       partialize: (state) => ({
