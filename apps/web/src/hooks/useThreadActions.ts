@@ -30,6 +30,7 @@ import { environmentServerConfigsAtom } from "../state/server";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { orchestrationEnvironment } from "../state/orchestration";
 import { projectEnvironment } from "../state/projects";
+import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
@@ -46,7 +47,7 @@ import {
 } from "../state/entities";
 import { useUiStateStore } from "../uiStateStore";
 import { clearThreadPreviewState } from "../previewStateStore";
-import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
@@ -319,6 +320,7 @@ export function useThreadActions() {
     (store) => store.clearProjectDraftThreadById,
   );
   const clearTerminalUiState = useTerminalUiStateStore((state) => state.clearTerminalUiState);
+  const closeTerminal = useAtomCommand(terminalEnvironment.close, { reportFailure: false });
   const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
   const router = useRouter();
   const handleNewThread = useNewThreadHandler();
@@ -549,6 +551,17 @@ export function useThreadActions() {
       scopeProjectRef(threadRef.environmentId, thread.projectId),
       threadRef,
     );
+    // Sessions on other environments are not owned by the deleted thread's server.
+    const { terminalEnvironmentIdById } = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      threadRef,
+    );
+    for (const [terminalId, environmentId] of Object.entries(terminalEnvironmentIdById)) {
+      void closeTerminal({
+        environmentId,
+        input: { threadId: threadRef.threadId, terminalId, deleteHistory: true },
+      });
+    }
     clearTerminalUiState(threadRef);
     clearThreadPreviewState(threadRef);
 

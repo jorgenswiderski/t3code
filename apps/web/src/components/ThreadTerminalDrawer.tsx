@@ -25,6 +25,7 @@ import {
   AuthTerminalOperateScope,
   type ContextMenuItem,
   type EnvironmentId,
+  type EnvironmentMachineKind,
   type ProviderInstanceId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
@@ -88,7 +89,11 @@ import { readEnvironmentScope } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { useEnvironmentScope } from "../state/session";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
+import { TerminalEnvironmentMenu } from "./terminal/TerminalEnvironmentMenu";
 import type { TerminalEnvironmentTarget } from "./terminal/terminalEnvironmentTargets";
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { useEnvironmentMachines } from "../state/environments";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { observeResize } from "../lib/observeResize";
@@ -1337,6 +1342,7 @@ function TerminalSidebarGroup({
   terminalLabelById,
   closeShortcutLabel,
   canOperateTerminal,
+  resolveTabEnvironment,
   onActiveTerminalChange,
   onCloseTerminal,
 }: {
@@ -1346,6 +1352,9 @@ function TerminalSidebarGroup({
   terminalLabelById: ReadonlyMap<string, string>;
   closeShortcutLabel: string | undefined;
   canOperateTerminal: boolean;
+  resolveTabEnvironment: (
+    terminalId: string,
+  ) => { readonly kind: EnvironmentMachineKind; readonly label: string } | null;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
 }) {
@@ -1391,6 +1400,7 @@ function TerminalSidebarGroup({
           const closeTerminalLabel = `Close ${terminalLabel}${
             isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""
           }`;
+          const tabEnvironment = resolveTabEnvironment(terminalId);
           return (
             <div
               key={terminalId}
@@ -1419,6 +1429,22 @@ function TerminalSidebarGroup({
               >
                 <span className="truncate">{terminalLabel}</span>
               </button>
+              {tabEnvironment ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        role="img"
+                        aria-label={`Runs on ${tabEnvironment.label}`}
+                        className="flex shrink-0"
+                      />
+                    }
+                  >
+                    <EnvironmentMachineIcon kind={tabEnvironment.kind} className="size-3" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="left">{tabEnvironment.label}</TooltipPopup>
+                </Tooltip>
+              ) : null}
             </div>
           );
         })}
@@ -1455,6 +1481,9 @@ export default function ThreadTerminalDrawer({
   keybindings,
   terminalLabelsById,
   terminalLaunchLocationsById,
+  environmentTargets,
+  activeTerminalEnvironmentId,
+  onNewTerminalOnEnvironment,
 }: ThreadTerminalDrawerProps) {
   const terminalArea = workspaceAreaProps("terminal", 5, "Terminal");
   const isPanel = mode === "panel";
@@ -1614,6 +1643,34 @@ export default function ThreadTerminalDrawer({
     terminalEnvironmentIdOf(resolvedActiveTerminalId),
     AuthTerminalOperateScope,
   );
+  const machineByEnvironmentId = useEnvironmentMachines();
+  const activePillEnvironmentId =
+    activeTerminalEnvironmentId ?? terminalEnvironmentIdOf(resolvedActiveTerminalId);
+  const resolveTabEnvironment = (terminalId: string) => {
+    const environmentId = terminalEnvironmentIdOf(terminalId);
+    if (environmentId === threadRef.environmentId) return null;
+    return {
+      kind: machineByEnvironmentId.get(environmentId) ?? "server",
+      label:
+        environmentTargets?.find((target) => target.environmentId === environmentId)?.label ??
+        "Another environment",
+    };
+  };
+  const environmentPill =
+    !isPanel &&
+    onNewTerminalOnEnvironment &&
+    environmentTargets &&
+    environmentTargets.length >= 2 ? (
+      <TerminalEnvironmentMenu
+        targets={environmentTargets}
+        activeEnvironmentId={activePillEnvironmentId}
+        machineByEnvironmentId={machineByEnvironmentId}
+        onSelect={onNewTerminalOnEnvironment}
+        disabled={
+          !environmentTargets.some((target) => target.location && !target.unavailableReason)
+        }
+      />
+    ) : null;
   const splitTerminalActionLabel = hasReachedSplitLimit
     ? `Split Terminal Horizontally (max ${MAX_TERMINALS_PER_GROUP} per group)`
     : splitShortcutLabel
@@ -1809,6 +1866,12 @@ export default function ThreadTerminalDrawer({
       {!hasTerminalSidebar && (
         <div className="pointer-events-none absolute right-2 top-2 z-20">
           <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background shadow-xs">
+            {environmentPill ? (
+              <>
+                <div className="flex max-w-36 min-w-0 self-stretch">{environmentPill}</div>
+                <div className="h-4 w-px bg-border/80" />
+              </>
+            ) : null}
             <TerminalActionButton
               disabled={!canOperateTerminal}
               className={`p-1 text-foreground/90 transition-colors ${
@@ -1883,8 +1946,13 @@ export default function ThreadTerminalDrawer({
 
           {hasTerminalSidebar && (
             <aside className="flex w-36 min-w-36 flex-col border border-border/70 bg-muted/10">
-              <div className="flex h-[22px] items-stretch justify-end border-b border-border/70">
-                <div className="inline-flex h-full items-stretch">
+              <div className="flex h-[22px] items-stretch justify-between border-b border-border/70">
+                {environmentPill ? (
+                  <div className="flex min-w-0 flex-1 border-r border-border/70">
+                    {environmentPill}
+                  </div>
+                ) : null}
+                <div className="inline-flex h-full shrink-0 items-stretch">
                   <TerminalActionButton
                     disabled={!canOperateTerminal}
                     className={`inline-flex h-full items-center px-1 text-foreground/90 transition-colors ${
@@ -1938,6 +2006,7 @@ export default function ThreadTerminalDrawer({
                     terminalLabelById={terminalLabelById}
                     closeShortcutLabel={closeShortcutLabel}
                     canOperateTerminal={canOperateTerminal}
+                    resolveTabEnvironment={resolveTabEnvironment}
                     onActiveTerminalChange={onActiveTerminalChange}
                     onCloseTerminal={confirmCloseTerminal}
                   />
