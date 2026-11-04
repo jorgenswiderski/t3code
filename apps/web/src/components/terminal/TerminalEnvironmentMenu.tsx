@@ -73,11 +73,23 @@ export function TerminalEnvironmentMenu(props: {
                       <span className="text-muted-foreground text-xs">current</span>
                     ) : null}
                   </span>
-                  <span className="max-w-72 truncate font-mono text-muted-foreground text-xs">
-                    {target.unavailableReason
-                      ? UNAVAILABLE_TEXT[target.unavailableReason]
-                      : (target.location?.cwd ?? UNAVAILABLE_TEXT["no-matching-project"])}
-                  </span>
+                  {target.unavailableReason || !target.location ? (
+                    <span className="max-w-72 truncate text-muted-foreground text-xs">
+                      {UNAVAILABLE_TEXT[target.unavailableReason ?? "no-matching-project"]}
+                    </span>
+                  ) : (
+                    // Truncate from the start so the distinguishing tail of the path stays visible.
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <span className="max-w-72 truncate text-left font-mono text-muted-foreground text-xs [direction:rtl]" />
+                        }
+                      >
+                        <bdi>{target.location.cwd}</bdi>
+                      </TooltipTrigger>
+                      <TooltipPopup side="right">{target.location.cwd}</TooltipPopup>
+                    </Tooltip>
+                  )}
                 </div>
               </MenuItem>
             );
