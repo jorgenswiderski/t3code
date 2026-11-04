@@ -4406,6 +4406,60 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
   });
 
+  it.effect("asks about tools Claude escalates to the callback in Auto", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-auto-hook-ask"),
+          text: "Run the query.",
+          attachments: [],
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "auto",
+            interactionMode: "default",
+            cwd: "/workspace",
+          }),
+        }),
+      );
+      const openedOptions = harness.getOpenedOptions()!;
+      assert.equal(openedOptions.permissionMode, "auto");
+      const decision = yield* Effect.promise(() =>
+        openedOptions.canUseTool!(
+          "Bash",
+          { command: "bq query 'SELECT 1'" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "tool-auto-hook-ask",
+            requestId: "request-auto-hook-ask",
+            decisionReason: "Hook PreToolUse:Bash requires approval: query bills $0.41",
+          },
+        ),
+      ).pipe(Effect.forkScoped);
+      const first = yield* Effect.raceFirst(
+        Queue.take(harness.runtimeRequestReceipts).pipe(
+          Effect.map((event) => ({ type: "request", event }) as const),
+        ),
+        Fiber.join(decision).pipe(Effect.map((result) => ({ type: "decision", result }) as const)),
+      );
+      assert.equal(first.type, "request", "Auto approved a forwarded ask without the user");
+      if (first.type !== "request") return;
+      assert.equal(first.event.runtimeRequest.kind, "command");
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: first.event.runtimeRequest.id,
+        decision: "decline",
+      });
+      assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect(
     "carries earlier user-only skill instructions on sends and steering with attachments",
     () =>
