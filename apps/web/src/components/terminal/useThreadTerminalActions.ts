@@ -18,7 +18,10 @@ import { environmentSummaries } from "../../state/presentation";
 import { environmentProjects } from "../../state/projects";
 import { readEnvironmentScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
-import { useKnownTerminalSessions } from "../../state/terminalSessions";
+import {
+  selectKnownTerminalSessions,
+  useKnownTerminalSessions,
+} from "../../state/terminalSessions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   selectTerminalEnvironmentId,
@@ -79,9 +82,29 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         );
 
   // Server lists lag and colliding ids share a PTY; without read access, suffix ids to avoid unseen sessions.
-  const allocateTerminalId = () => {
+  const allocateTerminalId = (environmentId?: EnvironmentId) => {
+    const targetEnvironmentId = environmentId ?? threadRef?.environmentId ?? null;
+    const isForeign =
+      threadRef !== null &&
+      targetEnvironmentId !== null &&
+      targetEnvironmentId !== threadRef.environmentId;
+    const targetMetadata =
+      isForeign && readEnvironmentScope(targetEnvironmentId, AuthTerminalReadScope)
+        ? appAtomRegistry.get(
+            terminalEnvironment.metadata({ environmentId: targetEnvironmentId, input: null }),
+          )
+        : null;
+    const targetSessions =
+      targetMetadata?._tag === "Success"
+        ? selectKnownTerminalSessions(
+            targetMetadata.value,
+            targetEnvironmentId,
+            threadRef?.threadId ?? null,
+          )
+        : null;
     const ids = new Set([
       ...(knownSessions ?? []).map((session) => session.target.terminalId),
+      ...(targetSessions ?? []).map((session) => session.target.terminalId),
       ...drawerTerminalIds,
       ...panelSurfaces.flatMap((surface) =>
         surface.kind === "terminal" ? surface.terminalIds : [],
@@ -90,7 +113,8 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     const canReuse =
       knownSessions !== null &&
       threadRef !== null &&
-      readEnvironmentScope(threadRef.environmentId, AuthTerminalReadScope);
+      readEnvironmentScope(threadRef.environmentId, AuthTerminalReadScope) &&
+      (!isForeign || targetSessions !== null);
     return nextTerminalId([...ids], canReuse ? undefined : randomUUID());
   };
 
@@ -106,7 +130,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
       };
     }
     // Read at call time so every consumer of this hook does not re-render on project changes.
-    const [, target] = resolveTerminalEnvironmentTargets({
+    const target = resolveTerminalEnvironmentTargets({
       threadEnvironmentId: threadRef.environmentId,
       threadProject: project,
       threadWorktreePath,
@@ -119,9 +143,17 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         appAtomRegistry.get(environmentSummaries.connectedEnvironmentIdsAtom),
       ),
       operableEnvironmentIds: new Set(canWrite(environmentId) ? [environmentId] : []),
-    });
+    }).find((candidate) => candidate.environmentId === environmentId);
     return target?.location ?? null;
   };
+
+  /** The environment to open on: the requested one when it can host a terminal, else the thread's. */
+  const resolveLaunchEnvironmentId = (environmentId: EnvironmentId) =>
+    threadRef === null ||
+    environmentId === threadRef.environmentId ||
+    (canWrite(environmentId) && defaultLaunchLocation(environmentId) !== null)
+      ? environmentId
+      : threadRef.environmentId;
 
   /** place mounts the destination before the server open resolves. */
   const launchTerminal = (input: {
@@ -137,7 +169,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     if (!canWrite(environmentId)) return null;
     const location = input.location ?? defaultLaunchLocation(environmentId);
     if (!location) return null;
-    const terminalId = input.terminalId ?? allocateTerminalId();
+    const terminalId = input.terminalId ?? allocateTerminalId(environmentId);
     input.place(terminalId);
     const result = openTerminalCommand({
       environmentId,
@@ -189,6 +221,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
   return {
     canWrite: useStableCallback(canWrite),
     allocateTerminalId: useStableCallback(allocateTerminalId),
+    resolveLaunchEnvironmentId: useStableCallback(resolveLaunchEnvironmentId),
     launchTerminal: useStableCallback(launchTerminal),
     closeTerminalSession: useStableCallback(closeTerminalSession),
     writeToTerminal: useStableCallback(writeToTerminal),

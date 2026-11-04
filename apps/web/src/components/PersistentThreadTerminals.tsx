@@ -20,7 +20,7 @@ import {
   type RightPanelSurface,
 } from "../rightPanelStore";
 import { useProject, useProjects, useQuietThreadShell } from "../state/entities";
-import { useConnectedEnvironmentIds, useEnvironments } from "../state/environments";
+import { useConnectedEnvironmentIds, useEnvironmentLabels } from "../state/environments";
 import { useEnvironmentScope, useEnvironmentsWithScope } from "../state/session";
 import {
   useKnownTerminalSessions,
@@ -44,7 +44,6 @@ export type PersistentTerminalLaunchContext = {
 };
 
 interface TerminalLaunchLocationWithEnv {
-  readonly environmentId?: EnvironmentId;
   readonly cwd: string;
   readonly worktreePath: string | null;
   readonly runtimeEnv: Record<string, string>;
@@ -91,12 +90,9 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
   );
   const visible = active && terminalUiState.terminalOpen;
-  const environmentIds = [
-    ...new Set([
-      threadRef.environmentId,
-      ...Object.values(terminalUiState.terminalEnvironmentIdById),
-    ]),
-  ];
+  const terminalEnvironmentIdById = terminalUiState.terminalEnvironmentIdById;
+  const foreignEnvironmentIds = Object.values(terminalEnvironmentIdById);
+  const environmentIds = [...new Set([threadRef.environmentId, ...foreignEnvironmentIds])];
   const sessionsByEnvironment = useKnownTerminalSessionsAcross({ environmentIds, threadId });
   const terminalEnvironmentIdOf = (terminalId: string) =>
     selectTerminalEnvironmentId(terminalUiState, threadRef, terminalId);
@@ -120,24 +116,32 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     });
   });
   const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
-  const projects = useProjects();
-  const { environments } = useEnvironments();
   const connectedEnvironmentIds = useConnectedEnvironmentIds();
+  // Matching projects reads every environment's catalog; only the active drawer with a choice to
+  // offer, or a drawer holding tabs on other environments, pays for it.
+  const resolvesTargets =
+    foreignEnvironmentIds.length > 0 || (active && connectedEnvironmentIds.length >= 2);
+  const projects = useProjects(resolvesTargets);
+  const environments = useEnvironmentLabels(resolvesTargets);
   const operableEnvironmentIds = useEnvironmentsWithScope(
-    connectedEnvironmentIds.map((environmentId) => ({ environmentId })),
+    resolvesTargets ? connectedEnvironmentIds.map((environmentId) => ({ environmentId })) : [],
     AuthTerminalOperateScope,
   );
-  const environmentTargets = project
-    ? resolveTerminalEnvironmentTargets({
-        threadEnvironmentId: threadRef.environmentId,
-        threadProject: project,
-        threadWorktreePath: worktreePath,
-        projects,
-        environments,
-        connectedEnvironmentIds: new Set(connectedEnvironmentIds),
-        operableEnvironmentIds,
-      })
-    : [];
+  const environmentTargets =
+    project && resolvesTargets
+      ? resolveTerminalEnvironmentTargets({
+          threadEnvironmentId: threadRef.environmentId,
+          threadProject: project,
+          threadWorktreePath: worktreePath,
+          projects,
+          environments,
+          connectedEnvironmentIds: new Set(connectedEnvironmentIds),
+          operableEnvironmentIds,
+        })
+      : [];
+  const environmentLabelById = new Map(
+    environments.map((environment) => [environment.environmentId, environment.label]),
+  );
   const otherEnvironmentLocation = (environmentId: EnvironmentId) =>
     environmentTargets.find((target) => target.environmentId === environmentId)?.location ?? null;
   const terminalLabelsById = new Map<string, string>();
@@ -154,7 +158,6 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     const environmentId = session.target.environmentId;
     if (environmentId !== threadRef.environmentId) {
       terminalLaunchLocationsById.set(session.target.terminalId, {
-        environmentId,
         cwd: summary.cwd,
         worktreePath: summary.worktreePath,
         runtimeEnv: projectScriptRuntimeEnv({
@@ -167,7 +170,6 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     const worktreePathForLaunch =
       launchContext !== null ? launchContext.worktreePath : summary.worktreePath;
     terminalLaunchLocationsById.set(session.target.terminalId, {
-      environmentId,
       cwd: launchContext?.cwd ?? summary.cwd,
       worktreePath: worktreePathForLaunch,
       runtimeEnv: projectScriptRuntimeEnv({
@@ -177,14 +179,11 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     });
   }
   // Tabs on another environment attach there even before its session list catches up.
-  for (const [terminalId, environmentId] of Object.entries(
-    terminalUiState.terminalEnvironmentIdById,
-  )) {
+  for (const [terminalId, environmentId] of Object.entries(terminalEnvironmentIdById)) {
     if (terminalLaunchLocationsById.has(terminalId)) continue;
     const location = otherEnvironmentLocation(environmentId);
     if (!location) continue;
     terminalLaunchLocationsById.set(terminalId, {
-      environmentId,
       cwd: location.cwd,
       worktreePath: location.worktreePath,
       runtimeEnv: projectScriptRuntimeEnv({
@@ -207,7 +206,9 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   const reconcileTerminalIds = useTerminalUiStateStore((state) => state.reconcileTerminalIds);
 
   const reconciledTerminalIds = drawerTerminalIdsToReconcile({
+    environmentIds,
     sessionsByEnvironment,
+    terminalEnvironmentIdById,
     panelTerminalIds,
     clientIds: terminalUiState.terminalIds,
   });
@@ -236,9 +237,17 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     storeSetTerminalHeight(threadRef, height);
   };
 
+  const activeTarget = environmentTargets.find(
+    (target) => target.environmentId === activeTerminalEnvironmentId,
+  );
+  // Split and new follow the active tab's environment, or the thread's when that one cannot host.
+  const launchEnvironmentId =
+    activeTarget?.location && !activeTarget.unavailableReason
+      ? activeTerminalEnvironmentId
+      : threadRef.environmentId;
   const launchDrawerTerminal = (
     place: (terminalId: string, environmentId: EnvironmentId) => void,
-    environmentId: EnvironmentId = activeTerminalEnvironmentId,
+    environmentId: EnvironmentId = launchEnvironmentId,
   ) => {
     const location =
       environmentId === threadRef.environmentId
@@ -279,7 +288,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   };
 
   const closeTerminal = useStableCallback((terminalId: string) => {
-    if (!terminalActions.canWrite(terminalEnvironmentIdOf(terminalId))) return;
+    // closeTerminalSession skips the server close when the tab's environment is not writable.
     terminalActions.closeTerminalSession(terminalId);
     storeCloseTerminal(threadRef, terminalId);
     if (visible) focusActiveDrawerTerminal(threadRef);
@@ -336,7 +345,9 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
           terminalLabelsById={terminalLabelsById}
           terminalLaunchLocationsById={terminalLaunchLocationsById}
           environmentTargets={environmentTargets}
-          activeTerminalEnvironmentId={activeTerminalEnvironmentId}
+          terminalEnvironmentIdById={terminalEnvironmentIdById}
+          environmentLabelById={environmentLabelById}
+          launchEnvironmentId={launchEnvironmentId}
           onNewTerminalOnEnvironment={createTerminalOnEnvironment}
         />
       </div>

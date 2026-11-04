@@ -479,7 +479,6 @@ interface TerminalViewportProps {
 }
 
 interface TerminalLaunchLocation {
-  readonly environmentId?: EnvironmentId;
   readonly cwd: string;
   readonly worktreePath?: string | null;
   readonly runtimeEnv?: Record<string, string>;
@@ -1201,7 +1200,11 @@ interface ThreadTerminalDrawerProps {
   terminalLabelsById?: ReadonlyMap<string, string>;
   terminalLaunchLocationsById?: ReadonlyMap<string, TerminalLaunchLocation>;
   environmentTargets?: ReadonlyArray<TerminalEnvironmentTarget>;
-  activeTerminalEnvironmentId?: EnvironmentId;
+  /** Tabs on another environment than the thread's; absent ids run on the thread's. */
+  terminalEnvironmentIdById?: Readonly<Record<string, EnvironmentId>>;
+  environmentLabelById?: ReadonlyMap<EnvironmentId, string>;
+  /** Where split and new open; defaults to the thread's environment. */
+  launchEnvironmentId?: EnvironmentId;
   onNewTerminalOnEnvironment?: (environmentId: EnvironmentId) => void;
 }
 
@@ -1255,6 +1258,8 @@ function TerminalSplitPanes({
   activeTerminalId,
   terminalLabelById,
   resolveLaunchLocation,
+  resolveEnvironmentId,
+  unavailableEnvironmentLabel,
   onActiveTerminalChange,
   onCloseTerminal,
   advancedTypography,
@@ -1268,7 +1273,9 @@ function TerminalSplitPanes({
   splitDirection: "horizontal" | "vertical";
   activeTerminalId: string;
   terminalLabelById: ReadonlyMap<string, string>;
-  resolveLaunchLocation: (terminalId: string) => TerminalLaunchLocation;
+  resolveLaunchLocation: (terminalId: string) => TerminalLaunchLocation | null;
+  resolveEnvironmentId: (terminalId: string) => EnvironmentId;
+  unavailableEnvironmentLabel: (terminalId: string) => string;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
   advancedTypography: boolean;
@@ -1308,25 +1315,31 @@ function TerminalSplitPanes({
             }}
           >
             <div className="h-full">
-              <TerminalViewport
-                advancedTypography={advancedTypography}
-                threadRef={threadRef}
-                environmentId={terminalLaunchLocation.environmentId ?? threadRef.environmentId}
-                threadId={threadId}
-                terminalId={terminalId}
-                terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
-                cwd={terminalLaunchLocation.cwd}
-                {...(terminalLaunchLocation.worktreePath !== undefined
-                  ? { worktreePath: terminalLaunchLocation.worktreePath }
-                  : {})}
-                {...(terminalLaunchLocation.runtimeEnv
-                  ? { runtimeEnv: terminalLaunchLocation.runtimeEnv }
-                  : {})}
-                onSessionExited={() => onCloseTerminal(terminalId)}
-                onAddTerminalContext={onAddTerminalContext}
-                visible={visible}
-                keybindings={keybindings}
-              />
+              {terminalLaunchLocation === null ? (
+                <div className="flex h-full items-center justify-center px-3 text-center text-muted-foreground text-xs">
+                  {unavailableEnvironmentLabel(terminalId)} is unavailable
+                </div>
+              ) : (
+                <TerminalViewport
+                  advancedTypography={advancedTypography}
+                  threadRef={threadRef}
+                  environmentId={resolveEnvironmentId(terminalId)}
+                  threadId={threadId}
+                  terminalId={terminalId}
+                  terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
+                  cwd={terminalLaunchLocation.cwd}
+                  {...(terminalLaunchLocation.worktreePath !== undefined
+                    ? { worktreePath: terminalLaunchLocation.worktreePath }
+                    : {})}
+                  {...(terminalLaunchLocation.runtimeEnv
+                    ? { runtimeEnv: terminalLaunchLocation.runtimeEnv }
+                    : {})}
+                  onSessionExited={() => onCloseTerminal(terminalId)}
+                  onAddTerminalContext={onAddTerminalContext}
+                  visible={visible}
+                  keybindings={keybindings}
+                />
+              )}
             </div>
           </div>
         );
@@ -1341,7 +1354,7 @@ function TerminalSidebarGroup({
   showHeader,
   terminalLabelById,
   closeShortcutLabel,
-  canOperateTerminal,
+  canCloseTerminal,
   resolveTabEnvironment,
   onActiveTerminalChange,
   onCloseTerminal,
@@ -1351,7 +1364,7 @@ function TerminalSidebarGroup({
   showHeader: boolean;
   terminalLabelById: ReadonlyMap<string, string>;
   closeShortcutLabel: string | undefined;
-  canOperateTerminal: boolean;
+  canCloseTerminal: (terminalId: string) => boolean;
   resolveTabEnvironment: (
     terminalId: string,
   ) => { readonly kind: EnvironmentMachineKind; readonly label: string } | null;
@@ -1411,7 +1424,7 @@ function TerminalSidebarGroup({
                   : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
               )}
             >
-              {canOperateTerminal ? (
+              {canCloseTerminal(terminalId) ? (
                 <PanelTabCloseButton
                   label={closeTerminalLabel}
                   onClick={() => onCloseTerminal(terminalId)}
@@ -1482,7 +1495,9 @@ export default function ThreadTerminalDrawer({
   terminalLabelsById,
   terminalLaunchLocationsById,
   environmentTargets,
-  activeTerminalEnvironmentId,
+  terminalEnvironmentIdById,
+  environmentLabelById,
+  launchEnvironmentId,
   onNewTerminalOnEnvironment,
 }: ThreadTerminalDrawerProps) {
   const terminalArea = workspaceAreaProps("terminal", 5, "Terminal");
@@ -1630,47 +1645,58 @@ export default function ThreadTerminalDrawer({
     resolvedTerminalGroups.length > 1 ||
     resolvedTerminalGroups.some((terminalGroup) => terminalGroup.terminalIds.length > 1);
   const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
-  const resolveTerminalLaunchLocation = (terminalId: string): TerminalLaunchLocation =>
-    terminalLaunchLocationsById?.get(terminalId) ?? {
-      cwd,
-      ...(worktreePath !== undefined ? { worktreePath } : {}),
-      ...(runtimeEnv ? { runtimeEnv } : {}),
-    };
   const terminalEnvironmentIdOf = (terminalId: string) =>
-    resolveTerminalLaunchLocation(terminalId).environmentId ?? threadRef.environmentId;
-  // Split and new open on the active terminal's environment.
+    terminalEnvironmentIdById?.[terminalId] ?? threadRef.environmentId;
+  // A tab on another environment never falls back to the thread's, which would open a PTY there.
+  const resolveTerminalLaunchLocation = (terminalId: string): TerminalLaunchLocation | null =>
+    terminalLaunchLocationsById?.get(terminalId) ??
+    (terminalEnvironmentIdOf(terminalId) !== threadRef.environmentId
+      ? null
+      : {
+          cwd,
+          ...(worktreePath !== undefined ? { worktreePath } : {}),
+          ...(runtimeEnv ? { runtimeEnv } : {}),
+        });
+  const environmentLabelOf = (environmentId: EnvironmentId) =>
+    environmentLabelById?.get(environmentId) ?? "Environment";
   const canOperateTerminal = useEnvironmentScope(
-    terminalEnvironmentIdOf(resolvedActiveTerminalId),
+    launchEnvironmentId ?? threadRef.environmentId,
     AuthTerminalOperateScope,
   );
-  const machineByEnvironmentId = useEnvironmentMachines();
-  const activePillEnvironmentId =
-    activeTerminalEnvironmentId ?? terminalEnvironmentIdOf(resolvedActiveTerminalId);
+  const canOperateThreadTerminal = useEnvironmentScope(
+    threadRef.environmentId,
+    AuthTerminalOperateScope,
+  );
+  // A tab on another environment can always be closed here, even when that environment is gone.
+  const canCloseTerminal = (terminalId: string) =>
+    terminalEnvironmentIdOf(terminalId) !== threadRef.environmentId || canOperateThreadTerminal;
+  const machineByEnvironmentId = useEnvironmentMachines(!isPanel);
   const resolveTabEnvironment = (terminalId: string) => {
     const environmentId = terminalEnvironmentIdOf(terminalId);
     if (environmentId === threadRef.environmentId) return null;
     return {
       kind: machineByEnvironmentId.get(environmentId) ?? "server",
-      label:
-        environmentTargets?.find((target) => target.environmentId === environmentId)?.label ??
-        "Another environment",
+      label: environmentLabelOf(environmentId),
     };
   };
-  const environmentPill =
+  const renderEnvironmentPill = (compact: boolean) =>
     !isPanel &&
     onNewTerminalOnEnvironment &&
     environmentTargets &&
     environmentTargets.length >= 2 ? (
       <TerminalEnvironmentMenu
         targets={environmentTargets}
-        activeEnvironmentId={activePillEnvironmentId}
+        activeEnvironmentId={terminalEnvironmentIdOf(resolvedActiveTerminalId)}
         machineByEnvironmentId={machineByEnvironmentId}
         onSelect={onNewTerminalOnEnvironment}
         disabled={
           !environmentTargets.some((target) => target.location && !target.unavailableReason)
         }
+        compact={compact}
       />
     ) : null;
+  const floatingEnvironmentPill = hasTerminalSidebar ? null : renderEnvironmentPill(false);
+  const sidebarEnvironmentPill = hasTerminalSidebar ? renderEnvironmentPill(true) : null;
   const splitTerminalActionLabel = hasReachedSplitLimit
     ? `Split Terminal Horizontally (max ${MAX_TERMINALS_PER_GROUP} per group)`
     : splitShortcutLabel
@@ -1700,11 +1726,15 @@ export default function ThreadTerminalDrawer({
     onNewTerminal();
   };
   const confirmCloseTerminal = (terminalId: string) => {
-    const environmentId = terminalEnvironmentIdOf(terminalId);
-    if (!readEnvironmentScope(environmentId, AuthTerminalOperateScope)) return;
+    if (!canCloseTerminal(terminalId)) return;
+    const isThreadTerminal = terminalEnvironmentIdOf(terminalId) === threadRef.environmentId;
     const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
     void confirmTerminalClose([label]).then((confirmed) => {
-      if (confirmed && readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
+      if (
+        confirmed &&
+        (!isThreadTerminal ||
+          readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope))
+      ) {
         onCloseTerminal(terminalId);
       }
     });
@@ -1866,9 +1896,9 @@ export default function ThreadTerminalDrawer({
       {!hasTerminalSidebar && (
         <div className="pointer-events-none absolute right-2 top-2 z-20">
           <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background shadow-xs">
-            {environmentPill ? (
+            {floatingEnvironmentPill ? (
               <>
-                <div className="flex max-w-36 min-w-0 self-stretch">{environmentPill}</div>
+                <div className="flex max-w-36 min-w-0 self-stretch">{floatingEnvironmentPill}</div>
                 <div className="h-4 w-px bg-border/80" />
               </>
             ) : null}
@@ -1908,7 +1938,7 @@ export default function ThreadTerminalDrawer({
             </TerminalActionButton>
             <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
-              disabled={!canOperateTerminal}
+              disabled={!canCloseTerminal(resolvedActiveTerminalId)}
               className="p-1 text-foreground/90 transition-colors hover:bg-accent"
               onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
               label={closeTerminalActionLabel}
@@ -1933,6 +1963,10 @@ export default function ThreadTerminalDrawer({
               activeTerminalId={resolvedActiveTerminalId}
               terminalLabelById={terminalLabelById}
               resolveLaunchLocation={resolveTerminalLaunchLocation}
+              resolveEnvironmentId={terminalEnvironmentIdOf}
+              unavailableEnvironmentLabel={(terminalId) =>
+                environmentLabelOf(terminalEnvironmentIdOf(terminalId))
+              }
               onActiveTerminalChange={onActiveTerminalChange}
               onCloseTerminal={onCloseTerminal}
               advancedTypography={advancedTypography}
@@ -1947,9 +1981,9 @@ export default function ThreadTerminalDrawer({
           {hasTerminalSidebar && (
             <aside className="flex w-36 min-w-36 flex-col border border-border/70 bg-muted/10">
               <div className="flex h-[22px] items-stretch justify-between border-b border-border/70">
-                {environmentPill ? (
-                  <div className="flex min-w-0 flex-1 border-r border-border/70">
-                    {environmentPill}
+                {sidebarEnvironmentPill ? (
+                  <div className="flex shrink-0 border-r border-border/70">
+                    {sidebarEnvironmentPill}
                   </div>
                 ) : null}
                 <div className="inline-flex h-full shrink-0 items-stretch">
@@ -1986,7 +2020,7 @@ export default function ThreadTerminalDrawer({
                     <Plus className="size-3.25" />
                   </TerminalActionButton>
                   <TerminalActionButton
-                    disabled={!canOperateTerminal}
+                    disabled={!canCloseTerminal(resolvedActiveTerminalId)}
                     className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
                     onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
                     label={closeTerminalActionLabel}
@@ -2005,7 +2039,7 @@ export default function ThreadTerminalDrawer({
                     showHeader={showGroupHeaders}
                     terminalLabelById={terminalLabelById}
                     closeShortcutLabel={closeShortcutLabel}
-                    canOperateTerminal={canOperateTerminal}
+                    canCloseTerminal={canCloseTerminal}
                     resolveTabEnvironment={resolveTabEnvironment}
                     onActiveTerminalChange={onActiveTerminalChange}
                     onCloseTerminal={confirmCloseTerminal}

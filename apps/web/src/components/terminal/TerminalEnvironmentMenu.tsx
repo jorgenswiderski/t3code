@@ -2,6 +2,7 @@ import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
 import { ChevronDownIcon } from "lucide-react";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Menu, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { TerminalEnvironmentTarget } from "./terminalEnvironmentTargets";
 
 const UNAVAILABLE_TEXT = {
@@ -15,31 +16,44 @@ export function TerminalEnvironmentMenu(props: {
   readonly machineByEnvironmentId: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>;
   readonly onSelect: (environmentId: EnvironmentId) => void;
   readonly disabled: boolean;
+  /** Icon-only trigger for narrow headers; the label moves to a tooltip. */
+  readonly compact?: boolean;
 }) {
   const activeTarget = props.targets.find(
     (target) => target.environmentId === props.activeEnvironmentId,
   );
   const machineKindOf = (environmentId: EnvironmentId) =>
     props.machineByEnvironmentId.get(environmentId) ?? "server";
+  const label = activeTarget?.label ?? "Environment";
+  const trigger = (
+    <MenuTrigger
+      disabled={props.disabled}
+      aria-label={`Terminal environment: ${label}`}
+      render={
+        <button
+          type="button"
+          className="flex h-full min-w-0 max-w-full items-center gap-1 px-1.5 text-2xs text-foreground/90 transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-64"
+        />
+      }
+    >
+      <EnvironmentMachineIcon
+        kind={machineKindOf(props.activeEnvironmentId)}
+        className="size-3 shrink-0"
+      />
+      {props.compact ? null : <span className="min-w-0 truncate">{label}</span>}
+      <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
+    </MenuTrigger>
+  );
   return (
     <Menu>
-      <MenuTrigger
-        disabled={props.disabled}
-        aria-label={`Terminal environment: ${activeTarget?.label ?? "unknown"}`}
-        render={
-          <button
-            type="button"
-            className="flex h-full min-w-0 max-w-full items-center gap-1 px-1.5 text-2xs text-foreground/90 transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-64"
-          />
-        }
-      >
-        <EnvironmentMachineIcon
-          kind={machineKindOf(props.activeEnvironmentId)}
-          className="size-3 shrink-0"
-        />
-        <span className="min-w-0 truncate">{activeTarget?.label ?? "Environment"}</span>
-        <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
-      </MenuTrigger>
+      {props.compact ? (
+        <Tooltip>
+          <TooltipTrigger render={trigger} />
+          <TooltipPopup side="bottom">{label}</TooltipPopup>
+        </Tooltip>
+      ) : (
+        trigger
+      )}
       <MenuPopup align="start" width="content">
         <MenuGroup>
           <MenuGroupLabel>Run terminal on</MenuGroupLabel>

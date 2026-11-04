@@ -170,10 +170,12 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const toggleTerminalVisibilityStable = useStableCallback(toggleTerminalVisibility);
   const splitTerminal = (direction: "horizontal" | "vertical" = "horizontal") => {
     if (!activeThreadRef || hasReachedSplitLimit) return;
-    const terminalEnvironmentId = selectTerminalEnvironmentId(
-      terminalUiState,
-      activeThreadRef,
-      terminalUiState.activeTerminalId,
+    const terminalEnvironmentId = terminalActions.resolveLaunchEnvironmentId(
+      selectTerminalEnvironmentId(
+        terminalUiState,
+        activeThreadRef,
+        terminalUiState.activeTerminalId,
+      ),
     );
     const launched = terminalActions.launchTerminal({
       environmentId: terminalEnvironmentId,
@@ -189,10 +191,12 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const splitTerminalStable = useStableCallback(splitTerminal);
   const createNewTerminal = () => {
     if (!activeThreadRef) return;
-    const terminalEnvironmentId = selectTerminalEnvironmentId(
-      terminalUiState,
-      activeThreadRef,
-      terminalUiState.activeTerminalId,
+    const terminalEnvironmentId = terminalActions.resolveLaunchEnvironmentId(
+      selectTerminalEnvironmentId(
+        terminalUiState,
+        activeThreadRef,
+        terminalUiState.activeTerminalId,
+      ),
     );
     const launched = terminalActions.launchTerminal({
       environmentId: terminalEnvironmentId,

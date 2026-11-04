@@ -174,13 +174,31 @@ describe("resolveTerminalEnvironmentTargets", () => {
     expect(targets[1]?.location?.projectRoot).toBe("/shared/api");
   });
 
-  it("marks a connected environment without terminal permission", () => {
+  it.each([
+    { name: "another environment", operable: [sandbox], index: 1, location: null },
+    { name: "the thread environment", operable: [host], index: 0, location: expect.anything() },
+  ])("marks $name without terminal permission", ({ operable, index, location }) => {
     const targets = resolve({
       threadProject: makeProject(sandbox, "/workspace/api"),
       hostProject: makeProject(host, "/Users/me/Code/api"),
-      operable: [sandbox],
+      operable,
     });
-    expect(targets[1]).toMatchObject({ location: null, unavailableReason: "no-permission" });
+    expect(targets[index]).toMatchObject({ location, unavailableReason: "no-permission" });
+  });
+
+  it("does not match an unrelated repository at the same path", () => {
+    const targets = resolve({
+      threadProject: makeProject(sandbox, "/shared/api"),
+      hostProject: makeProject(host, "/shared/api", {
+        repositoryIdentity: {
+          ...repositoryIdentity,
+          canonicalKey: "github.com/someone/else",
+          owner: "someone",
+          name: "else",
+        },
+      }),
+    });
+    expect(targets[1]?.unavailableReason).toBe("no-matching-project");
   });
 
   it("omits disconnected environments", () => {

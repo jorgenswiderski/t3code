@@ -32,14 +32,17 @@ function findMatchingProject(
   const threadPath = normalizeProjectPathForComparison(threadProject.workspaceRoot);
   let repositoryMatch: EnvironmentProject | null = null;
   for (const candidate of candidates) {
-    if (normalizeProjectPathForComparison(candidate.workspaceRoot) === threadPath) {
+    const candidateKey = repositoryKeyOf(candidate);
+    // Two unrelated repositories can sit at the same path on two machines.
+    const sameRepositoryOrUnknown =
+      threadKey === null || candidateKey === null || candidateKey === threadKey;
+    if (
+      sameRepositoryOrUnknown &&
+      normalizeProjectPathForComparison(candidate.workspaceRoot) === threadPath
+    ) {
       return candidate;
     }
-    if (
-      repositoryMatch === null &&
-      threadKey !== null &&
-      repositoryKeyOf(candidate) === threadKey
-    ) {
+    if (repositoryMatch === null && threadKey !== null && candidateKey === threadKey) {
       repositoryMatch = candidate;
     }
   }
@@ -90,7 +93,7 @@ export function resolveTerminalEnvironmentTargets(input: {
           worktreePath: input.threadWorktreePath,
           projectRoot: input.threadProject.workspaceRoot,
         },
-        unavailableReason: null,
+        unavailableReason: input.operableEnvironmentIds.has(environmentId) ? null : "no-permission",
       };
     }
     if (!input.operableEnvironmentIds.has(environmentId)) {

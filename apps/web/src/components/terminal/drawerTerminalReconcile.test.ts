@@ -3,19 +3,27 @@ import { describe, expect, it } from "vite-plus/test";
 import { drawerTerminalIdsToReconcile } from "./drawerTerminalReconcile";
 
 const sessions = (...ids: string[]) => ids.map((terminalId) => ({ target: { terminalId } }));
+const hostTabs = { h1: "host" };
 
 describe("drawerTerminalIdsToReconcile", () => {
   it.each([
     {
-      name: "keeps a host tab when another client opens a thread-environment tab",
+      name: "keeps a host tab in place when another client opens a thread-environment tab",
       sessionsByEnvironment: [sessions("t1", "t2"), sessions("h1")],
       panelTerminalIds: [],
       clientIds: ["t1", "h1"],
-      expected: ["t1", "t2", "h1"],
+      expected: ["t1", "h1", "t2"],
     },
     {
-      name: "skips while any environment's sessions are unknown",
-      sessionsByEnvironment: [sessions("t1", "t2"), null],
+      name: "keeps a tab on an unreachable environment and still applies thread-environment changes",
+      sessionsByEnvironment: [sessions("t2", "t3"), null],
+      panelTerminalIds: [],
+      clientIds: ["t1", "h1", "t2"],
+      expected: ["h1", "t2", "t3"],
+    },
+    {
+      name: "skips while the thread environment's sessions are unknown",
+      sessionsByEnvironment: [null, sessions()],
       panelTerminalIds: [],
       clientIds: ["t1", "h1"],
       expected: null,
@@ -28,18 +36,18 @@ describe("drawerTerminalIdsToReconcile", () => {
       expected: null,
     },
     {
-      name: "skips when the union already matches the client",
+      name: "skips when the sessions already match the client",
       sessionsByEnvironment: [sessions("t1"), sessions("h1")],
       panelTerminalIds: [],
       clientIds: ["h1", "t1"],
       expected: null,
     },
     {
-      name: "excludes panel terminals from the union",
+      name: "excludes panel terminals",
       sessionsByEnvironment: [sessions("t1", "p1", "t2"), sessions("h1")],
       panelTerminalIds: ["p1"],
       clientIds: ["t1", "h1"],
-      expected: ["t1", "t2", "h1"],
+      expected: ["t1", "h1", "t2"],
     },
     {
       name: "drops a client tab whose session vanished",
@@ -53,12 +61,14 @@ describe("drawerTerminalIdsToReconcile", () => {
       sessionsByEnvironment: [sessions("t1", "t2"), sessions("h1", "h9")],
       panelTerminalIds: [],
       clientIds: ["t1", "h1"],
-      expected: ["t1", "t2", "h1"],
+      expected: ["t1", "h1", "t2"],
     },
   ])("$name", ({ sessionsByEnvironment, panelTerminalIds, clientIds, expected }) => {
     expect(
       drawerTerminalIdsToReconcile({
+        environmentIds: ["thread", "host"],
         sessionsByEnvironment,
+        terminalEnvironmentIdById: hostTabs,
         panelTerminalIds: new Set(panelTerminalIds),
         clientIds,
       }),
