@@ -119,10 +119,13 @@ vi.mock("../composerDraftStore", () => ({
     }),
 }));
 vi.mock("../terminalUiStateStore", () => ({
-  useTerminalUiStateStore: (select: (store: unknown) => unknown) =>
-    select({
-      clearTerminalUiState: () => state.localEffects.push("clear-terminal-ui"),
-    }),
+  useTerminalUiStateStore: Object.assign(
+    (select: (store: unknown) => unknown) =>
+      select({
+        clearTerminalUiState: () => state.localEffects.push("clear-terminal-ui"),
+      }),
+    { getState: () => ({ terminalUiStateByThreadKey: {} }) },
+  ),
 }));
 vi.mock("../uiStateStore", () => ({
   useUiStateStore: (select: (store: unknown) => unknown) =>

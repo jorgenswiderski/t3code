@@ -1,0 +1,101 @@
+import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
+import { ChevronDownIcon } from "lucide-react";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { Menu, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import type { TerminalEnvironmentTarget } from "./terminalEnvironmentTargets";
+
+const UNAVAILABLE_TEXT = {
+  "no-matching-project": "Project not added here",
+  "no-permission": "No terminal access",
+} as const;
+
+export function TerminalEnvironmentMenu(props: {
+  readonly targets: ReadonlyArray<TerminalEnvironmentTarget>;
+  readonly activeEnvironmentId: EnvironmentId;
+  readonly machineByEnvironmentId: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>;
+  readonly onSelect: (environmentId: EnvironmentId) => void;
+  readonly disabled: boolean;
+  /** Icon-only trigger for narrow headers; the label moves to a tooltip. */
+  readonly compact?: boolean;
+}) {
+  const activeTarget = props.targets.find(
+    (target) => target.environmentId === props.activeEnvironmentId,
+  );
+  const machineKindOf = (environmentId: EnvironmentId) =>
+    props.machineByEnvironmentId.get(environmentId) ?? "server";
+  const label = activeTarget?.label ?? "Environment";
+  const trigger = (
+    <MenuTrigger
+      disabled={props.disabled}
+      aria-label={`Terminal environment: ${label}`}
+      render={
+        <button
+          type="button"
+          className="flex h-full min-w-0 max-w-full items-center gap-1 px-1.5 text-2xs text-foreground/90 transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-64"
+        />
+      }
+    >
+      <EnvironmentMachineIcon
+        kind={machineKindOf(props.activeEnvironmentId)}
+        className="size-3 shrink-0"
+      />
+      {props.compact ? null : <span className="min-w-0 truncate">{label}</span>}
+      <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
+    </MenuTrigger>
+  );
+  return (
+    <Menu>
+      {props.compact ? (
+        <Tooltip>
+          <TooltipTrigger render={trigger} />
+          <TooltipPopup side="bottom">{label}</TooltipPopup>
+        </Tooltip>
+      ) : (
+        trigger
+      )}
+      <MenuPopup align="start" width="content">
+        <MenuGroup>
+          <MenuGroupLabel>Run terminal on</MenuGroupLabel>
+          {props.targets.map((target) => {
+            const unavailable = target.location === null || target.unavailableReason !== null;
+            return (
+              <MenuItem
+                key={target.environmentId}
+                disabled={unavailable}
+                onClick={() => props.onSelect(target.environmentId)}
+              >
+                <EnvironmentMachineIcon kind={machineKindOf(target.environmentId)} />
+                <div className="flex min-w-0 flex-col">
+                  <span className="flex items-center gap-1.5">
+                    <span className="truncate">{target.label}</span>
+                    {target.environmentId === props.activeEnvironmentId ? (
+                      <span className="text-muted-foreground text-xs">current</span>
+                    ) : null}
+                  </span>
+                  {target.unavailableReason || !target.location ? (
+                    <span className="max-w-72 truncate text-muted-foreground text-xs">
+                      {UNAVAILABLE_TEXT[target.unavailableReason ?? "no-matching-project"]}
+                    </span>
+                  ) : (
+                    // Truncate from the start so the distinguishing tail of the path stays visible.
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <span className="max-w-72 truncate text-left font-mono text-muted-foreground text-xs [direction:rtl]" />
+                        }
+                      >
+                        <bdi>{target.location.cwd}</bdi>
+                      </TooltipTrigger>
+                      <TooltipPopup side="right">{target.location.cwd}</TooltipPopup>
+                    </Tooltip>
+                  )}
+                </div>
+              </MenuItem>
+            );
+          })}
+        </MenuGroup>
+      </MenuPopup>
+    </Menu>
+  );
+}

@@ -89,8 +89,12 @@ export function useEnvironmentThreadRefs(
   );
 }
 
-export function useProjects(): ReadonlyArray<EnvironmentProject> {
-  return useAtomValue(environmentProjects.projectsAtom);
+const EMPTY_PROJECTS_ATOM = Atom.make<ReadonlyArray<EnvironmentProject>>(Object.freeze([])).pipe(
+  Atom.withLabel("web-projects:empty"),
+);
+
+export function useProjects(enabled = true): ReadonlyArray<EnvironmentProject> {
+  return useAtomValue(enabled ? environmentProjects.projectsAtom : EMPTY_PROJECTS_ATOM);
 }
 
 /** Providers are left out; read them with `useEnvironmentProviders()`. */

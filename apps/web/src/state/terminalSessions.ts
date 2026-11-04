@@ -15,6 +15,7 @@ import {
   type TerminalSummary,
 } from "@t3tools/contracts";
 
+import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -210,6 +211,49 @@ export function useKnownTerminalSessions(input: {
   return metadata.data === null || metadata.error !== null
     ? null
     : selectKnownTerminalSessions(metadata.data, input.environmentId, input.threadId);
+}
+
+const decodeAcrossKey = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Tuple([Schema.Array(EnvironmentId), Schema.NullOr(ThreadId)])),
+);
+
+const knownTerminalSessionsAcrossFamily = Atom.family((key: string) => {
+  const decoded = decodeAcrossKey(key);
+  const [environmentIds, threadId] = Option.isSome(decoded) ? decoded.value : [[], null];
+  return Atom.make((get): ReadonlyArray<ReadonlyArray<KnownTerminalSession> | null> => {
+    const next = environmentIds.map((environmentId) => {
+      if (
+        !sessionHasScope(
+          get(environmentSession.sessionStateAtom(environmentId)),
+          AuthTerminalReadScope,
+        )
+      ) {
+        return null;
+      }
+      const metadata = get(terminalEnvironment.metadata({ environmentId, input: null }));
+      return metadata._tag === "Success"
+        ? selectKnownTerminalSessions(metadata.value, environmentId, threadId)
+        : null;
+    });
+    const previous = Option.getOrNull(
+      get.self<ReadonlyArray<ReadonlyArray<KnownTerminalSession> | null>>(),
+    );
+    return previous !== null &&
+      previous.length === next.length &&
+      next.every((sessions, index) => sessions === previous[index])
+      ? previous
+      : next;
+  }).pipe(Atom.withLabel(`web-known-terminal-sessions-across:${key}`));
+});
+
+/** Known sessions per environment, in input order; null while an environment's list is unknown. */
+export function useKnownTerminalSessionsAcross(input: {
+  readonly environmentIds: ReadonlyArray<EnvironmentId>;
+  readonly threadId: ThreadId | null;
+}): ReadonlyArray<ReadonlyArray<KnownTerminalSession> | null> {
+  return useAtomValue(
+    knownTerminalSessionsAcrossFamily(JSON.stringify([input.environmentIds, input.threadId])),
+  );
 }
 
 export function useThreadRunningTerminalIds(input: {

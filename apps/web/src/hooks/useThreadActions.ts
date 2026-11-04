@@ -10,6 +10,7 @@ import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
   EnvironmentAuthorizationError,
   EnvironmentId,
   type ScopedThreadRef,
@@ -29,7 +30,9 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { orchestrationEnvironment } from "../state/orchestration";
+import { environmentSummaries } from "../state/presentation";
 import { projectEnvironment } from "../state/projects";
+import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
@@ -319,6 +322,20 @@ export function useThreadActions() {
     (store) => store.clearProjectDraftThreadById,
   );
   const clearTerminalUiState = useTerminalUiStateStore((state) => state.clearTerminalUiState);
+  const closeTerminal = useAtomCommand(terminalEnvironment.close, { reportFailure: false });
+  // The thread's own server ends its sessions; ones on other environments would outlive it. Every
+  // reachable environment is asked, since a tab closed while its environment was away leaves no trace.
+  const closeOtherEnvironmentTerminals = (threadRef: ScopedThreadRef) => {
+    const environmentIds = appAtomRegistry.get(environmentSummaries.connectedEnvironmentIdsAtom);
+    for (const environmentId of environmentIds) {
+      if (environmentId === threadRef.environmentId) continue;
+      if (!readEnvironmentScope(environmentId, AuthTerminalOperateScope)) continue;
+      void closeTerminal({
+        environmentId,
+        input: { threadId: threadRef.threadId, deleteHistory: true },
+      });
+    }
+  };
   const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
   const router = useRouter();
   const handleNewThread = useNewThreadHandler();
@@ -392,6 +409,7 @@ export function useThreadActions() {
       markThreadVisited(scopedThreadKey(threadRef), wokeAt);
     }
     refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+    closeOtherEnvironmentTerminals(threadRef);
     opts.onArchived?.();
     showThreadUndoNotice({
       action: "Archived",
@@ -549,6 +567,7 @@ export function useThreadActions() {
       scopeProjectRef(threadRef.environmentId, thread.projectId),
       threadRef,
     );
+    closeOtherEnvironmentTerminals(threadRef);
     clearTerminalUiState(threadRef);
     clearThreadPreviewState(threadRef);
 

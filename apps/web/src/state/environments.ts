@@ -5,8 +5,9 @@ import {
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import { Discovery } from "@t3tools/client-runtime/relay";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -99,8 +100,29 @@ export function usePullRequestsSupported() {
   return useAtomValue(environmentSummaries.pullRequestsSupportedAtom);
 }
 
-export function useEnvironmentMachines() {
-  return useAtomValue(environmentSummaries.machineByIdAtom);
+const EMPTY_PRESENTATIONS_ATOM = Atom.make<ReadonlyMap<EnvironmentId, BaseEnvironmentPresentation>>(
+  new Map(),
+).pipe(Atom.withLabel("web-environment-presentations:empty"));
+
+/** Environment ids and labels in catalog order; empty while disabled. */
+export function useEnvironmentLabels(
+  enabled: boolean,
+): ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }> {
+  const presentationById = useAtomValue(
+    enabled ? environmentPresentations.presentationsAtom : EMPTY_PRESENTATIONS_ATOM,
+  );
+  return [...presentationById.entries()].map(([environmentId, presentation]) => ({
+    environmentId,
+    label: presentation.entry.target.label,
+  }));
+}
+
+const EMPTY_MACHINES_ATOM = Atom.make<ReadonlyMap<EnvironmentId, EnvironmentMachineKind>>(
+  new Map(),
+).pipe(Atom.withLabel("web-environment-machines:empty"));
+
+export function useEnvironmentMachines(enabled = true) {
+  return useAtomValue(enabled ? environmentSummaries.machineByIdAtom : EMPTY_MACHINES_ATOM);
 }
 
 export function useConnectedEnvironmentIds() {
