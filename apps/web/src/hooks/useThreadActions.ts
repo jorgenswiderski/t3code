@@ -10,6 +10,7 @@ import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
   EnvironmentAuthorizationError,
   EnvironmentId,
   type ScopedThreadRef,
@@ -29,6 +30,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { orchestrationEnvironment } from "../state/orchestration";
+import { environmentSummaries } from "../state/presentation";
 import { projectEnvironment } from "../state/projects";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
@@ -47,7 +49,7 @@ import {
 } from "../state/entities";
 import { useUiStateStore } from "../uiStateStore";
 import { clearThreadPreviewState } from "../previewStateStore";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
@@ -321,13 +323,13 @@ export function useThreadActions() {
   );
   const clearTerminalUiState = useTerminalUiStateStore((state) => state.clearTerminalUiState);
   const closeTerminal = useAtomCommand(terminalEnvironment.close, { reportFailure: false });
-  // The thread's own server ends its sessions; ones on other environments would outlive it.
+  // The thread's own server ends its sessions; ones on other environments would outlive it. Every
+  // reachable environment is asked, since a tab closed while its environment was away leaves no trace.
   const closeOtherEnvironmentTerminals = (threadRef: ScopedThreadRef) => {
-    const { terminalEnvironmentIdById } = selectThreadTerminalUiState(
-      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-      threadRef,
-    );
-    for (const environmentId of new Set(Object.values(terminalEnvironmentIdById))) {
+    const environmentIds = appAtomRegistry.get(environmentSummaries.connectedEnvironmentIdsAtom);
+    for (const environmentId of environmentIds) {
+      if (environmentId === threadRef.environmentId) continue;
+      if (!readEnvironmentScope(environmentId, AuthTerminalOperateScope)) continue;
       void closeTerminal({
         environmentId,
         input: { threadId: threadRef.threadId, deleteHistory: true },

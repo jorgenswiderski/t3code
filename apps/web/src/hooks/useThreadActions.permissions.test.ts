@@ -119,7 +119,6 @@ vi.mock("../composerDraftStore", () => ({
     }),
 }));
 vi.mock("../terminalUiStateStore", () => ({
-  selectThreadTerminalUiState: () => ({ terminalEnvironmentIdById: {} }),
   useTerminalUiStateStore: Object.assign(
     (select: (store: unknown) => unknown) =>
       select({

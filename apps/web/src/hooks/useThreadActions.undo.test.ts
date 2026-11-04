@@ -3,6 +3,7 @@ import * as Cause from "effect/Cause";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useThreadActions } from "./useThreadActions";
+import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { toastManager } from "../components/ui/toast";
 import { useThreadUndoNotice } from "./showThreadUndoNotice";
@@ -16,6 +17,7 @@ const commands = vi.hoisted(() => ({
   unsettle: vi.fn(),
   snooze: vi.fn(),
   unsnooze: vi.fn(),
+  closeTerminal: vi.fn(),
 }));
 const router = vi.hoisted(() => ({
   navigate: vi.fn(async () => {}),
@@ -24,8 +26,19 @@ const router = vi.hoisted(() => ({
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/session", async (original) => ({
   ...(await original<typeof import("../state/session")>()),
-  readEnvironmentScope: () => true,
+  readEnvironmentScope: (environmentId: string) => environmentId !== "read-only-env",
 }));
+vi.mock("../state/presentation", async (original) => {
+  const actual = await original<typeof import("../state/presentation")>();
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...actual,
+    environmentSummaries: {
+      ...actual.environmentSummaries,
+      connectedEnvironmentIdsAtom: Atom.make(["undo-env", "other-env", "read-only-env"]),
+    },
+  };
+});
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   useCallback: (callback: unknown) => callback,
@@ -36,12 +49,7 @@ vi.mock("@tanstack/react-router", () => ({ useRouter: () => router }));
 vi.mock("./useSettings", () => ({ useClientSettings: () => false }));
 vi.mock("./useHandleNewThread", () => ({ useNewThreadHandler: () => vi.fn() }));
 vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => vi.fn() }));
-vi.mock("../terminalUiStateStore", () => ({
-  selectThreadTerminalUiState: () => ({ terminalEnvironmentIdById: {} }),
-  useTerminalUiStateStore: Object.assign(() => vi.fn(), {
-    getState: () => ({ terminalUiStateByThreadKey: {} }),
-  }),
-}));
+vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn() }));
 vi.mock("../uiStateStore", () => ({ useUiStateStore: () => vi.fn() }));
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));
 const threadShell = vi.hoisted(() => ({
@@ -77,6 +85,8 @@ vi.mock("../state/use-atom-command", () => ({
         return commands.snooze;
       case threadEnvironment.unsnooze:
         return commands.unsnooze;
+      case terminalEnvironment.close:
+        return commands.closeTerminal;
       default:
         return vi.fn();
     }
@@ -130,6 +140,20 @@ describe("concurrent thread action Undo", () => {
       expect(commands[inverse]).toHaveBeenCalledOnce();
     },
   );
+});
+
+describe("archive", () => {
+  it("ends the thread's terminals on every other environment it can operate", async () => {
+    await useThreadActions().archiveThread(target);
+    expect(commands.closeTerminal.mock.calls).toEqual([
+      [
+        {
+          environmentId: "other-env",
+          input: { threadId: target.threadId, deleteHistory: true },
+        },
+      ],
+    ]);
+  });
 });
 
 describe("unpin Undo", () => {
