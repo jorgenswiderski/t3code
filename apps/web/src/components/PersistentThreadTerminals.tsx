@@ -157,6 +157,8 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     if (!project || !summary) continue;
     const environmentId = session.target.environmentId;
     if (environmentId !== threadRef.environmentId) {
+      // A disconnected environment's session list can outlive the connection; show it as unavailable.
+      if (!connectedEnvironmentIds.includes(environmentId)) continue;
       terminalLaunchLocationsById.set(session.target.terminalId, {
         cwd: summary.cwd,
         worktreePath: summary.worktreePath,
