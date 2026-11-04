@@ -36,7 +36,12 @@ vi.mock("@tanstack/react-router", () => ({ useRouter: () => router }));
 vi.mock("./useSettings", () => ({ useClientSettings: () => false }));
 vi.mock("./useHandleNewThread", () => ({ useNewThreadHandler: () => vi.fn() }));
 vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => vi.fn() }));
-vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn() }));
+vi.mock("../terminalUiStateStore", () => ({
+  selectThreadTerminalUiState: () => ({ terminalEnvironmentIdById: {} }),
+  useTerminalUiStateStore: Object.assign(() => vi.fn(), {
+    getState: () => ({ terminalUiStateByThreadKey: {} }),
+  }),
+}));
 vi.mock("../uiStateStore", () => ({ useUiStateStore: () => vi.fn() }));
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));
 const threadShell = vi.hoisted(() => ({

@@ -321,6 +321,19 @@ export function useThreadActions() {
   );
   const clearTerminalUiState = useTerminalUiStateStore((state) => state.clearTerminalUiState);
   const closeTerminal = useAtomCommand(terminalEnvironment.close, { reportFailure: false });
+  // The thread's own server ends its sessions; ones on other environments would outlive it.
+  const closeOtherEnvironmentTerminals = (threadRef: ScopedThreadRef) => {
+    const { terminalEnvironmentIdById } = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      threadRef,
+    );
+    for (const environmentId of new Set(Object.values(terminalEnvironmentIdById))) {
+      void closeTerminal({
+        environmentId,
+        input: { threadId: threadRef.threadId, deleteHistory: true },
+      });
+    }
+  };
   const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
   const router = useRouter();
   const handleNewThread = useNewThreadHandler();
@@ -394,6 +407,7 @@ export function useThreadActions() {
       markThreadVisited(scopedThreadKey(threadRef), wokeAt);
     }
     refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+    closeOtherEnvironmentTerminals(threadRef);
     opts.onArchived?.();
     showThreadUndoNotice({
       action: "Archived",
@@ -551,17 +565,7 @@ export function useThreadActions() {
       scopeProjectRef(threadRef.environmentId, thread.projectId),
       threadRef,
     );
-    // Sessions on other environments are not owned by the deleted thread's server.
-    const { terminalEnvironmentIdById } = selectThreadTerminalUiState(
-      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-      threadRef,
-    );
-    for (const [terminalId, environmentId] of Object.entries(terminalEnvironmentIdById)) {
-      void closeTerminal({
-        environmentId,
-        input: { threadId: threadRef.threadId, terminalId, deleteHistory: true },
-      });
-    }
+    closeOtherEnvironmentTerminals(threadRef);
     clearTerminalUiState(threadRef);
     clearThreadPreviewState(threadRef);
 
