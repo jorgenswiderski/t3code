@@ -6,6 +6,12 @@ packages:
   - packages/*
   - scripts
 
+# Opt out of the VM-wide global virtual store (~/.config/pnpm/config.yaml on the Lima VM).
+# Under it, dependencies live in the shared store and can no longer see the @types/react
+# pnpm hoists inside this project, so apps/mobile and apps/web fail typecheck. Remove once
+# those packages get @types/react another way (e.g. packageExtensions).
+enableGlobalVirtualStore: false
+
 # Successor to onlyBuiltDependencies/ignoredBuiltDependencies (pnpm 11+).
 # true = allowed to run build scripts; false mirrors the pnpm 10 behavior
 # where anything outside onlyBuiltDependencies was silently not built.
