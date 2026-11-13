@@ -251,6 +251,8 @@ Behaviour:
 
 ## Open questions / spec deviations
 
+**Resolved by the user (2026-11-13), binding:** D17 one comparator everywhere (`sortInboxThreadsByReturn` over the thread's own timestamps); D18 accepted. Where an item below conflicts, this wins.
+
 1. **Mobile does not read `ClientSettings`; it stores the order as a mobile preference.** Context: contract §6.10 and the scope put `sidebarInboxSortOrder` in `ClientSettingsSchema`. The mobile app keeps its sidebar preferences (including `workingShelfEnabled`) in `apps/mobile/src/persistence/mobile-preferences.ts`, not in `ClientSettings` (no mobile file references `ClientSettings`). Options: (a) web uses `ClientSettings.sidebarInboxSortOrder`, mobile a parallel `inboxSortOrder` preference typed with the shared `SidebarInboxSortOrder`; (b) wire `ClientSettings` into mobile. Recommendation: (a), same as the Working section today; (b) is a broader change outside this feature.
 2. **`ticketPriorityScaleOf` also falls back on an empty scale.** Context: §6.12 says "the config's scale or the default". A Jira site that returns no priorities would make user and agent priorities unresolvable and the Priority submenu empty. Options: fall back only when absent (contract) or also when empty. Recommendation: also when empty (code above); harmless where the scale is non-empty.
 3. **The boring sidebar (Labs, project groups) keeps its own order.** Context: with `folderGroups !== null`, `Sidebar.tsx` sorts active threads by send (`sortActiveBySend`) and disables drag. Options: apply priority there too or leave it. Recommendation: leave it; it is a project-grouped view, not the Inbox, and the setting is named "Inbox order". Priority does apply with the Working section on and off (contract Q9).

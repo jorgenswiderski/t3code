@@ -702,6 +702,8 @@ Create it with the `git-tools:worktree` skill (equivalent `git worktree add -b f
 
 ## Open questions / spec deviations
 
+**Resolved by the user (2026-11-13), binding:** D14 whole-array lenient decoding as contracted; D15 accepted; D16 accepted. Where an item below conflicts, this wins.
+
 1. **`ThreadTicketService` derives its boolean from the commit, not a pre-check (contract §6.4).**
    Context: §6.4 says each method "computes whether the reducer would change it (shared pure
    functions with the reducer)" before dispatching. Reading the thread, predicting, then

@@ -11,6 +11,40 @@ writer finds this contract wrong against the code, it records the problem in its
 "## Open questions / spec deviations" section, follows the contract anyway, and names the
 contract item (for example "contract §6.3").
 
+## Resolved decisions (user, 2026-11-13) — binding
+
+The user answered the "Decisions needed" list at the end of this file. These answers override
+any conflicting recommendation or open question in this index or in the plans.
+
+- **D3 (user): agents always set a provisional priority on every ticketless thread** in a
+  Jira-connected environment, plain questions included (the spec's literal reading, not the
+  recommended "only when urgency is signaled"). P4.
+- **D5 (user): no paid eval runs.** P4's eval work is limited to building the cases and
+  `--dry-run` evidence; no `ANTHROPIC_API_KEY` use. The handoff must state plainly that the new
+  model-facing text is not proven by evals, and the independent review of the real text carries
+  more weight. P4.
+- **D12 (user): no branch-ticket backfill** when Jira is connected later. P3, P7.
+- All other items accepted as recommended:
+  - D1 bulkfetch endpoint (P2, P7).
+  - D2 the Link dialog refuses a URL whose origin differs from `settings.jira.siteUrl`, matching P4's `link_ticket` (P6).
+  - D4 no child-thread special casing (P4).
+  - D6 the agent flag is read once per session (P4).
+  - D7 a successful "Test connection" with the saved settings also clears the auth-error pause; this relaxes contract §6.7 (P2).
+  - D8 no "checking" state (P2, P6).
+  - D9 moved issues read as unreachable (P2, P6).
+  - D10 the token is kept when the site URL changes (P2).
+  - D11 no mobile Jira connection UI (P2, P6).
+  - D13 sync scope without BackgroundPolicy (P3).
+  - D14 whole-array lenient decoding (P1).
+  - D15 P1 implementation choices (P1).
+  - D16 contract decisions Q4, Q5, Q8 (P1, P4, P6).
+  - D17 one comparator everywhere: `sortInboxThreadsByReturn` over the thread's own timestamps (P5, P7).
+  - D18 P5's setting placement choices (P5).
+  - D19 P6's UI choices (P6).
+  - D20 mobile checks use an Android device/emulator if present, otherwise ask the user before reporting them as not run (P6, P7).
+  - D21 P7 asks for Jira credentials and tickets once, up front (P7).
+  - D22 no keybinding or bulk "Set priority" (P6).
+
 Every path and symbol below was checked against the code at `ddec2d528a`. Line numbers drift;
 re-locate by symbol before editing. Paths are relative to the repo root unless absolute.
 
@@ -720,7 +754,7 @@ Behaviour pinned for consumers:
   `priorityScale` change only when their content changes, so a healthy sweep emits nothing.
 - Scale: read on connect and hourly; project keys cached and refreshed on the same schedule; rank
   field id discovered once per connection.
-- `testConnection` never mutates settings or status.
+- `testConnection` never mutates settings. Exception (D7, resolved): a successful test that used the *saved* settings clears an auth-error status/pause.
 - Auth fail-fast: while `status.error?.kind === "auth"`, `fetchTickets` and `projectKeys` fail with
   `JiraAuthError` without a request; only the hourly refresh (`/myself`) or a settings change
   retries. This keeps a revoked token from sending 30 failing requests an hour (P2 deviation 5).
@@ -1026,7 +1060,7 @@ L393/L1359/L2002, `server.ts` L624).
 
 ---
 
-## Decisions needed
+## Decisions needed (all resolved — see "Resolved decisions" at the top)
 
 The coherence pass collected every open question and deviation from all plans here, with
 duplicates merged. Each item stands alone. Unless an item says otherwise, the plans already

@@ -997,6 +997,8 @@ Commit: `feat(web): connect Jira in Source control settings`.
 
 ## Open questions / spec deviations
 
+**Resolved by the user (2026-11-13), binding:** D1 bulkfetch; D7 **a successful Test connection using the saved settings (view mode, `input: {}`) also clears the auth-error pause and status** — implement and test it (contract §6.7 relaxed accordingly); D8, D9, D10, D11 accepted as recommended. Where an item below conflicts, this wins.
+
 1. **Ticket fetch endpoint: `issue/bulkfetch` instead of the spec's `search/jql`.**
    - Context: the spec names `POST /rest/api/3/search/jql` with `key in (...)`. JQL fails the whole query when any key does not exist or is not visible, so one deleted ticket would stop syncing for every thread. Contract Q2 left the choice to P2. `POST /rest/api/3/issue/bulkfetch` takes up to 100 keys and the same `fields`, and answers the readable ones while leaving out the rest.
    - Options: (a) search/jql as specified; (b) bulkfetch; (c) search/jql that retries without the keys named in a 400.

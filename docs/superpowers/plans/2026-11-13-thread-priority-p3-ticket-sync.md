@@ -339,6 +339,8 @@ Harness: copy the `PullRequestSyncReactor.test.ts` layer setup (`Layer.mock(Proj
 
 ## Open questions / spec deviations
 
+**Resolved by the user (2026-11-13), binding:** D12 no backfill on connect; D13 accepted. Where an item below conflicts, this wins.
+
 1. **BackgroundPolicy is not used (scope said "where it fits").** Context: `PullRequestSyncReactor` asks `BackgroundPolicy.shouldRunScopeWork` so it reads only pull requests in threads a client has open, because hosts cap reads per account. Jira sync makes one batched request (≤100 keys per call, inside `JiraService`) per 2-minute sweep regardless of thread count, and priority sort needs fresh data for threads nobody has open. Options: (a) ignore BackgroundPolicy; (b) skip sweeps entirely when no client is connected. Recommendation: (a); revisit only if Jira rate limits show up in P7.
 
 2. **No branch-detection backfill when Jira is connected later.** Context: the spec says detection runs "when a thread's branch is set or changes" and "only when Jira is configured". A thread whose branch was set before Jira was connected therefore never gets its branch link. Options: (a) as written (no backfill); (b) on (re)connect, run detection over all non-archived threads' current branches. (b) would also re-add nothing dismissed (tombstones are kept), but it links tickets on many old threads at once, which may surprise the user. Recommendation: (a) for now; the user can link manually or the agent links proactively. Decision for the user if they expect connect to annotate existing threads.
