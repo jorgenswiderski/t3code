@@ -140,10 +140,10 @@ describe("checkClaudeProviderStatus", () => {
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, versionOnlySpawner))),
   );
 
-  it.effect("takes windows from the bundled catalog the adapter uses, not the runtime one", () =>
+  it.effect("takes windows from the runtime catalog the adapter uses, not the bundled one", () =>
     Effect.gen(function* () {
       // A remote catalog can disagree with the bundled one. The adapter resolves
-      // windows from the bundled catalog, so clients must too, or a stored
+      // windows from the runtime catalog, so clients must too, or a stored
       // threshold reads as effective on one side and ineffective on the other.
       const runtimeCatalog = {
         models: BUNDLED_CLAUDE_MODEL_CATALOG.models.map((entry) =>
@@ -161,7 +161,7 @@ describe("checkClaudeProviderStatus", () => {
       );
       const haiku = status.models.find((model) => model.slug === "claude-haiku-4-5");
       assert.notEqual(bundledWindow("claude-haiku-4-5"), 400_000);
-      assert.equal(haiku?.contextWindowTokens, bundledWindow("claude-haiku-4-5"));
+      assert.equal(haiku?.contextWindowTokens, 400_000);
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, versionOnlySpawner))),
   );
 });

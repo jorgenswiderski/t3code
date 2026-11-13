@@ -444,14 +444,29 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
   });
 
   it("an instance value at or above a 200k model's window omits autoCompactWindow", () => {
-    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+    const input = {
       modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model: "claude-haiku-4-5", options: [] },
       nativeThreadId: "native-thread-auto-compact",
       resume: false,
       cwd: "/workspace",
       settings: AUTO_COMPACT_CLAUDE_SETTINGS,
-    });
-    assert.isFalse(hasAutoCompactWindowKey(options.settings));
+    };
+    assert.isFalse(hasAutoCompactWindowKey(ClaudeAdapterV2.makeClaudeQueryOptions(input).settings));
+
+    // The window comes from the runtime catalog, which can differ from the bundled one.
+    const widerCatalog = {
+      models: BUNDLED_CLAUDE_MODEL_CATALOG.models.map((entry) =>
+        entry.model.slug === "claude-haiku-4-5"
+          ? { ...entry, runtime: { ...entry.runtime, fixedContextWindowTokens: 400_000 } }
+          : entry,
+      ),
+    };
+    assert.equal(
+      autoCompactWindowOf(
+        ClaudeAdapterV2.makeClaudeQueryOptions({ ...input, modelCatalog: widerCatalog }),
+      ),
+      333_000,
+    );
   });
 
   it("no thread or instance value omits autoCompactWindow", () => {

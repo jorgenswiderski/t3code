@@ -117,15 +117,16 @@ const claudePresentation = (settings: ClaudeSettings) => ({
 });
 
 /**
- * Built-in models with their fixed context window, so clients know it before a turn.
- * Windows come from the bundled catalog, not the runtime one: the adapter resolves
- * them the same way, and both sides must agree on whether a stored threshold fits.
+ * Catalog models with their fixed context window, so clients know it before a turn.
+ * Pass the catalog the adapter resolves turns with: both sides must agree on whether a
+ * stored auto-compact threshold fits.
  */
 function withCatalogContextWindows(
   models: ReadonlyArray<ServerProviderModel>,
+  catalog: ClaudeModelCatalog,
 ): ReadonlyArray<ServerProviderModel> {
   const windows = new Map<string, number>();
-  for (const entry of BUNDLED_CLAUDE_MODEL_CATALOG.models) {
+  for (const entry of catalog.models) {
     const tokens = entry.runtime.fixedContextWindowTokens;
     if (typeof tokens === "number" && tokens > 0) windows.set(entry.model.slug, tokens);
   }
@@ -583,7 +584,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const allModels = claudeProviderModels(
-    withCatalogContextWindows(modelCatalog.models.map((entry) => entry.model)),
+    withCatalogContextWindows(
+      modelCatalog.models.map((entry) => entry.model),
+      modelCatalog,
+    ),
     claudeSettings.customModels,
   );
 
@@ -683,10 +687,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const probeFailure =
     probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
   const models = claudeProviderModels(
-    withCatalogContextWindows([
-      ...resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
-      ...claudeReportedModels(modelCatalog, claudeSettings.customModels, capabilities?.models),
-    ]),
+    withCatalogContextWindows(
+      [
+        ...resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
+        ...claudeReportedModels(modelCatalog, claudeSettings.customModels, capabilities?.models),
+      ],
+      modelCatalog,
+    ),
     claudeSettings.customModels,
   );
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
@@ -806,7 +813,10 @@ export const makePendingClaudeProvider = Effect.fn("ClaudeProvider.makePendingCl
   ): Effect.fn.Return<ServerProviderDraft> {
     const checkedAt = yield* nowIso;
     const models = claudeProviderModels(
-      withCatalogContextWindows(modelCatalog.models.map((entry) => entry.model)),
+      withCatalogContextWindows(
+        modelCatalog.models.map((entry) => entry.model),
+        modelCatalog,
+      ),
       claudeSettings.customModels,
     );
 

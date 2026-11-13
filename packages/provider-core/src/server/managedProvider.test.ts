@@ -367,6 +367,44 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
   );
 
+  it.effect("samples usage history when a periodic usage check recovers a failed probe", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const recovered = {
+          checkedAt: "2026-04-10T00:00:05.000Z",
+          windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 10 }],
+        } as const;
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          refreshOnInterval: false,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.succeed({
+            ...refreshedSnapshot,
+            usageLimits: {
+              checkedAt: "2026-04-10T00:00:01.000Z",
+              windows: [],
+              unavailable: { reason: "probeFailed", message: "Usage probe timed out." },
+            },
+          }),
+          checkUsageLimits: Effect.succeed(recovered),
+          refreshInterval: "1 second",
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        yield* TestClock.adjust("1 second");
+
+        assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, {
+          ...recovered,
+          windows: [
+            { ...recovered.windows[0], history: [{ at: recovered.checkedAt, usedPercent: 10 }] },
+          ],
+        });
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+  );
+
   it.effect("reruns the provider check when streamed settings change", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1216,6 +1254,35 @@ describe("makeManagedServerProvider", () => {
             },
           ],
         });
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect("a complete reading that matches the probe still drops the probe's plan label", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const usageLimits = {
+          checkedAt: "2026-04-10T00:00:04.000Z",
+          windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 70 }],
+        } as const;
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.succeed({
+            ...refreshedSnapshot,
+            auth: { ...refreshedSnapshot.auth, label: "Pro" },
+            usageLimits,
+          }),
+          refreshOnInterval: false,
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        assert.strictEqual((yield* provider.getSnapshot).auth.label, "Pro");
+
+        yield* provider.applyUsageLimits({ ...usageLimits, complete: true });
+        assert.strictEqual((yield* provider.refresh).auth.label, undefined);
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

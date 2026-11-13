@@ -281,12 +281,16 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         // A lagging reading also lands here: the raise in `attachUsageHistory`
         // restores what is already published, so it must not publish again.
         const published = attachUsageHistory(usageLimits, usageHistory);
+        const usageAuthLabel = label ?? (complete ? null : state.usageAuthLabel);
         if (
           usageHistory === state.usageHistory &&
           usageLimitsLookSame(published, state.snapshot.usageLimits) &&
           !relabel
         ) {
-          return [null, state] as const;
+          return [
+            null,
+            usageAuthLabel === state.usageAuthLabel ? state : { ...state, usageAuthLabel },
+          ] as const;
         }
         const snapshot = withUsageLimits(
           relabel ? { ...state.snapshot, auth: { ...auth, label } } : state.snapshot,
@@ -298,7 +302,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
             ...state,
             snapshot,
             usageHistory,
-            usageAuthLabel: label ?? (complete ? null : state.usageAuthLabel),
+            usageAuthLabel,
           },
         ] as const;
       });
@@ -371,8 +375,20 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         published: state.snapshot.usageLimits,
         probed,
       });
-      const snapshot = withUsageLimits(state.snapshot, usageLimits);
-      return [snapshot, { ...state, snapshot }] as const;
+      const usageHistory =
+        usageLimits !== undefined && usageLimits === probed
+          ? recordUsageSamples({
+              history: state.usageHistory,
+              limits: usageLimits,
+              windowIds: undefined,
+              at: usageLimits.checkedAt,
+            })
+          : state.usageHistory;
+      const snapshot = withUsageLimits(
+        state.snapshot,
+        attachUsageHistory(usageLimits, usageHistory),
+      );
+      return [snapshot, { ...state, snapshot, usageHistory }] as const;
     });
     yield* PubSub.publish(changesPubSub, next);
   });

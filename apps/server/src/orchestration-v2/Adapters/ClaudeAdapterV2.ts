@@ -1877,6 +1877,7 @@ export function makeClaudeQueryOptions(input: {
     stored: input.threadAutoCompactTokens,
     modelSelection: input.modelSelection,
     settings: input.settings,
+    ...(input.modelCatalog === undefined ? {} : { catalog: input.modelCatalog }),
   });
   const compactQuerySettings =
     sdkWindow === undefined
@@ -11037,6 +11038,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             stored: turnInput.runtimePolicy.autoCompactTokens,
             modelSelection: turnInput.modelSelection,
             settings: adapterOptions.settings,
+            catalog: modelCatalog,
           });
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
