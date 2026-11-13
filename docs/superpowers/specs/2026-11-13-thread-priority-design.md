@@ -125,8 +125,12 @@ the events to `ProjectionStore.ts` beside `thread.tags-updated` and carry the fi
   when the incoming snapshot equals the stored one ignoring `syncedAt`.
 - `thread.priority.set` { threadId, source: "user" | "agent", priority: PriorityRef | null }.
   `null` clears that source.
-- Events: `thread.ticket-links-updated`, `thread.priority-updated`. Add protected client commands to
-  `CLIENT_GUARDED_RPC_SCOPES` and extend the permission tests (AGENTS.md "Taste").
+- Events: `thread.ticket-links-updated`, `thread.priority-updated`. The client commands travel over
+  the existing `orchestration.dispatchCommand` ws method, which `RPC_REQUIRED_SCOPES`
+  (`apps/server/src/auth/RpcAuthorization.ts`) already guards with `AuthOrchestrationOperateScope`;
+  `CLIENT_GUARDED_RPC_SCOPES` (`packages/contracts/src/clientRpcPermissions.ts`) is keyed by ws
+  method, so only new ws methods (such as a Jira connection test) get entries there and permission
+  tests (AGENTS.md "Taste").
 
 ### Effective priority and sort (client-runtime)
 
@@ -147,7 +151,7 @@ New pure helpers in `packages/client-runtime/src/state/` (beside `threadInbox.ts
 
 Call sites switch on the new setting: web `apps/web/src/components/Sidebar.tsx:682` (and the
 drag-preview path at L396), mobile `apps/mobile/src/features/threads/threadListV2.ts:803` and
-`ThreadArrangementSheet.tsx:209`.
+`apps/mobile/src/features/threads/ThreadArrangementSheet.tsx:209`.
 
 While Inbox order is "Priority", reordering *within* the inbox (`activeOrderKey` drags) is disabled,
 since the order is derived, not curated. Drags between sections (into or out of the inbox, pinned,
@@ -159,14 +163,16 @@ returned" restores the hand-made order; the within-level tie-break is the "Recen
 
 `ClientSettingsSchema` (`packages/contracts/src/settings.ts` L393, patch L2002): `sidebarInboxSortOrder:
 "returned" | "priority"`, default `"returned"`. Surfaced in Settings > General next to the Working
-section row (with search terms), in the command palette next to the existing sidebar sort entries,
-and in mobile's thread arrangement sheet.
+section row (with search terms), in the command palette (which has no sidebar sort entries today, so
+it sits with the general actions), and in mobile's thread arrangement sheet.
 
 ### Jira connection (server)
 
 - Server settings (`ServerSettings`, `settings.ts` L1359): `jira: { siteUrl, email, apiToken } |
-  null`, with `apiToken` held through the existing settings-secret mechanism
-  (`apps/server/src/secrets/settingsSecretValue.ts`), never sent to clients in plaintext.
+  null`, with `apiToken` held through the existing settings-secret mechanism (registered in
+  `mapSecretFieldGroups` in `apps/server/src/settingsSecrets.ts`, which drives storage and
+  `redactServerSettingsForClient`; references resolve through
+  `apps/server/src/secrets/settingsSecretValue.ts`), never sent to clients in plaintext.
 - A settings UI section to connect, test, and disconnect Jira (a "Test connection" result shows the
   account name or the error).
 - A server service, `JiraService`, owning all Jira HTTP:
@@ -178,7 +184,9 @@ and in mobile's thread arrangement sheet.
   - Ticket fetch: `POST /rest/api/3/search/jql` with `key in (...)`, fields `summary, status,
     priority, <rankField>`, ≤100 keys per request.
 - `ServerConfig` (`packages/contracts/src/server.ts` L624-682) gains optional
-  `ticketPriorityScale: { id, name }[]` plus a capability flag. With no Jira connection the scale is
+  `ticketPriorityScale: { id, name }[]`; the capability flag is
+  `ExecutionEnvironmentCapabilities.threadTickets` (`packages/contracts/src/environment.ts`), which
+  reaches clients inside `ServerConfig.environment.capabilities`. With no Jira connection the scale is
   Jira's default five (`Highest, High, Medium, Low, Lowest`, ids prefixed `default:`), so user and
   agent priorities still work.
 
