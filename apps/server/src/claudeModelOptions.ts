@@ -13,7 +13,6 @@ import {
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   getClaudeCatalogModelCapabilities,
-  isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogContextWindowTokens,
@@ -34,7 +33,10 @@ export function compileClaudeModelSelection(
   catalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
 ): CompiledClaudeModelSelection {
   const capabilities = getClaudeCatalogModelCapabilities(catalog, selection.model);
-  const descriptors = getProviderOptionDescriptors({ caps: capabilities });
+  const descriptors = getProviderOptionDescriptors({
+    caps: capabilities,
+    selections: selection.options,
+  });
   const supportsBoolean = (id: string) =>
     descriptors.some((descriptor) => descriptor.type === "boolean" && descriptor.id === id);
   const rawEffort = getModelSelectionStringOptionValue(selection, "effort");
@@ -46,10 +48,11 @@ export function compileClaudeModelSelection(
   const thinking = supportsBoolean("thinking")
     ? getModelSelectionBooleanOptionValue(selection, "thinking")
     : undefined;
+  const ultracode = descriptors.find((descriptor) => descriptor.id === "ultracode")?.currentValue;
   const settings = {
     ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
     ...(typeof fastMode === "boolean" ? { fastMode } : {}),
-    ...(isClaudeCatalogUltracodeEffort(resolvedEffort) ? { ultracode: true } : {}),
+    ...(typeof ultracode === "boolean" ? { ultracode } : {}),
   };
   const apiModelId = resolveClaudeCatalogApiModelId(catalog, selection);
   const promptEffort = resolvePromptInjectedEffort(capabilities, rawEffort) ?? undefined;
@@ -95,6 +98,11 @@ function claudeAutoCompactWindowForTokens(tokens: number): number {
     Math.max(tokens + CLAUDE_AUTO_COMPACT_BUFFER_TOKENS, CLAUDE_AUTO_COMPACT_WINDOW_MIN),
     CLAUDE_AUTO_COMPACT_WINDOW_MAX,
   );
+}
+
+/** SDK `autoCompactWindow` → the user-facing tokens Claude compacts at. */
+export function claudeAutoCompactTokensForWindow(window: number): number {
+  return window - CLAUDE_AUTO_COMPACT_BUFFER_TOKENS;
 }
 
 export interface ClaudeAutoCompactResolution {

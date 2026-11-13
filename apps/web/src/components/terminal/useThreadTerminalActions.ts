@@ -69,15 +69,15 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     threadRef !== null &&
     readEnvironmentScope(environmentId ?? threadRef.environmentId, AuthTerminalOperateScope);
 
-  const terminalEnvironmentId = (terminalId: string) =>
-    threadRef === null
+  const terminalEnvironmentId = (terminalId: string, target = threadRef) =>
+    target === null
       ? null
       : selectTerminalEnvironmentId(
           selectThreadTerminalUiState(
             useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-            threadRef,
+            target,
           ),
-          threadRef,
+          target,
           terminalId,
         );
 
@@ -162,6 +162,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     readonly location?: TerminalLaunchLocation | null;
     readonly environmentId?: EnvironmentId;
     readonly extraEnv?: Record<string, string>;
+    readonly stopOnSettle?: boolean;
     readonly size?: { readonly cols: number; readonly rows: number };
   }) => {
     if (!threadRef || !project) return null;
@@ -184,16 +185,22 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
           ...(input.extraEnv ? { extraEnv: input.extraEnv } : {}),
         }),
         ...input.size,
+        ...(input.stopOnSettle !== undefined ? { stopOnSettle: input.stopOnSettle } : {}),
       },
     });
     return { terminalId, result };
   };
 
   /** Ends a session and deletes its history. A failed close falls back to typing `exit`. */
-  const closeTerminalSession = (terminalId: string) => {
-    const environmentId = terminalEnvironmentId(terminalId);
-    if (!threadRef || environmentId === null || !canWrite(environmentId)) return;
-    const threadId = threadRef.threadId;
+  const closeTerminalSession = (terminalId: string, target = threadRef) => {
+    const environmentId = terminalEnvironmentId(terminalId, target);
+    if (
+      !target ||
+      environmentId === null ||
+      !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
+    )
+      return;
+    const threadId = target.threadId;
     void (async () => {
       const closeResult = await closeTerminalCommand({
         environmentId,

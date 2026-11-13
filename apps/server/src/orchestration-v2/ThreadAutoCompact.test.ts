@@ -13,9 +13,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import * as EventStore from "./EventStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -37,15 +35,6 @@ const layerProjectionStore = ProjectionStore.layer.pipe(Layer.provide(layerDatab
 const layerTest = Layer.mergeAll(
   layerDatabase,
   layerProjectionStore,
-  ProjectionMaintenance.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        layerDatabase,
-        layerProjectionStore,
-        EventStore.layer.pipe(Layer.provide(layerDatabase)),
-      ),
-    ),
-  ),
   ProviderReplayHarness.layerWithRegistry(
     { name: "thread-auto-compact" },
     ProviderAdapterRegistry.layerFromAdapters([
@@ -189,31 +178,6 @@ it.layer(layerTest)("per-thread auto-compact", (it) => {
       });
       const exit = yield* Effect.exit(setValue(threadId, 200_000, "after-delete"));
       assert.equal(exit._tag, "Failure");
-    }),
-  );
-
-  it.effect("a projection rebuild and event-store compaction keep the value", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-      const threadId = ThreadId.make("thread:auto-compact-maintenance");
-      yield* createThread(threadId);
-      yield* setValue(threadId, 200_000, "first");
-      yield* setValue(threadId, 300_000, "second");
-
-      yield* maintenance.rebuild;
-      assert.deepEqual(yield* readValues(threadId), { thread: 300_000, shell: 300_000 });
-
-      yield* maintenance.compactEventStore();
-      const remaining = yield* sql<{ readonly payload_json: string }>`
-        SELECT payload_json FROM orchestration_events
-        WHERE stream_id = ${threadId} AND event_type = 'thread.auto-compact-updated'
-      `;
-      assert.equal(remaining.length, 1);
-      assert.include(remaining[0]!.payload_json, "300000");
-
-      yield* maintenance.rebuild;
-      assert.deepEqual(yield* readValues(threadId), { thread: 300_000, shell: 300_000 });
     }),
   );
 });

@@ -1,14 +1,15 @@
 import { Button } from "../ui/button";
 import { cn } from "~/lib/utils";
-import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
+import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
+import { formatContextWindowTokens } from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   barTickLeftPercent,
-  formatContextWindowCompactionMessage,
   formatContextWindowCost,
   shouldIgnoreMeterClose,
   type ContextWindowAutoCompact,
 } from "./ContextWindowMeter.logic";
+import { formatContextWindowCompactionMessage } from "./compaction.logic";
 import { AutoCompactControl } from "./AutoCompactControl";
 import type { ModelSelection, TimestampFormat } from "@t3tools/contracts";
 import type { RequestIdentity } from "@t3tools/shared/usagePacing";
@@ -53,7 +54,6 @@ export function ContextWindowMeter(props: {
   /** What the next request would run with; a different model or effort drops the cache dot. */
   nextModelSelection: ModelSelection | null | undefined;
   timestampFormat: TimestampFormat;
-  modelDisplayName?: string | null;
   onCompact?: (() => void) | undefined;
   /** The agent is working, so compacting waits in the queue until it finishes. */
   compactQueues?: boolean | undefined;
@@ -66,7 +66,6 @@ export function ContextWindowMeter(props: {
     liveUsage,
     nextModelSelection,
     timestampFormat,
-    modelDisplayName,
     onCompact,
     compactQueues,
     compactDisabled,
@@ -93,10 +92,7 @@ export function ContextWindowMeter(props: {
   const tickFraction = autoCompact?.view.tickFraction ?? null;
   const barTickLeft = barTickLeftPercent(tickFraction);
   const compactsAutomaticallyMessage = usage?.compactsAutomatically
-    ? formatContextWindowCompactionMessage(
-        modelDisplayName,
-        autoCompact?.appliedTokens ?? usage.autoCompactThreshold,
-      )
+    ? formatContextWindowCompactionMessage(autoCompact?.appliedTokens ?? usage.autoCompactThreshold)
     : null;
 
   return (

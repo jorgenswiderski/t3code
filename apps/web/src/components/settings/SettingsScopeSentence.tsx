@@ -50,7 +50,7 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/snap-shot",
   "/settings/usage-pacing",
   "/settings/connections",
-  // Network access and authorized clients belong to the environment serving this app.
+  // Access picks its environment on the page itself.
   "/settings/access",
   "/settings/about",
 ]);
@@ -325,17 +325,18 @@ function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsSco
             other.group.projectKey !== group.projectKey &&
             other.group.displayName === group.displayName,
         );
+        const location =
+          sameName.length === 0
+            ? environments.length > 1
+              ? group.workspaceRoot
+              : ""
+            : sameName.some((other) => other.machines === machines)
+              ? `${machines} · ${group.workspaceRoot}`
+              : machines;
         return {
           value: group.projectKey,
           label: group.displayName,
-          secondary:
-            sameName.length === 0
-              ? environments.length > 1
-                ? group.workspaceRoot
-                : ""
-              : sameName.some((other) => other.machines === machines)
-                ? `${machines} · ${group.workspaceRoot}`
-                : machines,
+          secondary: group.archived ? ["Archived", location].filter(Boolean).join(" · ") : location,
           icon: <ProjectFavicon project={group} className="size-3.5 shrink-0" />,
         };
       })}
