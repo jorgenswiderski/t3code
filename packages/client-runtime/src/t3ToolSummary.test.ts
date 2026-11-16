@@ -52,6 +52,24 @@ describe("summarizeT3ToolCalls", () => {
     expect(summarizeT3ToolCalls("unlink-pr", [uncounted]).label).toBe("Unlinked pull requests");
   });
 
+  it("counts the Jira tickets linked and unlinked, and says a priority was set", () => {
+    const link = (key: string) => completed({ ticket: key }, { key, alreadyLinked: false });
+    expect(summarizeT3ToolCalls("link-ticket", [link("ACME-1"), link("ACME-1")]).label).toBe(
+      "Linked 1 Jira ticket",
+    );
+    expect(summarizeT3ToolCalls("link-ticket", [link("ACME-1"), link("ACME-2")]).label).toBe(
+      "Linked 2 Jira tickets",
+    );
+    expect(
+      summarizeT3ToolCalls("unlink-ticket", [completed({ ticket: "ACME-1" }, { key: "ACME-1" })])
+        .label,
+    ).toBe("Unlinked 1 Jira ticket");
+    expect(
+      summarizeT3ToolCalls("set-priority", [completed({ priority: "High" }, { changed: true })])
+        .label,
+    ).toBe("Set thread priority");
+  });
+
   it("excludes failed and unfinished sends even if the provider reports completed", () => {
     const calls: T3ToolSummaryCall[] = [
       completed({ threadId: "success" }, { messageId: "ok", threadId: "success" }),
