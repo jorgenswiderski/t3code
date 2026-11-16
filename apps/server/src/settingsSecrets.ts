@@ -4,6 +4,7 @@ import {
   CloudSpeechCredentials,
   CodexSettings,
   EasDeviceHostConfig,
+  JiraSettings,
   type ProviderInstanceConfig,
   type ServerSettings,
   type SettingsSecretValue,
@@ -51,6 +52,7 @@ const textGeneratorSecretFields = secretSettingsFields(TextGeneratorConfig);
 const voiceSecretFields = secretSettingsFields(CloudSpeechCredentials);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
+const jiraSecretFields = secretSettingsFields(JiraSettings);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
 
 export interface SettingsSecret {
@@ -247,6 +249,12 @@ function mapSecretFieldGroups(
       ) as SimlockDeviceHostConfig,
   );
 
+  // A single value, never per host, so the slot name is stable.
+  const jira =
+    settings.jira === null
+      ? null
+      : (mapFields(settings.jira, jiraSecretFields, () => "jira-api-token") as JiraSettings);
+
   return {
     ...settings,
     cloudSpeechCredentials: mapFields(
@@ -260,6 +268,7 @@ function mapSecretFieldGroups(
     textGenerators,
     easDeviceHosts,
     simlockDeviceHosts,
+    jira,
   };
 }
 

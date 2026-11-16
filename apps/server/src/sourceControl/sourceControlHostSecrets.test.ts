@@ -167,6 +167,7 @@ it.effect("reads a collected reference again once it is invalidated", () =>
     cache.set("voice#key", "stale");
     cache.set("expo#token", "stale");
     cache.set("simlock#token", "stale");
+    cache.set("jira#token", "stale");
     assert.deepEqual((yield* read()).bitbucket, {
       email: "me@example.test",
       accessToken: "stale",
@@ -181,12 +182,18 @@ it.effect("reads a collected reference again once it is invalidated", () =>
         textGenerators: {},
         easDeviceHosts,
         simlockDeviceHosts,
+        jira: {
+          siteUrl: "https://acme.atlassian.net",
+          email: "me@example.test",
+          apiToken: source("jira#token"),
+        },
       }),
     );
     assert.isFalse(cache.has("cliproxy#key"));
     assert.isFalse(cache.has("voice#key"));
     assert.isFalse(cache.has("expo#token"));
     assert.isFalse(cache.has("simlock#token"));
+    assert.isFalse(cache.has("jira#token"));
     assert.deepEqual((yield* read()).bitbucket, {
       email: "me@example.test",
       accessToken: "rotated",
