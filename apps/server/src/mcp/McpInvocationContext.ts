@@ -131,6 +131,8 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
+  /** True while Jira is configured here; `/mcp` reads it per request, and absent means off. */
+  readonly ticketTracker?: boolean;
 }
 
 /**
@@ -170,6 +172,13 @@ export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.linkedEnvironments !== false;
+};
+
+/** `McpSchema.EnabledWhen` for the ticket tools, listed only while Jira is configured. */
+export const visibleWhileTicketsOn = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.ticketTracker === true;
 };
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"

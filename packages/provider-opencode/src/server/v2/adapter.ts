@@ -757,6 +757,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       (state.goalRefreshing || (state.goalFresh && state.providerThread.goal?.status === "active"));
     let client = connection.client;
     const sessionScope = yield* Effect.scope;
+    // Read once: this session's MCP tool list is fixed, and the text must not run ahead of it.
+    const ticketLinking = yield* input.ticketLinking ?? Effect.succeed(false);
     // Project config changes model limits; key by directory because this runtime serves all instance threads.
     const contextWindows = new Map<string, Map<string, number>>();
     const directoryOf = (cwd: string | null | undefined) => cwd ?? host.paths.cwd;
@@ -3987,7 +3989,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (mcpAvailable) state.mcp = wanted;
       }
       const instructions = [
-        buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
+        buildRuntimeInstructions({
+          harness: "OpenCode",
+          model: turnInput.modelSelection.model,
+          ticketLinking: ticketLinking && mcpAvailable,
+        }),
         t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
       ]
         .filter((part) => part !== undefined && part.length > 0)

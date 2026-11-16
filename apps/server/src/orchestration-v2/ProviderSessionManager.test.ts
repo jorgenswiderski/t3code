@@ -41,6 +41,8 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as JiraService from "../jira/JiraService.ts";
+import { makeTestJiraService } from "../jira/testing/JiraServiceTest.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
@@ -431,6 +433,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly beforeOpen?: (input: {
       readonly providerSessionId: ProviderSessionId;
       readonly initialProviderItemIdentityVersion?: 2;
+      readonly ticketLinking?: Effect.Effect<boolean>;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
@@ -585,6 +588,7 @@ function layerTest(input: {
   readonly beforeOpen?: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly initialProviderItemIdentityVersion?: 2;
+    readonly ticketLinking?: Effect.Effect<boolean>;
   }) => Effect.Effect<void>;
   readonly failReleaseEventWrites?: boolean;
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
@@ -605,6 +609,7 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly jiraLayer?: Layer.Layer<JiraService.JiraService>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -689,6 +694,7 @@ function layerTest(input: {
           layerTestStores,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.jiraLayer === undefined ? [] : [input.jiraLayer]),
         ),
       ),
     ),
@@ -1030,6 +1036,53 @@ it.effect("ProviderSessionManagerV2 opens independent sessions concurrently", ()
         }),
       ),
     );
+  }),
+);
+
+// The flag is read live by the adapter, so these pin where it comes from, which typecheck cannot.
+it.effect("ProviderSessionManagerV2 tells adapters whether Jira is configured", () =>
+  Effect.gen(function* () {
+    const openedWith = (jira: Layer.Layer<JiraService.JiraService> | undefined) =>
+      Effect.gen(function* () {
+        const state = yield* Ref.make(emptyState);
+        const seen = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
+        yield* Effect.gen(function* () {
+          const eventSink = yield* EventSink.EventSinkV2;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const now = yield* DateTime.now;
+          const threadId = ThreadId.make("thread-provider-session-manager-ticket-linking");
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          yield* eventSink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+          });
+          yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              state,
+              idleTimeoutMs: 60_000,
+              beforeOpen: (input) =>
+                Effect.gen(function* () {
+                  const enabled =
+                    input.ticketLinking === undefined ? undefined : yield* input.ticketLinking;
+                  yield* Ref.update(seen, (all) => [...all, enabled]);
+                }),
+              ...(jira === undefined ? {} : { jiraLayer: jira }),
+            }),
+          ),
+        );
+        return yield* Ref.get(seen);
+      });
+
+    const configured = yield* makeTestJiraService({ configured: true });
+    const unconfigured = yield* makeTestJiraService({ configured: false });
+    assert.deepEqual(yield* openedWith(configured.layer), [true]);
+    assert.deepEqual(yield* openedWith(unconfigured.layer), [false]);
+    assert.deepEqual(yield* openedWith(undefined), [false]);
   }),
 );
 

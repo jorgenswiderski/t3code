@@ -11,7 +11,13 @@ import {
 describe("buildCodexAdditionalContext", () => {
   describe.each([
     { model: "custom-model", modelName: "Custom 🦊 Model", reasoningEffort: "xhigh" },
-  ])("with runtime $model", (runtime) => {
+    {
+      model: "custom-model",
+      modelName: "Custom 🦊 Model",
+      reasoningEffort: "xhigh",
+      ticketLinking: true,
+    },
+  ])("with runtime $model and ticketLinking $ticketLinking", (runtime) => {
     it.each([undefined, { browser: true, device: true }])(
       "keeps every entry within Codex's per-entry cap with tools %j",
       (availability) => {

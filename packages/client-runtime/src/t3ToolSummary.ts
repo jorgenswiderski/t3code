@@ -413,6 +413,19 @@ export function summarizeT3ToolCalls(
     case "unlink-pr":
       label = phrase("Unlinked", "unlink", pullRequestQuantity(selected, "unlinkedCount"));
       break;
+    case "link-ticket":
+      label = phrase("Linked", "link", quantity(countEntities(entityIds("key")), "Jira ticket"));
+      break;
+    case "unlink-ticket":
+      label = phrase(
+        "Unlinked",
+        "unlink",
+        quantity(countEntities(entityIds("key")), "Jira ticket"),
+      );
+      break;
+    case "set-priority":
+      label = phrase("Set", "set", "thread priority");
+      break;
     case "watch-pr":
       label = phrase("Watching", "watch", quantity(selected.length, "pull request"));
       break;

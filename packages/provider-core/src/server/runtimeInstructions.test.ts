@@ -14,6 +14,23 @@ describe("buildRuntimeInstructions", () => {
     assert.notInclude(instructions, "<pull_request_linking>");
   });
 
+  it("adds the ticket block only when asked, after the PR block and without needing it", () => {
+    for (const runtime of [{ harness: "Codex" }, { harness: "Codex", ticketLinking: false }]) {
+      assert.notInclude(buildRuntimeInstructions(runtime), "<ticket_linking>");
+    }
+
+    const both = buildRuntimeInstructions({ harness: "Codex", ticketLinking: true });
+    assert.isAbove(both.indexOf("<ticket_linking>"), both.indexOf("</pull_request_linking>"));
+
+    const ticketsOnly = buildRuntimeInstructions({
+      harness: "Antigravity",
+      pullRequestLinking: false,
+      ticketLinking: true,
+    });
+    assert.include(ticketsOnly, "<ticket_linking>");
+    assert.notInclude(ticketsOnly, "<pull_request_linking>");
+  });
+
   it("links PRs the agent creates, takes over, or pushes to, and no others", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
 

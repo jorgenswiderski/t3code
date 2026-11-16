@@ -69,5 +69,8 @@ describe("resolveT3McpSummaryAction", () => {
       "schedule-update",
     );
     expect(resolveT3McpSummaryAction("delegate_task", { task: "x" })).toBe("delegate");
+    expect(resolveT3McpSummaryAction("link_ticket", {})).toBe("link-ticket");
+    expect(resolveT3McpSummaryAction("unlink_ticket", {})).toBe("unlink-ticket");
+    expect(resolveT3McpSummaryAction("set_thread_priority", {})).toBe("set-priority");
   });
 });
