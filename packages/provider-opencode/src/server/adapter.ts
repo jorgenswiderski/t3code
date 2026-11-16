@@ -948,6 +948,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
     openSession: Effect.fn("OpenCodeAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const scope = yield* Effect.scope;
+        // Read once: this session's MCP tool list is fixed, and the text must not run ahead of it.
+        const ticketLinking = yield* input.ticketLinking ?? Effect.succeed(false);
         const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
         const connection = yield* runtime.connectToOpenCodeServer({
           binaryPath: options.settings.binaryPath,
@@ -2965,7 +2967,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ...(variant === undefined ? {} : { variant }),
             system: [
               orchestrationSystemPrompt,
-              buildRuntimeInstructions({ harness: "OpenCode", model: turn.modelSelection.model }),
+              buildRuntimeInstructions({
+                harness: "OpenCode",
+                model: turn.modelSelection.model,
+                ticketLinking,
+              }),
             ]
               .filter(Boolean)
               .join("\n\n"),

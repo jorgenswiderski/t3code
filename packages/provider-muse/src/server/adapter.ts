@@ -319,6 +319,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       if (input.runtimePolicy.interactionMode === "plan")
         return yield* protocolError("Muse Code does not support dedicated Plan mode");
       const scope = yield* Effect.scope;
+      // Read once: this session's MCP tool list is fixed, and the text must not run ahead of it.
+      const ticketLinking = yield* input.ticketLinking ?? Effect.succeed(false);
       // Native realpath also corrects filesystem case, which Muse validates.
       const requestedCwd = input.runtimePolicy.cwd ?? providerHost.paths.cwd;
       const cwd = yield* museCanonicalPath(requestedCwd);
@@ -2189,6 +2191,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                       harness: "Muse Code",
                       model: session.model ?? undefined,
                       reasoningEffort: effort,
+                      ticketLinking,
                     }),
                   },
                   ...parts,

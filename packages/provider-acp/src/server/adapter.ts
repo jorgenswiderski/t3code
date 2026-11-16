@@ -1708,6 +1708,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
     openSession: Effect.fn("AcpAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
+        // Read once: this session's MCP tool list is fixed, and the text must not run ahead of it.
+        const ticketLinking = yield* input.ticketLinking ?? Effect.succeed(false);
         let itemIdentityVersion: 2 | undefined =
           input.initialProviderItemIdentityVersion ??
           (input.initialNativeThreadId === undefined ? 2 : undefined);
@@ -8028,6 +8030,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 pullRequestLinking:
                   sessionSetup === null ||
                   flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,
+                ticketLinking,
               }),
             });
           }
