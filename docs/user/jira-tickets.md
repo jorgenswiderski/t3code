@@ -14,6 +14,8 @@ check them, then **Connect**. **Disconnect** removes the connection and the save
 - The connection belongs to the machine that runs the server. Each environment you use needs its own.
 - T3 Code reads only the tickets the token's account can see.
 - Without Jira you can still set a priority on a thread. Linking tickets needs a connection.
+- The mobile app has no Jira connection screen. Connect on web or desktop; mobile uses the server's
+  connection.
 
 ## Link tickets
 
@@ -21,7 +23,11 @@ check them, then **Connect**. **Disconnect** removes the connection and the save
 - A ticket key in a thread's branch name, such as `feature/PROJ-123-login`, is linked for you when the
   branch is set or changes.
 - To link one yourself, open the thread's menu, the command palette, or the thread details card and
-  choose **Link Jira ticket**. Paste a ticket link or a key such as `PROJ-123`.
+  choose **Link Jira ticket**. Paste a ticket link or a key such as `PROJ-123`. The link must be for
+  the Jira site the server is connected to.
+
+On mobile, tap the ticket button in a thread's top bar to open **Jira tickets**. Tap **+** to link a
+ticket. Tap a ticket to open it in Jira, or touch and hold it to open, copy its link, or unlink it.
 
 Linked tickets appear in **Jira tickets** in the thread details card with their status. Select one to
 open it in Jira. Remove one with the **X** on its row, **Unlink** in the thread menu, or **Unlink** in
@@ -44,7 +50,10 @@ A thread's priority comes from the first of these that applies:
    thread.
 3. The agent's guess.
 
-A small arrow on a thread in the sidebar shows the priority, and its tooltip says where it came from:
+On mobile, touch and hold a thread in the list and choose **Priority**, or use **Priority** at the top
+of the **Jira tickets** sheet.
+
+A small arrow on a thread in the sidebar (or beside the pin in the mobile list) shows the priority, and its tooltip says where it came from:
 **You**, **Jira** with the ticket, or **Agent guess**. A priority you set that is not on the current
 scale, for example after you connect a different Jira site, shows with a dashed icon until you pick a
 new one or clear it.
@@ -53,7 +62,8 @@ new one or clear it.
 
 To list your inbox by priority, set **Settings → General → Inbox order** to **Priority**. Within a
 priority, threads follow their Jira board rank, then the one that came back to you most recently.
-Threads with no priority come last, and pinned threads stay on top. See
+Threads with no priority come last, and pinned threads stay on top. On mobile, **Inbox order** is in
+**Settings → General** and in **Arrange threads**. See
 [Working with threads](./thread-sidebar.md#fold-working-threads-beta).
 
 ## Freshness

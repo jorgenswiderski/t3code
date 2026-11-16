@@ -148,7 +148,8 @@ While this is on, the active list is ordered by when each thread last came back 
 cannot drag or move threads within it. Your saved order returns when you turn it off.
 
 **Settings → General → Inbox order** switches that order from **Recently returned** to **Priority**,
-which sorts the active list by each thread's priority. Priority applies whether or not the Working
+which sorts the active list by each thread's priority. On mobile, the same choice is in
+**Arrange threads**. Priority applies whether or not the Working
 section is on, and the same limit on dragging applies while it is on. See
 [Jira tickets and priority](./jira-tickets.md).
 
