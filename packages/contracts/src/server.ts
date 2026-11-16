@@ -29,6 +29,8 @@ import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
 import { ServerSettings } from "./settings.ts";
+import { JiraConnectionStatus } from "./jira.ts";
+import { PriorityRef } from "./threadTicket.ts";
 import { DesktopUpdateChannelSchema } from "./ipc.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
@@ -678,6 +680,9 @@ export const ServerConfig = Schema.Struct({
   environmentThemes: Schema.optional(Schema.Array(EnvironmentTheme)),
   /** Stream-only and opt-in; the source stream emits the current set on subscribe. */
   usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
+  /** The environment's ticket priority scale, highest first; Jira's default five when not connected. */
+  ticketPriorityScale: Schema.optionalKey(Schema.Array(PriorityRef)),
+  jiraStatus: Schema.optionalKey(JiraConnectionStatus),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
@@ -799,6 +804,21 @@ export const ServerConfigStreamUsageLimitSourcesUpdatedEvent = Schema.Struct({
 export type ServerConfigStreamUsageLimitSourcesUpdatedEvent =
   typeof ServerConfigStreamUsageLimitSourcesUpdatedEvent.Type;
 
+export const ServerConfigTicketTrackerUpdatedPayload = Schema.Struct({
+  ticketPriorityScale: Schema.Array(PriorityRef),
+  jiraStatus: JiraConnectionStatus,
+});
+export type ServerConfigTicketTrackerUpdatedPayload =
+  typeof ServerConfigTicketTrackerUpdatedPayload.Type;
+
+export const ServerConfigStreamTicketTrackerUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("ticketTrackerUpdated"),
+  payload: ServerConfigTicketTrackerUpdatedPayload,
+});
+export type ServerConfigStreamTicketTrackerUpdatedEvent =
+  typeof ServerConfigStreamTicketTrackerUpdatedEvent.Type;
+
 export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
@@ -806,6 +826,7 @@ export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSettingsUpdatedEvent,
   ServerConfigStreamEnvironmentThemesUpdatedEvent,
   ServerConfigStreamUsageLimitSourcesUpdatedEvent,
+  ServerConfigStreamTicketTrackerUpdatedEvent,
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 

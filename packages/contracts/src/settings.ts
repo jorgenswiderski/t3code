@@ -24,6 +24,7 @@ import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { UsageModelFilter } from "./usage.ts";
 import { SecretProviderId, SecretProviderSlug } from "./secretReference.ts";
 import { SettingsSecretValue } from "./settingsSecretValue.ts";
+import { JiraSettings, JiraSiteUrl } from "./jira.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
@@ -1562,6 +1563,7 @@ export const ServerSettings = Schema.Struct({
   textGenerators: Schema.Record(ProviderInstanceId, TextGeneratorConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  jira: Schema.NullOr(JiraSettings).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   secretProviders: Schema.Record(SecretProviderId, SecretProviderConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1942,6 +1944,16 @@ export const ServerSettingsPatch = Schema.Struct({
   // Merge per entry like usageLimitSources; null removes an entry.
   textGenerators: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, Schema.NullOr(TextGeneratorConfig)),
+  ),
+  // null disconnects; an omitted or redacted apiToken keeps the saved one.
+  jira: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        siteUrl: JiraSiteUrl,
+        email: TrimmedNonEmptyString,
+        apiToken: Schema.optionalKey(SettingsSecretValue),
+      }),
+    ),
   ),
   secretProviders: Schema.optionalKey(
     Schema.Record(SecretProviderId, Schema.NullOr(SecretProviderConfigWrite)),
