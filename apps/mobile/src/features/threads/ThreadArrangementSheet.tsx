@@ -4,6 +4,10 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { sortInboxThreadsByReturn } from "@t3tools/client-runtime/state/thread-inbox";
+import {
+  sortInboxThreadsByPriority,
+  ticketPriorityScaleOf,
+} from "@t3tools/client-runtime/state/thread-priority";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, FlatList, Modal, Pressable, useWindowDimensions, View } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
@@ -38,6 +42,7 @@ import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   threadListInboxReturns,
 } from "./threadListV2";
+import { InboxOrderControl } from "./InboxOrderControl";
 import { useThreadListNow } from "./use-thread-list-now";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -176,7 +181,8 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
   const pendingOrder = useAtomValue(pendingThreadOrderAtom);
   const dropBusy = useAtomValue(threadDropBusyAtom);
   const { moveThread } = useThreadListActions();
-  const { workingShelfEnabled } = useThreadListV2ShelfPreferences();
+  const { workingShelfEnabled, inboxSortOrder } = useThreadListV2ShelfPreferences();
+  const priorityOrdered = inboxSortOrder === "priority";
   const now = useThreadListNow(threads);
   const [expanded, setExpanded] = useState({ snoozed: false, settled: false });
   const [settledVisibleCount, setSettledVisibleCount] = useState(
@@ -205,13 +211,19 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
     );
     return {
       pinned,
-      active: workingShelfEnabled
-        ? sortInboxThreadsByReturn(active, threadListInboxReturns.returnedAt)
-        : active,
+      active: priorityOrdered
+        ? sortInboxThreadsByPriority(
+            active,
+            (thread) => ticketPriorityScaleOf(configs.get(thread.environmentId)),
+            threadListInboxReturns.returnedAt,
+          )
+        : workingShelfEnabled
+          ? sortInboxThreadsByReturn(active, threadListInboxReturns.returnedAt)
+          : active,
       snoozed: parked.filter((thread) => effectiveSnoozed(thread, { now })),
       settled: sortSettledThreads(parked.filter((thread) => !effectiveSnoozed(thread, { now }))),
     };
-  }, [threads, configs, now, queuedThreadKeys, pendingOrder, workingShelfEnabled]);
+  }, [threads, configs, now, queuedThreadKeys, pendingOrder, workingShelfEnabled, priorityOrdered]);
   const listedSettled = sections.settled.filter(olderSettledShelf.isListed);
   useOlderSettledShelfGrowth(olderSettledShelf, listedSettled);
   const visibleSettled = listedSettled.slice(0, settledVisibleCount);
@@ -225,12 +237,12 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
         reorderableEnvironmentIds:
           section === "pinned"
             ? listEnvironments.pinReorderEnvironmentIds
-            : workingShelfEnabled
+            : workingShelfEnabled || priorityOrdered
               ? new Set()
               : listEnvironments.activeReorderEnvironmentIds,
       });
     return { pinned: planner("pinned"), active: planner("active") };
-  }, [sections, threads, listEnvironments, workingShelfEnabled]);
+  }, [sections, threads, listEnvironments, workingShelfEnabled, priorityOrdered]);
   const rows = useMemo(() => {
     const result: Row[] = [];
     let offset = 0;
@@ -401,6 +413,9 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
               <Text className="px-5 pb-3 text-sm text-foreground-muted">
                 Drag to reorder, pin, or settle. Changes save when you drop.
               </Text>
+              <View className="px-5 pb-3">
+                <InboxOrderControl variant="standalone" />
+              </View>
               <View
                 onLayout={(event) => {
                   geometry.current.height = event.nativeEvent.layout.height;

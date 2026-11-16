@@ -1,4 +1,5 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import type { SidebarInboxSortOrder } from "@t3tools/contracts/settings";
 import { AsyncResult } from "effect/reactivity";
 
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
@@ -12,6 +13,9 @@ export function useThreadListV2ShelfPreferences() {
   const settledShelfExpanded =
     loaded && preferencesResult.value.threadListSettledShelfExpanded === true;
   const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled !== false;
+  const inboxSortOrder = loaded
+    ? (preferencesResult.value.inboxSortOrder ?? "returned")
+    : "returned";
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
 
@@ -41,11 +45,18 @@ export function useThreadListV2ShelfPreferences() {
     });
   };
 
+  const setInboxSortOrder = (inboxSortOrder: SidebarInboxSortOrder) => {
+    if (!loaded) return;
+    savePreferences({ inboxSortOrder });
+  };
+
   return {
     loaded,
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,
+    inboxSortOrder,
+    setInboxSortOrder,
     workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,

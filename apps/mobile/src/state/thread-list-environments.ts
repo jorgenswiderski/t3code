@@ -1,3 +1,4 @@
+import { ticketPriorityScaleOf } from "@t3tools/client-runtime/state/thread-priority";
 import {
   resolveEnvironmentMachineKind,
   type EnvironmentId,
@@ -30,6 +31,7 @@ function selectEnvironment(config: ServerConfig, isConnected: boolean) {
     machineKind: resolveEnvironmentMachineKind(config),
     capabilities: config.environment.capabilities,
     snoozePresets: config.settings.snoozePresets,
+    ticketPriorityScale: ticketPriorityScaleOf(config),
   };
 }
 
@@ -63,12 +65,17 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
   const autoSettleOptOutEnvironmentIds = new Set<EnvironmentId>();
   const reorderableEnvironmentIds = new Set<EnvironmentId>();
   const snoozePresetsByEnvironmentId = new Map<EnvironmentId, ListEnvironment["snoozePresets"]>();
+  const ticketPriorityScaleByEnvironmentId = new Map<
+    EnvironmentId,
+    ListEnvironment["ticketPriorityScale"]
+  >();
   for (const [
     id,
-    { providers, machineKind, capabilities, isConnected, snoozePresets },
+    { providers, machineKind, capabilities, isConnected, snoozePresets, ticketPriorityScale },
   ] of environments) {
     providersByEnvironmentId.set(id, providers);
     snoozePresetsByEnvironmentId.set(id, snoozePresets);
+    ticketPriorityScaleByEnvironmentId.set(id, ticketPriorityScale);
     machineByEnvironmentId.set(id, machineKind);
     loadedEnvironmentIds.add(id);
     if (capabilities.threadAutoSettleOptOut === true) autoSettleOptOutEnvironmentIds.add(id);
@@ -85,6 +92,7 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
     activeReorderEnvironmentIds: reorderableEnvironmentIds,
     titleRegenerationEnvironmentIds: loadedEnvironmentIds,
     snoozePresetsByEnvironmentId,
+    ticketPriorityScaleByEnvironmentId,
   };
 }
 
@@ -108,12 +116,19 @@ export function createThreadListEnvironmentsAtom(
       if (prior && JSON.stringify(prior.snoozePresets) === JSON.stringify(selected.snoozePresets)) {
         selected.snoozePresets = prior.snoozePresets;
       }
+      if (
+        prior &&
+        JSON.stringify(prior.ticketPriorityScale) === JSON.stringify(selected.ticketPriorityScale)
+      ) {
+        selected.ticketPriorityScale = prior.ticketPriorityScale;
+      }
       const unchanged =
         prior &&
         prior.providers === selected.providers &&
         prior.machineKind === selected.machineKind &&
         prior.isConnected === selected.isConnected &&
         prior.snoozePresets === selected.snoozePresets &&
+        prior.ticketPriorityScale === selected.ticketPriorityScale &&
         capabilityKeys.every(
           (key) => (prior.capabilities[key] === true) === (selected.capabilities[key] === true),
         );

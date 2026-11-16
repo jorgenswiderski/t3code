@@ -56,6 +56,7 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
+  ArrowUpDownIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
   CheckIcon,
@@ -107,7 +108,7 @@ import {
   copyPromptLink,
   promptLinkRepositoryOf,
 } from "./promptLinks/copyPromptLink";
-import { useClientSettings } from "../hooks/useSettings";
+import { updateClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
@@ -442,6 +443,7 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
+  const inboxSortOrder = useClientSettings((settings) => settings.sidebarInboxSortOrder);
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -1606,6 +1608,20 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:inbox-order",
+    searchTerms: ["inbox", "sort", "order", "priority", "recently returned"],
+    title:
+      inboxSortOrder === "returned" ? "Sort inbox by priority" : "Sort inbox by recently returned",
+    icon: <ArrowUpDownIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await updateClientSettings({
+        sidebarInboxSortOrder: inboxSortOrder === "returned" ? "priority" : "returned",
+      });
+    },
+  });
 
   actionItems.push({
     kind: "action",
