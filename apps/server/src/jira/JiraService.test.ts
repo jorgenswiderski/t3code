@@ -464,6 +464,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("JiraService", (i
     }).pipe(Effect.provide(jiraLayer(fake, locked.resolver)), Effect.scoped);
   });
 
+  it.effect("lets one read through while a once-locked token waits to reconnect", () => {
+    const fake = makeFakeJira({ priorities: [...CUSTOM_PRIORITIES] });
+    const locked = lockedProvider();
+    return Effect.gen(function* () {
+      const jira = yield* JiraService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const watcher = yield* watch();
+      yield* settings.updateSettings({ jira: { ...savedJira, apiToken: tokenReference } });
+      yield* watcher.untilStatus((status) => status.state === "error");
+
+      locked.unlocked = true;
+      const read = jira.fetchTickets([key("PROJ-1")]).pipe(Effect.result);
+      const outcomes = yield* Effect.all([read, read], { concurrency: "unbounded" });
+      assert.sameMembers(
+        outcomes.map((outcome) =>
+          outcome._tag === "Success" ? "read" : (outcome.failure as { _tag: string })._tag,
+        ),
+        ["read", "JiraAuthError"],
+      );
+      yield* watcher.untilStatus((status) => status.accountName !== null);
+    }).pipe(Effect.provide(jiraLayer(fake, locked.resolver)), Effect.scoped);
+  });
+
   it.effect("connects afresh when a test of the saved settings reads a once-locked token", () => {
     const fake = makeFakeJira({ priorities: [...CUSTOM_PRIORITIES] });
     const locked = lockedProvider();

@@ -272,7 +272,15 @@ export const make = Effect.gen(function* () {
     const read = yield* readConnection;
     if (read.type !== "ready") return yield* new JiraNotConfiguredError();
     const cache = yield* Ref.get(cacheRef);
-    if (!cache.tokenRead) {
+    // Only the caller that claims the unread token goes ahead; the rest meet the auth pause until the reconnect runs.
+    const claimed =
+      !cache.tokenRead &&
+      (yield* Ref.modify(cacheRef, (current) =>
+        current.generation === cache.generation && !current.tokenRead
+          ? [true, { ...current, tokenRead: true }]
+          : [false, current],
+      ));
+    if (claimed) {
       // The token reads now (its provider was unlocked), so no request failed; connect afresh.
       yield* Queue.offer(reconnects, undefined);
     } else {
