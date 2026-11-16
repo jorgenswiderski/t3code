@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { makeTicketLink } from "./testkit/ticketFixtures.ts";
 import {
   isAutoSettlementCandidate,
   isSnoozed,
@@ -457,6 +458,51 @@ it.effect("sql: lists only active threads with pull request links, oldest first"
     );
     assert.deepEqual(
       (yield* store.getThreadsWithPullRequests(open)).map((thread) => thread.id),
+      [open],
+    );
+  }).pipe(Effect.provide(layerSql)),
+);
+
+it.effect("sql: lists only active threads with ticket links, oldest first", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const link = makeTicketLink({ key: "PROJ-1" });
+    yield* createThread("tickets-absent");
+    yield* createThread("tickets-empty", { ticketLinks: [] });
+    yield* createThread("tickets-archived", { archivedAt: old, ticketLinks: [link] });
+    const deleted = yield* createThread("tickets-deleted", { ticketLinks: [link] });
+    yield* store.apply({
+      id: EventId.make("event:tickets-deleted:deleted"),
+      type: "thread.deleted",
+      threadId: deleted,
+      occurredAt: now,
+      payload: { ...(yield* store.getThread(deleted))!, deletedAt: now },
+    });
+    const settled = yield* createThread("tickets-settled", {
+      settledOverride: "settled",
+      settledAt: old,
+      updatedAt: DateTime.subtract(now, { days: 12 }),
+      branch: "feature/proj-1",
+      ticketLinks: [link],
+    });
+    const open = yield* createThread("tickets-open", {
+      ticketLinks: [link, makeTicketLink({ key: "PROJ-2", source: "branch-dismissed" })],
+    });
+
+    const threads = yield* store.getThreadsWithTicketLinks();
+    assert.deepEqual(
+      threads.map((thread) => [thread.id, thread.branch, thread.ticketLinks?.length]),
+      [
+        [settled, "feature/proj-1", 1],
+        [open, "feature", 2],
+      ],
+    );
+    assert.deepEqual(threads[1]!.ticketLinks, [
+      link,
+      makeTicketLink({ key: "PROJ-2", source: "branch-dismissed" }),
+    ]);
+    assert.deepEqual(
+      (yield* store.getThreadsWithTicketLinks(open)).map((thread) => thread.id),
       [open],
     );
   }).pipe(Effect.provide(layerSql)),
