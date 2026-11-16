@@ -364,6 +364,7 @@ const cachedConfigSnapshotEvent = (config: ServerConfig): ServerConfigStreamEven
 export interface ServerConfigSubscriptionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
+  readonly ticketTracker?: boolean;
   readonly usageLimitsCommand?: boolean;
   readonly providerCatalogsOnDemand?: boolean;
 }
@@ -486,6 +487,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     yield* subscribe(WS_METHODS.subscribeServerConfig, {
       ...(subscription.environmentThemes === true ? { environmentThemes: true } : {}),
       ...(subscription.usageLimitSources === true ? { usageLimitSources: true } : {}),
+      ...(subscription.ticketTracker === true ? { ticketTracker: true } : {}),
       ...(subscription.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
       ...(subscription.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
     }).pipe(
@@ -756,6 +758,7 @@ export function createServerEnvironmentAtoms<R, E>(
     ) => Atom.Atom<ServerConfig | null>;
     readonly environmentThemes?: boolean;
     readonly usageLimitSources?: boolean;
+    readonly ticketTracker?: boolean;
     readonly usageLimitsCommand?: boolean;
     readonly providerCatalogsOnDemand?: boolean;
   },
@@ -772,6 +775,7 @@ export function createServerEnvironmentAtoms<R, E>(
         serverConfigStateChanges(environmentId, {
           ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
           ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
+          ...(options.ticketTracker === true ? { ticketTracker: true } : {}),
           ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
           ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
         }),
@@ -1614,6 +1618,10 @@ export function createServerEnvironmentAtoms<R, E>(
     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,
+    }),
+    testJiraConnection: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:test-jira-connection",
+      tag: WS_METHODS.serverTestJiraConnection,
     }),
     listTextGeneratorModels: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:list-text-generator-models",
