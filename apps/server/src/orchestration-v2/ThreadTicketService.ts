@@ -82,7 +82,7 @@ const make = Effect.gen(function* () {
 
   const notFound = (threadId: ThreadId) => new ThreadTicketThreadNotFoundError({ threadId });
 
-  /** Dispatches and reports whether the commit stored an event; these commands store none on a no-op. */
+  /** Dispatches and reports whether the commit stored an event; these commands store none on a no-op. Untraced: each public method's span already covers it. */
   const dispatchChange = Effect.fnUntraced(function* (input: TicketCommandInput) {
     const { threadId } = input;
     const thread = yield* projectionStore
