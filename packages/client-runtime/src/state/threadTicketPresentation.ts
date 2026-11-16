@@ -228,7 +228,7 @@ export const PRIORITY_SET_MENU_PREFIX = "priority:set:";
 export const PRIORITY_CLEAR_MENU_ID = "priority:clear";
 export const LINK_TICKET_MENU_ID = "link-ticket";
 export const UNLINK_TICKET_MENU_PREFIX = "unlink-ticket:";
-const OPEN_TICKETS_MENU_ID = "open-tickets";
+export const OPEN_TICKETS_MENU_ID = "open-tickets";
 
 export type TicketMenuAction =
   | { readonly type: "set-priority"; readonly priorityId: string }
