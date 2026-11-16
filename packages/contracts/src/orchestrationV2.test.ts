@@ -21,6 +21,7 @@ import {
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
 } from "./orchestrationV2.ts";
+import { EMPTY_THREAD_PRIORITY } from "./threadTicket.ts";
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
 
@@ -815,4 +816,96 @@ describe("per-thread auto-compact", () => {
       }).appliedAutoCompact,
     ).toEqual({ tokens: null });
   });
+});
+
+describe("thread tickets and priority", () => {
+  const decodeAppThreadJson = Schema.decodeUnknownSync(OrchestrationV2AppThreadJson);
+  const decodeDomainEventJson = Schema.decodeUnknownSync(OrchestrationV2DomainEventJson);
+  const threadJson = {
+    createdBy: "user",
+    creationSource: "web",
+    id: "thread-1",
+    projectId: "project-1",
+    title: "Thread",
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "gpt-5-codex" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread-1" },
+    forkedFrom: null,
+    createdAt: "2026-04-20T00:00:00.000Z",
+    updatedAt: "2026-04-20T00:00:00.000Z",
+    archivedAt: null,
+    deletedAt: null,
+  };
+  const link = {
+    tracker: "jira",
+    key: "PROJ-1",
+    url: "https://acme.atlassian.net/browse/PROJ-1",
+    source: "manual",
+    linkedAt: "2026-04-20T00:00:00.000Z",
+    snapshot: null,
+    syncError: null,
+  };
+
+  it("decodes old threads as absent and unreadable values as empty", () => {
+    const old = decodeAppThreadJson(threadJson);
+    expect(old.ticketLinks).toBeUndefined();
+    expect(old.priority).toBeUndefined();
+
+    const newer = decodeAppThreadJson({
+      ...threadJson,
+      ticketLinks: [{ ...link, source: "jira-epic" }],
+      priority: "high",
+    });
+    expect(newer.ticketLinks).toEqual([]);
+    expect(newer.priority).toEqual(EMPTY_THREAD_PRIORITY);
+  });
+
+  it("accepts the client commands and rejects the server-only sync", () => {
+    const base = { commandId: "command-1", threadId: "thread-1" };
+    for (const command of [
+      { ...base, type: "thread.ticket.link", key: "PROJ-1", source: "manual" },
+      { ...base, type: "thread.ticket.unlink", key: "PROJ-1" },
+      { ...base, type: "thread.priority.set", source: "user", priority: null },
+      {
+        ...base,
+        type: "thread.priority.set",
+        source: "agent",
+        priority: { id: "2", name: "High" },
+      },
+    ]) {
+      expect(decodeOrchestrationV2Command(command).type).toBe(command.type);
+    }
+    expect(() =>
+      decodeOrchestrationV2Command({
+        ...base,
+        type: "thread.ticket-link.sync",
+        key: "PROJ-1",
+        observedAt: "2026-04-20T00:00:00.000Z",
+        result: { type: "unreachable", syncError: "forbidden" },
+      }),
+    ).toThrow();
+  });
+
+  it.each(["thread.ticket-links-updated", "thread.priority-updated"])(
+    "decodes %s in the JSON union",
+    (type) => {
+      const event = decodeDomainEventJson({
+        id: "event-1",
+        type,
+        threadId: "thread-1",
+        occurredAt: "2026-04-20T00:00:00.000Z",
+        payload: {
+          ...threadJson,
+          ticketLinks: [link],
+          priority: { user: { id: "2", name: "High" }, agent: null },
+        },
+      });
+      expect(event.type).toBe(type);
+    },
+  );
 });
