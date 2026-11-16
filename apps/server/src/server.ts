@@ -7,6 +7,7 @@ import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as ThreadTicketService from "./orchestration-v2/ThreadTicketService.ts";
+import * as TicketSyncReactor from "./orchestration-v2/TicketSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
 // Effect wraps this raw Node HTTP server after its startup and write-error guards attach.
@@ -665,6 +666,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(layerPullRequestService),
     Layer.provide(ProjectionStoreV2.layer),
   ),
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const service = yield* TicketSyncReactor.TicketSyncReactor;
+      yield* service.start();
+    }),
+  ).pipe(Layer.provide(TicketSyncReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
   Layer.effectDiscard(
     Effect.gen(function* () {
       const service = yield* PullRequestWatchReactor.PullRequestWatchReactor;
