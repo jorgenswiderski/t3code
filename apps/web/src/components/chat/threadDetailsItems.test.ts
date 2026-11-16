@@ -11,10 +11,16 @@ const servers = THREAD_DETAILS_ITEMS.find((item) => item.id === "servers")!;
 
 describe("thread details items", () => {
   it.each([
-    { legacy: false, items: {}, usage: false, context: false },
-    { legacy: true, items: {}, usage: true, context: true },
-    { legacy: true, items: { usage: false }, usage: false, context: true },
-    { legacy: false, items: { usage: true, retired: false }, usage: true, context: false },
+    { legacy: false, items: {}, usage: false, context: false, tickets: true },
+    { legacy: true, items: {}, usage: true, context: true, tickets: true },
+    { legacy: true, items: { usage: false }, usage: false, context: true, tickets: true },
+    {
+      legacy: false,
+      items: { usage: true, retired: false, tickets: false },
+      usage: true,
+      context: false,
+      tickets: false,
+    },
   ])("resolves Usage and Context from overrides and the retired Labs flag: %o", (row) => {
     const visibility = resolveThreadDetailsVisibility({
       threadDetailsItems: row.items,
@@ -23,6 +29,7 @@ describe("thread details items", () => {
     expect(visibility.usage).toBe(row.usage);
     expect(visibility.context).toBe(row.context);
     expect(visibility.servers).toBe(true);
+    expect(visibility.tickets).toBe(row.tickets);
   });
 
   it("stores only choices that differ from the default", () => {
