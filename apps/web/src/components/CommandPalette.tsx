@@ -63,6 +63,7 @@ import {
   ChevronRightIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
+  FlagIcon,
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
@@ -78,6 +79,7 @@ import {
   PlugIcon,
   SquarePenIcon,
   TextSearchIcon,
+  UnlinkIcon,
   UserPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
@@ -249,6 +251,14 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
+import { openLinkTicketDialog } from "./tickets/linkTicketDialogState";
+import { useThreadTicketActions } from "~/hooks/useThreadTicketActions";
+import { ticketPriorityScaleOf } from "@t3tools/client-runtime/state/thread-priority";
+import {
+  threadPriorityMenu,
+  ticketUiAvailability,
+  visibleTicketChips,
+} from "@t3tools/client-runtime/state/thread-ticket-presentation";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
@@ -488,6 +498,11 @@ function OpenCommandPaletteDialog(props: {
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
+  const canOperateActiveThread = useEnvironmentScope(
+    activeThread?.environmentId ?? ("" as EnvironmentId),
+    AuthOrchestrationOperateScope,
+  );
+  const { setThreadPriority, unlinkThreadTicket } = useThreadTicketActions();
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
@@ -1437,6 +1452,84 @@ function OpenCommandPaletteDialog(props: {
         useRightPanelStore.getState().open(threadRef, "pull-requests");
       },
     });
+  }
+
+  if (activeThread !== null) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    const availability = ticketUiAvailability(activeThreadServerConfig);
+    if (availability.priority) {
+      const menu = threadPriorityMenu(
+        activeThread,
+        ticketPriorityScaleOf(activeThreadServerConfig),
+      );
+      actionItems.push({
+        kind: "submenu",
+        value: "action:thread-priority",
+        searchTerms: ["priority", "urgent", "important", "jira", "set"],
+        title: "Set thread priority…",
+        icon: <FlagIcon className={ITEM_ICON_CLASS} />,
+        addonIcon: <FlagIcon className={ADDON_ICON_CLASS} />,
+        disabled: !canOperateActiveThread,
+        groups: [
+          {
+            value: "thread-priority",
+            label: "Priority",
+            items: [
+              ...menu.entries.map(({ ref, checked }) => ({
+                kind: "action" as const,
+                value: `action:thread-priority:${ref.id}`,
+                searchTerms: [ref.name, "priority"],
+                title: ref.name,
+                icon: checked ? (
+                  <CheckIcon className={ITEM_ICON_CLASS} />
+                ) : (
+                  <span aria-hidden className={ITEM_ICON_CLASS} />
+                ),
+                run: () => setThreadPriority(threadRef, ref.id),
+              })),
+              {
+                kind: "action" as const,
+                value: "action:thread-priority:clear",
+                searchTerms: ["clear", "remove", "priority"],
+                title: "Clear my priority",
+                icon: <FlagIcon className={ITEM_ICON_CLASS} />,
+                disabled: !menu.canClear,
+                run: () => setThreadPriority(threadRef, null),
+              },
+            ],
+          },
+        ],
+      });
+    }
+    if (availability.linkTicket) {
+      actionItems.push({
+        kind: "action",
+        value: "action:link-jira-ticket",
+        searchTerms: ["link", "jira", "ticket", "issue", "attach"],
+        title: "Link Jira ticket to thread",
+        icon: <LinkIcon className={ITEM_ICON_CLASS} />,
+        disabled: !canOperateActiveThread,
+        run: async () => {
+          openLinkTicketDialog(threadRef);
+        },
+      });
+    }
+    // Existing links stay removable whatever the Jira state.
+    for (const chip of visibleTicketChips(activeThread.ticketLinks, {
+      jiraConnected: availability.jiraConnected,
+      siteUrl: activeThreadServerConfig?.settings.jira?.siteUrl ?? null,
+    })) {
+      actionItems.push({
+        kind: "action",
+        value: `action:unlink-jira-ticket:${chip.key}`,
+        searchTerms: ["unlink", "remove", "jira", "ticket", chip.key],
+        title: `Unlink ${chip.key}`,
+        ...(chip.title ? { description: chip.title } : {}),
+        icon: <UnlinkIcon className={ITEM_ICON_CLASS} />,
+        disabled: !canOperateActiveThread,
+        run: () => unlinkThreadTicket(threadRef, chip.key),
+      });
+    }
   }
 
   if (activeThread !== null && canShareActiveThreadWithGuest) {
