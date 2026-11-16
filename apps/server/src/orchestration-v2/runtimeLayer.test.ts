@@ -82,6 +82,7 @@ import * as RuntimeLayer from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadTicketService from "./ThreadTicketService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "../project/ScratchThreadPromotion.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -2499,6 +2500,59 @@ it.layer(layerLegacyImportTest)("OrchestrationV2 legacy import", (it) => {
 });
 
 it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
+  it.effect("ThreadTicketService reports changes and maps missing threads", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const tickets = yield* ThreadTicketService.ThreadTicketService;
+      const threadId = ThreadId.make("runtime-layer-ticket-service-thread");
+      const projectId = ProjectId.make("runtime-layer-ticket-service-project");
+      yield* seedProject({
+        projectId,
+        title: "Ticket service project",
+        workspaceRoot: "/workspace/ticket-service",
+        defaultModelSelection: null,
+        createdAt: "2026-09-07T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-ticket-service-create"),
+        threadId,
+        projectId,
+        title: "Ticket service thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const link = { threadId, key: "PROJ-1", url: null, source: "agent" } as const;
+      const low = { threadId, source: "agent", priority: { id: "4", name: "Low" } } as const;
+
+      assert.deepEqual(yield* tickets.linkTicket(link), { linked: true });
+      assert.deepEqual(yield* tickets.linkTicket(link), { linked: false });
+      assert.deepEqual(yield* tickets.setThreadPriority(low), { changed: true });
+      assert.deepEqual(yield* tickets.setThreadPriority(low), { changed: false });
+      assert.deepEqual(yield* tickets.unlinkTicket({ threadId, key: "PROJ-1" }), {
+        unlinked: true,
+      });
+
+      const unknown = yield* tickets
+        .linkTicket({ ...link, threadId: ThreadId.make("runtime-layer-ticket-service-missing") })
+        .pipe(Effect.flip);
+      assert.instanceOf(unknown, ThreadTicketService.ThreadTicketThreadNotFoundError);
+
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("runtime-layer-ticket-service-delete"),
+        threadId,
+      });
+      const deleted = yield* tickets.linkTicket(link).pipe(Effect.flip);
+      assert.instanceOf(deleted, ThreadTicketService.ThreadTicketThreadNotFoundError);
+    }).pipe(Effect.provide(ThreadTicketService.layer.pipe(Layer.provide(NodeCrypto.layer)))),
+  );
+
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
