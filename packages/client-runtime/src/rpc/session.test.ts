@@ -499,7 +499,7 @@ describe("RpcSessionFactory", () => {
 
   it.effect.each([
     { usageLimitSources: true },
-    { environmentThemes: true, usageLimitSources: true },
+    { environmentThemes: true, usageLimitSources: true, ticketTracker: true },
   ])("replays usage sources and removal with %j", (options) =>
     Effect.scoped(
       Effect.gen(function* () {

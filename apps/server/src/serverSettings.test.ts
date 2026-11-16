@@ -1792,6 +1792,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
               maxLeaseMinutes: 60,
             },
           ],
+          jira: {
+            siteUrl: "https://acme.atlassian.net",
+            email: "me@example.com",
+            apiToken: usageReference,
+          },
           providerInstances: {
             [antigravity]: {
               driver: ProviderDriverKind.make("antigravity"),
@@ -1817,6 +1822,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.equal(legacy.textGenerators[router]?.apiKey, SECRET_REDACTED);
         assert.equal(legacy.easDeviceHosts[0]?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.simlockDeviceHosts[0]?.agentToken, SECRET_REDACTED);
+        assert.equal(legacy.jira?.apiToken, SECRET_REDACTED);
         const configOf = (settings: ServerSettings, id: ProviderInstanceId) =>
           settings.providerInstances[id]?.config as Record<string, unknown> | undefined;
         assert.equal(configOf(legacy, antigravity)?.apiKey, SECRET_REDACTED);
@@ -1829,6 +1835,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           easDeviceHosts: legacy.easDeviceHosts,
           simlockDeviceHosts: legacy.simlockDeviceHosts,
           providerInstances: legacy.providerInstances,
+          jira: legacy.jira,
         });
         assert.deepEqual(echoed.sourceControlHosts.bitbucket?.accessToken, reference);
         assert.deepEqual(echoed.sourceControlHosts.github?.tokens, {
@@ -1844,10 +1851,55 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         });
         assert.deepEqual(echoed.easDeviceHosts[0]?.accessToken, easReference);
         assert.deepEqual(echoed.simlockDeviceHosts[0]?.agentToken, simlockReference);
+        assert.deepEqual(echoed.jira?.apiToken, usageReference);
         assert.deepEqual(configOf(echoed, antigravity)?.apiKey, antigravityReference);
         assert.deepEqual(configOf(echoed, openCode)?.serverPassword, openCodeReference);
         assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("keeps the Jira API token in the secret store and removes it on disconnect", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const token = "jira-secret-123";
+
+      const saved = yield* serverSettings.updateSettings({
+        jira: { siteUrl: "https://acme.atlassian.net", email: "me@example.com", apiToken: token },
+      });
+      assert.equal(saved.jira?.apiToken, token);
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, token);
+      assert.include(raw, "me@example.com");
+
+      const client = ServerSettingsModule.redactServerSettingsForClient(saved, {
+        secretReferences: true,
+      });
+      assert.equal(client.jira?.apiToken, SECRET_REDACTED);
+      assert.equal(client.jira?.siteUrl, "https://acme.atlassian.net");
+      assert.equal(client.jira?.email, "me@example.com");
+      assert.notInclude(JSON.stringify(client), token);
+
+      yield* serverSettings.updateSettings({
+        jira: { siteUrl: "https://other.atlassian.net", email: "me@example.com" },
+      });
+      assert.equal((yield* serverSettings.getSettings).jira?.apiToken, token);
+
+      yield* serverSettings.updateSettings({
+        jira: {
+          siteUrl: "https://acme.atlassian.net",
+          email: "me@example.com",
+          apiToken: SECRET_REDACTED,
+        },
+      });
+      assert.equal((yield* serverSettings.getSettings).jira?.apiToken, token);
+
+      yield* serverSettings.updateSettings({ jira: null });
+      assert.isNull((yield* serverSettings.getSettings).jira);
+      assert.isTrue(Option.isNone(yield* secrets.get("jira-api-token")));
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
   it.effect("removing a secret provider unsets every field that read from it", () =>
@@ -1943,6 +1995,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         "simlockDeviceHosts.[].agentToken",
         "usageLimitSources.*.managementKey",
         "textGenerators.*.apiKey",
+        "jira.apiToken",
       ]);
     }),
   );

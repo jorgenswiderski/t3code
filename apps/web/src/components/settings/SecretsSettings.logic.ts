@@ -23,6 +23,7 @@ type SecretUseSettings = Pick<
   | "easDeviceHosts"
   | "simlockDeviceHosts"
   | "cloudSpeechCredentials"
+  | "jira"
 >;
 
 interface SecretProviderUse {
@@ -113,5 +114,10 @@ export function secretProviderUses(
         ? [{ id: `voice:${provider}`, label: `Voice · ${CLOUD_SPEECH_LABELS[provider]}` }]
         : [];
     }),
+    ...(settings.jira !== null &&
+    isSecretReference(settings.jira.apiToken) &&
+    settings.jira.apiToken.provider === providerId
+      ? [{ id: "jira", label: "Jira" }]
+      : []),
   ];
 }

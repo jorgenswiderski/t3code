@@ -1165,6 +1165,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "jira-connection",
+    title: "Jira",
+    to: "/settings/source-control",
+    targetId: "jira-connection",
+    scope: "environment-defaults",
+    environmentOnly: true,
+    searchTerms: ["jira atlassian ticket issue priority rank api token connect"],
+  },
+  {
     id: "git-fetch-interval",
     title: "Git fetch interval",
     to: "/settings/maintenance",

@@ -657,6 +657,49 @@ describe("serverSettings helpers", () => {
     expect(Object.keys(removed.usageLimitSources)).toEqual([hubB]);
   });
 
+  const SECRET_REDACTED_LITERAL = "••••••";
+  const jiraSite = "https://acme.atlassian.net";
+  const jiraEmail = "me@example.com";
+  it.each([
+    {
+      name: "a first connect without a token",
+      current: null,
+      patch: { siteUrl: jiraSite, email: jiraEmail },
+      expected: { siteUrl: jiraSite, email: jiraEmail },
+    },
+    {
+      name: "a site change keeps the saved token",
+      current: { siteUrl: jiraSite, email: jiraEmail, apiToken: SECRET_REDACTED_LITERAL },
+      patch: { siteUrl: "https://other.atlassian.net", email: jiraEmail },
+      expected: {
+        siteUrl: "https://other.atlassian.net",
+        email: jiraEmail,
+        apiToken: SECRET_REDACTED_LITERAL,
+      },
+    },
+    {
+      name: "a new token replaces the saved one",
+      current: { siteUrl: jiraSite, email: jiraEmail, apiToken: "old" },
+      patch: { siteUrl: jiraSite, email: jiraEmail, apiToken: "new" },
+      expected: { siteUrl: jiraSite, email: jiraEmail, apiToken: "new" },
+    },
+    {
+      name: "null disconnects",
+      current: { siteUrl: jiraSite, email: jiraEmail, apiToken: "old" },
+      patch: null,
+      expected: null,
+    },
+  ])("merges a jira patch: $name", ({ current, patch, expected }) => {
+    const settings = { ...DEFAULT_SERVER_SETTINGS, jira: current };
+    expect(applyServerSettingsPatch(settings, { jira: patch }).jira).toEqual(expected);
+  });
+
+  it("leaves the saved jira settings alone when a patch omits them", () => {
+    const jira = { siteUrl: jiraSite, email: jiraEmail, apiToken: "old" };
+    const settings = { ...DEFAULT_SERVER_SETTINGS, jira };
+    expect(applyServerSettingsPatch(settings, { reviewGuidesEnabled: true }).jira).toEqual(jira);
+  });
+
   it("upserts and removes secretProviders per entry so concurrent edits cannot clobber", () => {
     const personal = SecretProviderId.make("personal");
     const work = SecretProviderId.make("work");

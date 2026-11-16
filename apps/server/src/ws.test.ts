@@ -127,6 +127,7 @@ import * as TextGenerators from "./textGeneration/TextGenerators.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "./config.ts";
+import { makeTestJiraService } from "./jira/testing/JiraServiceTest.ts";
 import * as Keybindings from "./keybindings.ts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import * as ServerSettings from "./serverSettings.ts";
@@ -165,9 +166,21 @@ const settingsUpdated = (settings: object): ServerConfigStreamEvent => ({
 it.effect("resends late editors without rolling back updates already sent", () =>
   Effect.gen(function* () {
     const settingsSent = yield* Deferred.make<void>();
+    const ticketTracker = {
+      ticketPriorityScale: [{ id: "10", name: "Blocker" }],
+      jiraStatus: {
+        state: "error" as const,
+        siteUrl: "https://acme.atlassian.net",
+        accountName: null,
+        error: { kind: "auth" as const, message: "Rejected.", since: "2026-11-13T00:00:00.000Z" },
+      },
+    };
     const events = yield* withLateConfigDiscovery(
       snapshotConfig({ settings: { enableProviderUpdateChecks: true } as never }),
-      Stream.make(settingsUpdated({ enableProviderUpdateChecks: false })),
+      Stream.make(
+        { version: 1, type: "ticketTrackerUpdated", payload: ticketTracker },
+        settingsUpdated({ enableProviderUpdateChecks: false }),
+      ),
       {
         resolveAvailableEditors: () => Effect.succeed(["file-manager"]),
         resolveFileManagerRevealKind: () =>
@@ -182,14 +195,17 @@ it.effect("resends late editors without rolling back updates already sent", () =
       Stream.runCollect,
     );
 
-    const [first, second] = Array.from(events);
-    assert.equal(events.length, 2);
+    const [tracker, first, second] = Array.from(events);
+    assert.equal(events.length, 3);
+    assert.equal(tracker?.type, "ticketTrackerUpdated");
     assert.equal(first?.type, "settingsUpdated");
     assert.equal(second?.type, "snapshot");
     if (second?.type === "snapshot") {
       assert.deepEqual(second.config.availableEditors, ["file-manager"]);
       assert.equal(second.config.shellRevealInFileManagerKind, "file-explorer");
       assert.deepEqual(second.config.settings, { enableProviderUpdateChecks: false } as never);
+      assert.deepEqual(second.config.ticketPriorityScale, ticketTracker.ticketPriorityScale);
+      assert.deepEqual(second.config.jiraStatus, ticketTracker.jiraStatus);
     }
   }),
 );
@@ -848,6 +864,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
+  Layer.unwrap(makeTestJiraService().pipe(Effect.map((jira) => jira.layer))),
 );
 
 const layerConfigSources = Layer.mergeAll(
@@ -1121,6 +1138,160 @@ it.effect.each([
       ),
       Effect.scoped,
     ),
+);
+
+it.effect("sends Jira status and priority scale only to clients that ask, never the token", () =>
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const scale = [
+      { id: "1", name: "Blocker" },
+      { id: "2", name: "Minor" },
+    ];
+    const connected = {
+      state: "connected" as const,
+      siteUrl: "https://acme.atlassian.net",
+      accountName: "Ada Lovelace",
+      error: null,
+    };
+    const jira = yield* makeTestJiraService({
+      configured: true,
+      siteUrl: connected.siteUrl,
+      status: connected,
+      priorityScale: scale,
+    });
+    yield* settings.updateSettings({
+      jira: { siteUrl: connected.siteUrl, email: "me@example.com", apiToken: "jira-secret-123" },
+    });
+    const responses = yield* Queue.unbounded<ServerConfigStreamEvent>();
+    const configRpcServices = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      jira.layer,
+      Layer.mock(ExternalLauncher.ExternalLauncher)({
+        resolveAvailableEditors: () => Effect.succeed([]),
+        resolveFileManagerRevealKind: () => Effect.undefined,
+      }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed([]),
+        streamChanges: Stream.never,
+      }),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({ streamChanges: Stream.never }),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
+        resolveTargets: () => Effect.succeed([]),
+      }),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({
+        resolve: () => Effect.succeed([]),
+        resolveAvailable: () => Effect.succeed([]),
+      }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        scratchRoot: Effect.succeedNone,
+        namedProjectsRoot: process.cwd(),
+      }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getDescriptor: Effect.succeed({
+          environmentId: EnvironmentId.make("config-test"),
+          label: "Config test",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "0.0.0",
+          capabilities: { repositoryIdentity: false },
+        }),
+      }),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+        getDescriptor: () =>
+          Effect.succeed({
+            policy: "loopback-browser",
+            bootstrapMethods: [],
+            sessionMethods: ["browser-session-cookie"],
+            sessionCookieName: "config-test-session",
+          }),
+      }),
+    );
+    const server = yield* RpcServer.makeNoSerialization(RpcGroup.make(WsSubscribeServerConfigRpc), {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Chunk"
+          ? Effect.forEach(response.values, (event) => Queue.offer(responses, event), {
+              discard: true,
+            })
+          : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("config-test"),
+            subject: "config-test",
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(Layer.provide(configRpcServices)),
+      ),
+    );
+    const subscribe = Effect.fn(function* (id: string, payload: { ticketTracker?: boolean }) {
+      const requestId = RpcMessage.RequestId(id);
+      yield* server.write(0, {
+        _tag: "Request",
+        id: requestId,
+        tag: WS_METHODS.subscribeServerConfig,
+        payload,
+        headers: Headers.empty,
+      });
+      const acknowledge = server.write(0, { _tag: "Ack", requestId });
+      const next = Effect.gen(function* () {
+        const event = yield* Queue.take(responses);
+        yield* acknowledge;
+        return event;
+      });
+      const snapshot = yield* next;
+      if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
+      return { requestId, snapshot, next };
+    });
+
+    const opted = yield* subscribe("tracker", { ticketTracker: true });
+    assert.deepEqual(opted.snapshot.config.ticketPriorityScale, scale);
+    assert.deepEqual(opted.snapshot.config.jiraStatus, connected);
+    assert.notInclude(JSON.stringify(opted.snapshot), "jira-secret-123");
+
+    const failing = {
+      ...connected,
+      state: "error" as const,
+      accountName: null,
+      error: { kind: "auth" as const, message: "Rejected.", since: "2026-11-13T00:00:00.000Z" },
+    };
+    yield* jira.controller.update({ status: failing });
+    const trackerEvent = yield* opted.next;
+    assert.deepEqual(trackerEvent, {
+      version: 1,
+      type: "ticketTrackerUpdated",
+      payload: { ticketPriorityScale: scale, jiraStatus: failing },
+    });
+
+    yield* settings.updateSettings({
+      jira: { siteUrl: connected.siteUrl, email: "other@example.com" },
+    });
+    const settingsEvent = yield* opted.next;
+    assert.equal(settingsEvent.type, "settingsUpdated");
+    assert.notInclude(JSON.stringify(settingsEvent), "jira-secret-123");
+    yield* server.write(0, { _tag: "Interrupt", requestId: opted.requestId, interruptors: [] });
+
+    const plain = yield* subscribe("plain", {});
+    yield* jira.controller.update({ status: connected });
+    yield* settings.updateSettings({ defaultAutoPull: true });
+    assert.equal((yield* plain.next).type, "settingsUpdated");
+    yield* server.write(0, { _tag: "Interrupt", requestId: plain.requestId, interruptors: [] });
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
 );
 
 it.effect("on-demand clients get provider config without workspace snapshots", () =>

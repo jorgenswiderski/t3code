@@ -27,6 +27,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
   // Listing models spends the stored API key, so only those who can choose a model may.
   [WS_METHODS.serverListTextGeneratorModels]: AuthSettingsWriteScope,
+  // Testing spends the stored Jira token, so only those who can change settings may.
+  [WS_METHODS.serverTestJiraConnection]: AuthSettingsWriteScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,

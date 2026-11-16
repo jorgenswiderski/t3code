@@ -31,6 +31,40 @@ describe("reuseUnchanged", () => {
   });
 });
 
+describe("applyServerConfigProjection ticketTrackerUpdated", () => {
+  const payload = () => ({
+    ticketPriorityScale: [
+      { id: "1", name: "Highest" },
+      { id: "2", name: "High" },
+    ],
+    jiraStatus: {
+      state: "connected" as const,
+      siteUrl: "https://acme.atlassian.net",
+      accountName: "Ada Lovelace",
+      error: null,
+    },
+  });
+  const apply = (config: ServerConfig) =>
+    applyServerConfigProjection(
+      Option.some({ config, latestEvent: {} as ServerConfigStreamEvent, source: "live" as const }),
+      { version: 1, type: "ticketTrackerUpdated", payload: payload() } as ServerConfigStreamEvent,
+    ).pipe(Option.getOrThrow);
+
+  it("writes the scale and status", () => {
+    const next = apply({} as ServerConfig);
+    expect(next.config.ticketPriorityScale).toEqual(payload().ticketPriorityScale);
+    expect(next.config.jiraStatus).toEqual(payload().jiraStatus);
+    expect(next.source).toBe("live");
+  });
+
+  it("keeps both objects when an update repeats them", () => {
+    const first = apply({} as ServerConfig).config;
+    const second = apply(first).config;
+    expect(second.ticketPriorityScale).toBe(first.ticketPriorityScale);
+    expect(second.jiraStatus).toBe(first.jiraStatus);
+  });
+});
+
 describe("applyServerConfigProjection settingsUpdated", () => {
   it("keeps unchanged settings sections when one field changes", () => {
     const settings = {
