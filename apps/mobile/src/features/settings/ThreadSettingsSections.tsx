@@ -20,6 +20,7 @@ import { useEnvironments } from "../../state/environments";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { InboxOrderControl } from "../threads/InboxOrderControl";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -209,11 +210,17 @@ export function WorkingSectionSettings() {
           value={workingShelfEnabled}
           onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
         />
+        <View className="gap-3 px-4 py-4">
+          <Text className="text-foreground text-lg android:text-base">Inbox order</Text>
+          <InboxOrderControl variant="card" />
+        </View>
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
         Fold working and monitoring threads into a Working section. They return to the top of the
-        list when they need you. While this is on, active threads are ordered by time and cannot be
-        moved.
+        list when they need you. Recently returned shows threads that most recently needed you
+        first. Priority sorts by your priority, then the linked Jira ticket's, then the agent's
+        guess. With the Working section on or Priority selected, active threads are ordered
+        automatically and cannot be moved.
       </Text>
     </View>
   );
