@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeZlib from "node:zlib";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
@@ -13,6 +14,7 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import {
   answerToolCall,
   buildBase,
+  buildCodexBase,
   buildMessages,
   failedEarly,
   executeCodex,
@@ -34,10 +36,16 @@ import {
   t3Default,
   t3SystemAppend,
   t3SubagentContext,
+  ticketToolFailure,
   withDevices,
 } from "./run.ts";
 import { briefRoute, gradeDevice, shellInvocations } from "./device-grading.ts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
+import {
+  LinkTicketResult,
+  SetThreadPriorityResult,
+  UnlinkTicketResult,
+} from "../../apps/server/src/mcp/toolkits/tickets/tools.ts";
 
 it("grades Codex shell and subagent calls with the shared rules", () => {
   const calls = [
@@ -576,6 +584,168 @@ it("lists link tools only while a case turns the beta on, and sends chips as T3 
     projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext! }),
   );
   assert.include(prompt?.text, "environmentId: environment-vps");
+});
+
+const TICKET_TOOLS = ["link_ticket", "unlink_ticket", "set_thread_priority"].map(
+  (name) => `mcp__t3-code__${name}`,
+);
+
+it("lists ticket tools and names them in T3's text only while a case connects Jira", () => {
+  const off = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+  const on = buildBase(template, {
+    model: "claude-sonnet-5-5",
+    keepUserInstructions: false,
+    tickets: true,
+  });
+  assert.notIncludeMembers(
+    off.t3.map((tool) => tool.name),
+    TICKET_TOOLS.slice(0, 1),
+  );
+  assert.isEmpty(off.t3.filter((tool) => TICKET_TOOLS.includes(tool.name)));
+  assert.includeMembers(
+    on.t3.map((tool) => tool.name),
+    TICKET_TOOLS,
+  );
+  assert.notInclude(off.system.map((block) => String(block.text)).join("\n"), "<ticket_linking>");
+  assert.include(on.system.map((block) => String(block.text)).join("\n"), "<ticket_linking>");
+
+  const codexTemplate = JSON.parse(
+    NodeZlib.gunzipSync(
+      NodeFS.readFileSync(new URL("./templates/codex.json.gz", import.meta.url)),
+    ).toString("utf8"),
+  ).request.provider_native;
+  const codexOff = buildCodexBase(codexTemplate, {
+    model: "gpt-6.1-sol",
+    keepUserInstructions: false,
+  });
+  const codexOn = buildCodexBase(codexTemplate, {
+    model: "gpt-6.1-sol",
+    keepUserInstructions: false,
+    tickets: true,
+  });
+  assert.isEmpty(codexOff.t3.filter((tool) => TICKET_TOOLS.includes(tool.name)));
+  assert.includeMembers(
+    codexOn.t3.map((tool) => tool.name),
+    TICKET_TOOLS,
+  );
+  assert.notInclude(JSON.stringify(codexOff.codex?.input), "<ticket_linking>");
+  assert.include(JSON.stringify(codexOn.codex?.input), "<ticket_linking>");
+});
+
+const decodeLinkTicket = Schema.decodeUnknownSync(LinkTicketResult);
+const decodeUnlinkTicket = Schema.decodeUnknownSync(UnlinkTicketResult);
+const decodeSetPriority = Schema.decodeUnknownSync(SetThreadPriorityResult);
+
+it("answers ticket tools in T3's result shapes, and refuses what T3 refuses", () => {
+  const base = buildBase(template, {
+    model: "claude-sonnet-5-5",
+    keepUserInstructions: false,
+    tickets: true,
+  });
+  const sample = makeSample(
+    {
+      ...childCase,
+      setup: {
+        role: "top",
+        jira: {
+          scale: ["Blocker", "Critical", "Major"],
+          linkedTickets: [{ key: "ACME-9", title: "Update the retry copy" }],
+        },
+      },
+    },
+    base,
+  );
+  const link = (ticket: string) => decodeLinkTicket(t3Default(sample, "link_ticket", { ticket }));
+  assert.deepEqual(link("acme-123"), {
+    key: "ACME-123",
+    url: "https://acme.atlassian.net/browse/ACME-123",
+    alreadyLinked: false,
+  });
+  assert.isTrue(link("ACME-123").alreadyLinked);
+  assert.isTrue(link("https://acme.atlassian.net/browse/ACME-9").alreadyLinked);
+  const unlink = (ticket: string) =>
+    decodeUnlinkTicket(t3Default(sample, "unlink_ticket", { ticket }));
+  assert.deepEqual(unlink("ACME-9"), { key: "ACME-9", wasLinked: true });
+  assert.isFalse(unlink("ACME-9").wasLinked);
+
+  const priority = (input: Record<string, unknown>) =>
+    decodeSetPriority(t3Default(sample, "set_thread_priority", input));
+  assert.deepEqual(priority({ priority: "critical" }), {
+    source: "agent",
+    priority: { id: "10002", name: "Critical" },
+    changed: true,
+    scale: ["Blocker", "Critical", "Major"],
+  });
+  assert.isFalse(priority({ priority: "Critical" }).changed);
+  assert.equal(priority({ priority: "Major", userRequested: true }).source, "user");
+  assert.deepEqual(priority({ priority: null }), {
+    source: "agent",
+    priority: null,
+    changed: true,
+    scale: ["Blocker", "Critical", "Major"],
+  });
+
+  assert.include(
+    ticketToolFailure(sample, "set_thread_priority", { priority: "High" }),
+    "Blocker, Critical, Major",
+  );
+  assert.isUndefined(ticketToolFailure(sample, "set_thread_priority", { priority: null }));
+  assert.include(
+    ticketToolFailure(sample, "link_ticket", {
+      ticket: "https://other.atlassian.net/browse/ACME-1",
+    }),
+    "different Jira site",
+  );
+  assert.include(
+    ticketToolFailure(sample, "unlink_ticket", { ticket: "fix the bug" }),
+    "not a Jira ticket",
+  );
+  assert.isUndefined(ticketToolFailure(sample, "link_ticket", { ticket: "ACME-1" }));
+});
+
+it("grades a call T3 refused as not succeeded", () => {
+  const priority = (failedCall: boolean) => ({
+    calls: [
+      { step: 1, tool: "set_thread_priority", input: { priority: "High" }, failed: failedCall },
+    ],
+    text: "",
+    stopReason: "end_turn",
+  });
+  const expect = { calls: [{ tool: "set_thread_priority", succeeded: true }] };
+  assert.deepEqual(failed(expect, priority(false)), []);
+  assert.deepEqual(failed(expect, priority(true)), ["calls set_thread_priority (succeeded)"]);
+  assert.deepEqual(failed({ calls: [{ tool: "set_thread_priority" }] }, priority(true)), []);
+});
+
+const ticketCases = () =>
+  NodeFS.readFileSync(new URL("./cases/tickets.ndjson", import.meta.url), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => decodeDeviceCase(line));
+
+it("builds the ticket cases in a Jira-connected world, each with authored Acme data", () => {
+  const cases = ticketCases();
+  assert.equal(cases.length, 8);
+  assert.equal(new Set(cases.map((c) => c.id)).size, cases.length);
+  assert.deepEqual(
+    cases.map((c) => c.kind),
+    ["bad", "bad", "bad", "bad", "guard", "guard", "guard", "control"],
+  );
+  const base = buildBase(template, {
+    model: "claude-sonnet-5-5",
+    keepUserInstructions: false,
+    tickets: true,
+  });
+  for (const testCase of cases) {
+    assert.match(testCase.id, /^tickets-/);
+    assert.equal(testCase.privacy, "commit-safe");
+    assert.isDefined(testCase.setup.jira, testCase.id);
+    assert.equal(
+      testCase.source?.spec,
+      "docs/superpowers/specs/2026-11-13-thread-priority-design.md",
+    );
+    assert.doesNotThrow(() => buildMessages(makeSample(testCase, base)), testCase.id);
+  }
 });
 
 it("replays earlier capability results with the model under test as the caller", () => {

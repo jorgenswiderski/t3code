@@ -26,9 +26,9 @@ Cases are JSON lines in `cases/`, one file per area. The case schema in `run.ts`
 
 - `kind`: `bad` reproduces a mistake, `guard` protects correct behavior, `control` is ordinary work.
 - `experience`: the real mistake, in a sentence. `source`: where it happened.
-- `setup`: the fake thread, its `world` (repo, branch, files, PRs, pages), `priorTurns`, and `mocks` for tool results.
+- `setup`: the fake thread, its `world` (repo, branch, files, PRs, pages), `priorTurns`, `mocks` for tool results, and `jira` to connect the Acme Jira site (see [Ticket cases](#ticket-cases)).
 - `setup.priorTurns[].toolCalls[].resultFile`: load a repository-relative file as the tool result instead of copying its contents into the case. An empty `prompt` resumes a top-level thread after its last prior tool result without adding a user message. Side-chat and subagent setups require a nonempty prompt.
-- `expect`: the checks, such as `calls`, `callsMustNot`, `maxCalls`, `order`, `shellMust`, `textMust`, `finalTextMust` (the last text, once the turn ended), and `linked`. A call's `args` match partially: `~text` is a case-insensitive substring, `"<=N"` / `">=N"` bound a number, `null` matches a missing key, and keys may be dotted paths. Device cases also use `device` to check every child brief, forbid raw UI commands, bound failed device actions per user turn, and require artifact paths in completed final answers. Secrets cases use `secret` (see [Secrets cases](#secrets-cases)).
+- `expect`: the checks, such as `calls`, `callsMustNot`, `maxCalls`, `order`, `shellMust`, `textMust`, `finalTextMust` (the last text, once the turn ended), and `linked`. A call's `succeeded: true` also requires T3 to have accepted it. A call's `args` match partially: `~text` is a case-insensitive substring, `"<=N"` / `">=N"` bound a number, `null` matches a missing key, and keys may be dotted paths. Device cases also use `device` to check every child brief, forbid raw UI commands, bound failed device actions per user turn, and require artifact paths in completed final answers. Secrets cases use `secret` (see [Secrets cases](#secrets-cases)).
 
 Check that the case builds with `--dry-run --case <id>`. Then run it on the text before your fix, where it must fail, and on the text after, where it must pass.
 
@@ -123,6 +123,27 @@ pnpm mcp-tool-use --cases mcp-tool-use/cases/threads-vs-tasks.ndjson --samples 3
 ```
 
 These cases measure routing decisions with simulated tools, not delivered child work. The original PR's paid baseline found Sonnet starting a background native Agent for `tt-background-agent`; the routing fix is stacked separately in #27139. Historical model results and the unresolved top-level reviewer re-check wording are recorded in #27138.
+
+## Ticket cases
+
+`cases/tickets.ndjson` covers the ticket and priority tools, which T3 lists only while Jira is connected (`link_ticket`, `unlink_ticket`, `set_thread_priority`) and the `<ticket_linking>` instruction block that names them. A case sets `setup.jira` to connect the Acme site (`acme.atlassian.net`): T3 then lists the three tools, the system text carries the block, and no case without `setup.jira` sees either. `setup.jira.scale` replaces the site's default priorities (Highest, High, Medium, Low, Lowest) with its own names, and `setup.jira.linkedTickets` seeds tickets already linked to the thread. Tool results come from the real result schemas (a test decodes them). A call T3 would refuse fails in T3's own words: a key the site does not use, a URL from another Jira site, and a priority off the scale (the error lists the valid names).
+
+| Case                                         | Kind    | What it checks                                                                                                          |
+| -------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
+| tickets-link-key-named-in-prompt             | bad     | A ticket named in the request is linked, and no provisional priority is set beside it.                                  |
+| tickets-link-key-from-branch                 | bad     | A ticket known only from the branch name and a commit subject is linked.                                                |
+| tickets-provisional-priority-no-ticket       | bad     | A ticketless urgent request gets a High or Highest agent priority, never `userRequested`, and links nothing.            |
+| tickets-urgent-wording-is-not-a-user-request | bad     | The user's word "urgent" is not written as the user's own priority.                                                     |
+| tickets-explicit-priority-request            | guard   | "Set the priority to Low" is written with `userRequested`.                                                              |
+| tickets-custom-scale-names                   | guard   | On a site with its own priority names, an accepted `set_thread_priority` call exists, retries after the error included. |
+| tickets-unlink-on-request                    | guard   | A ticket the user says is not part of the work is unlinked, and none is linked.                                         |
+| tickets-plain-question-control               | control | A plain question links and unlinks nothing and still gets a provisional priority.                                       |
+
+"Before" means the first-draft tool descriptions and an empty `<ticket_linking>` block, so the `bad` cases test what the instruction text adds. No model has run these cases yet: they are built and proven with `--dry-run` only, so the wording of the block and the descriptions is unproven by evals.
+
+```sh
+pnpm mcp-tool-use --cases mcp-tool-use/cases/tickets.ndjson --dry-run
+```
 
 ## Secrets cases
 
