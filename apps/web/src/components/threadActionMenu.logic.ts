@@ -1,5 +1,13 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  LINK_TICKET_MENU_ID,
+  PRIORITY_CLEAR_MENU_ID,
+  PRIORITY_MENU_ID,
+  PRIORITY_SET_MENU_PREFIX,
+  UNLINK_TICKET_MENU_PREFIX,
+  type threadPriorityMenu,
+} from "@t3tools/client-runtime/state/thread-ticket-presentation";
 
 export type ThreadActionMenuId =
   | "find"
@@ -17,6 +25,11 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "priority"
+  | "priority:clear"
+  | "link-ticket"
+  | `priority:set:${string}`
+  | `unlink-ticket:${string}`
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -67,6 +80,60 @@ export function buildDraftActionMenuItems(options: {
   ];
 }
 
+export interface ThreadTicketMenuState {
+  /** Null when the thread's environment cannot set priority. */
+  readonly priority: ReturnType<typeof threadPriorityMenu> | null;
+  readonly canLink: boolean;
+  readonly links: ReadonlyArray<{ readonly key: string; readonly label: string }>;
+}
+
+const TICKET_MENU_LABEL_LIMIT = 48;
+
+function ticketMenuItems(
+  tickets: ThreadTicketMenuState | undefined,
+): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
+  if (!tickets) return [];
+  const items: ContextMenuItem<ThreadActionMenuId>[] = [];
+  if (tickets.priority) {
+    const { entries, canClear, currentLabel } = tickets.priority;
+    items.push({
+      id: PRIORITY_MENU_ID,
+      label: "Priority",
+      icon: "flag",
+      ...(currentLabel ? { detail: currentLabel } : {}),
+      children: [
+        ...entries.map(({ ref, checked }) => ({
+          id: `${PRIORITY_SET_MENU_PREFIX}${ref.id}` as const,
+          label: ref.name,
+          checked,
+        })),
+        {
+          id: PRIORITY_CLEAR_MENU_ID,
+          label: "Clear my priority",
+          disabled: !canClear,
+          separatorBefore: entries.length > 0,
+        },
+      ],
+    });
+  }
+  if (tickets.canLink) {
+    items.push({ id: LINK_TICKET_MENU_ID, label: "Link Jira ticket…", icon: "link" });
+  }
+  for (const link of tickets.links) {
+    const label =
+      link.label.length > TICKET_MENU_LABEL_LIMIT
+        ? `${link.label.slice(0, TICKET_MENU_LABEL_LIMIT - 1)}…`
+        : link.label;
+    items.push({
+      id: `${UNLINK_TICKET_MENU_PREFIX}${link.key}`,
+      label: `Unlink ${label}`,
+      icon: "unlink",
+    });
+  }
+  const [first, ...rest] = items;
+  return first ? [{ ...first, separatorBefore: true }, ...rest] : [];
+}
+
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
   readonly canFind?: boolean;
@@ -95,6 +162,8 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Absent means no ticket items. */
+  readonly tickets?: ThreadTicketMenuState | undefined;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -167,6 +236,7 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
+    ...ticketMenuItems(state.tickets),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
     ...(state.supports.titleRegeneration
       ? [

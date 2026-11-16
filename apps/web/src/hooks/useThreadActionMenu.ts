@@ -45,8 +45,10 @@ import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
+import { readEnvironmentServerConfig } from "../state/threadTickets";
 import { useClientSettings } from "./useSettings";
 import { canTurnThreadIntoProject, useThreadActions } from "./useThreadActions";
+import { buildTicketMenuState, useThreadTicketActions } from "./useThreadTicketActions";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -91,6 +93,7 @@ export function useThreadActionMenu(input: {
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const { handleTicketMenuAction } = useThreadTicketActions();
   const handleNewThread = useNewThreadHandler();
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -152,6 +155,7 @@ export function useThreadActionMenu(input: {
         snoozePresets,
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+        tickets: buildTicketMenuState(thread, readEnvironmentServerConfig(threadRef.environmentId)),
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -166,6 +170,7 @@ export function useThreadActionMenu(input: {
         );
         return;
       }
+      if (await handleTicketMenuAction(threadRef, action)) return;
       if (action.startsWith("snooze:")) {
         const preset =
           action === "snooze:custom"
