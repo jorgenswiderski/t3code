@@ -871,9 +871,11 @@ export function applyToProjection(
         ...base,
         thread: event.payload,
       };
-    // Reordering and PR refreshes preserve the orchestrator's activity timestamp.
+    // Reordering, tags, tickets, priority and PR refreshes preserve the orchestrator's activity timestamp.
     case "thread.active-reordered":
     case "thread.tags-updated":
+    case "thread.ticket-links-updated":
+    case "thread.priority-updated":
     case "thread.pull-request-synced":
       return {
         ...base,
@@ -1723,6 +1725,13 @@ export function threadShellFromProjection(
     autoCompactTokens: projection.thread.autoCompactTokens ?? null,
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     ...(projection.thread.tags?.length ? { tags: projection.thread.tags } : {}),
+    ...(projection.thread.ticketLinks?.length
+      ? { ticketLinks: projection.thread.ticketLinks }
+      : {}),
+    ...(projection.thread.priority &&
+    (projection.thread.priority.user !== null || projection.thread.priority.agent !== null)
+      ? { priority: projection.thread.priority }
+      : {}),
     lastVisitedAt: projection.thread.lastVisitedAt,
     opens: projection.thread.opens ?? null,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
@@ -2043,6 +2052,13 @@ function shellFromState(input: {
     autoCompactTokens: input.state.thread.autoCompactTokens ?? null,
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     ...(input.state.thread.tags?.length ? { tags: input.state.thread.tags } : {}),
+    ...(input.state.thread.ticketLinks?.length
+      ? { ticketLinks: input.state.thread.ticketLinks }
+      : {}),
+    ...(input.state.thread.priority &&
+    (input.state.thread.priority.user !== null || input.state.thread.priority.agent !== null)
+      ? { priority: input.state.thread.priority }
+      : {}),
     lastVisitedAt: input.state.thread.lastVisitedAt,
     opens: input.state.thread.opens ?? null,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
@@ -2112,6 +2128,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "thread.pin-reordered":
             case "thread.active-reordered":
             case "thread.tags-updated":
+            case "thread.ticket-links-updated":
+            case "thread.priority-updated":
             case "thread.visited":
             case "thread.marked-unread":
             case "thread.metadata-updated":
@@ -2930,6 +2948,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.pin-reordered" &&
             event.type !== "thread.active-reordered" &&
             event.type !== "thread.tags-updated" &&
+            event.type !== "thread.ticket-links-updated" &&
+            event.type !== "thread.priority-updated" &&
             event.type !== "thread.visited" &&
             event.type !== "thread.marked-unread" &&
             event.type !== "thread.metadata-updated" &&
