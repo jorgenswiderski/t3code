@@ -61,6 +61,8 @@ import {
   useRemoteEnvironmentRuntime,
 } from "../../state/use-remote-environment-registry";
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
+import { Keyboard } from "react-native";
+import { ticketUiAvailability } from "@t3tools/client-runtime/state/thread-ticket-presentation";
 import { uuidv4 } from "../../lib/uuid";
 import {
   isAtomCommandInterrupted,
@@ -971,6 +973,17 @@ function ThreadRouteContent(
                 inspectorMode={inspectorMode}
                 onOpenFilesInspector={handleOpenFilesInspector}
                 onReturnToThread={props.onReturnToThread}
+                onOpenTickets={
+                  creationState === null && ticketUiAvailability(serverConfig).priority
+                    ? () => {
+                        Keyboard.dismiss();
+                        navigation.navigate("ThreadTickets", {
+                          environmentId: String(selectedThread.environmentId),
+                          threadId: String(selectedThread.id),
+                        });
+                      }
+                    : undefined
+                }
               />
             )
           }

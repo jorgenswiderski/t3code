@@ -61,6 +61,7 @@ import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ThreadPullRequestsSheet } from "./features/threads/ThreadPullRequestsSheet";
+import { ThreadTicketsSheet } from "./features/threads/ThreadTicketsSheet";
 import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
 import { ThreadBackgroundWorkSheet } from "./features/threads/ThreadBackgroundWorkSheet";
 import { ThreadQueueSheet } from "./features/threads/ThreadQueueControl";
@@ -685,6 +686,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadPullRequests: createNativeStackScreen({
       screen: ThreadPullRequestsSheet,
       linking: `${THREAD_LINKING_PREFIX}/pull-requests`,
+      options: sheetRoute({ detent: 0.55 }),
+    }),
+    ThreadTickets: createNativeStackScreen({
+      screen: ThreadTicketsSheet,
+      linking: `${THREAD_LINKING_PREFIX}/tickets`,
       options: sheetRoute({ detent: 0.55 }),
     }),
     GitCommit: createNativeStackScreen({
