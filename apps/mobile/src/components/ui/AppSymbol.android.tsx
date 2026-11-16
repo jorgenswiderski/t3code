@@ -35,6 +35,10 @@ import IconChevronDown from "@tabler/icons-react-native/IconChevronDown";
 import IconChevronLeft from "@tabler/icons-react-native/IconChevronLeft";
 import IconChevronRight from "@tabler/icons-react-native/IconChevronRight";
 import IconChevronUp from "@tabler/icons-react-native/IconChevronUp";
+import IconChevronsDown from "@tabler/icons-react-native/IconChevronsDown";
+import IconChevronsUp from "@tabler/icons-react-native/IconChevronsUp";
+import IconEqual from "@tabler/icons-react-native/IconEqual";
+import IconFlag from "@tabler/icons-react-native/IconFlag";
 import IconCircle from "@tabler/icons-react-native/IconCircle";
 import IconCircleFilled from "@tabler/icons-react-native/IconCircleFilled";
 import IconCircleCheck from "@tabler/icons-react-native/IconCircleCheck";
@@ -199,6 +203,10 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "chevron.left.forwardslash.chevron.right": IconCode,
   "chevron.right": IconChevronRight,
   "chevron.up": IconChevronUp,
+  "chevron.up.2": IconChevronsUp,
+  "chevron.down.2": IconChevronsDown,
+  equal: IconEqual,
+  flag: IconFlag,
   desktopcomputer: IconDeviceDesktop,
   doc: IconFileText,
   "doc.on.doc": IconCopy,

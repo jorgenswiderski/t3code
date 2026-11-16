@@ -1,4 +1,6 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { useAtomValue } from "@effect/atom-react";
+import { useNavigation } from "@react-navigation/native";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
@@ -28,6 +30,12 @@ import {
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  parseTicketMenuAction,
+  threadHasTicketData,
+  threadPriorityIndicator,
+  threadPriorityMenu,
+} from "@t3tools/client-runtime/state/thread-ticket-presentation";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
@@ -63,6 +71,10 @@ import {
   type ThreadPrPresentation,
 } from "../../state/thread-pr-presentation";
 import { useThreadPr } from "../../state/use-thread-pr";
+import {
+  environmentTicketPriorityScaleAtom,
+  environmentTicketUiLevelAtom,
+} from "../../state/thread-tickets";
 import { useSwipeRowDormant } from "../home/swipe-row-activation";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
@@ -82,6 +94,9 @@ import {
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
+import { buildTicketMenuItems } from "./thread-ticket-menu";
+import { ThreadPriorityGlyph } from "./ThreadPriorityGlyph";
+import { useThreadTicketActions } from "./useThreadTicketActions";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
@@ -761,6 +776,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     if (pr) onOpenThreadPullRequests(thread, pr);
   }, [onOpenThreadPullRequests, pr, thread]);
 
+  const navigation = useNavigation();
+  const ticketActions = useThreadTicketActions(thread);
+  const ticketUiLevel = useAtomValue(environmentTicketUiLevelAtom(thread.environmentId));
+  const ticketScale = useAtomValue(environmentTicketPriorityScaleAtom(thread.environmentId));
+  const { priority: threadPriority, ticketLinks } = thread;
+  // Rows without ticket data skip the indicator work; the menu still needs the scale to offer one.
+  const priorityIndicator =
+    variant === "card" && threadHasTicketData({ priority: threadPriority, ticketLinks })
+      ? threadPriorityIndicator({ priority: threadPriority, ticketLinks }, ticketScale)
+      : null;
+
   const theme = useUniwindTheme();
   const sidebarPane = props.pane === "sidebar";
   const selected = props.selected === true;
@@ -776,7 +802,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
-  const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
+  const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${priorityIndicator ? `, ${priorityIndicator.accessibilityLabel}` : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
   const timeLabel = props.timeLabel;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
@@ -939,6 +965,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
     [canTurnIntoProject, props.titleRegenerationSupported, thread.runtime, isRegeneratingTitle],
   );
+  const ticketMenuItems = useMemo<MenuAction[]>(
+    () =>
+      buildTicketMenuItems({
+        uiLevel: ticketUiLevel,
+        canOperate: ticketActions.canOperate,
+        priorityMenu: threadPriorityMenu({ priority: threadPriority, ticketLinks }, ticketScale),
+      }),
+    [ticketUiLevel, ticketActions.canOperate, ticketScale, threadPriority, ticketLinks],
+  );
   const menuActions = useMemo<MenuAction[]>(() => {
     const nested = Platform.OS === "ios";
     const direct: MenuAction[] = [
@@ -962,6 +997,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         pin: [],
         secondary: [
           ...titleMenuItems,
+          ...ticketMenuItems,
           ...autoSettleMenuItems,
           LEGACY_MENU_ACTIONS[0]!,
           SNOOZED_MENU_ACTIONS[1]!,
@@ -974,7 +1010,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         direct: [...direct, LEGACY_MENU_ACTIONS[0]!],
         reorder: reorderMenuItems,
         pin: pinMenuItems,
-        secondary: [...titleMenuItems, LEGACY_MENU_ACTIONS[1]!],
+        secondary: [...titleMenuItems, ...ticketMenuItems, LEGACY_MENU_ACTIONS[1]!],
       });
     }
     if (canUnsettle) {
@@ -987,6 +1023,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         pin: pinMenuItems,
         secondary: [
           ...titleMenuItems,
+          ...ticketMenuItems,
           ...autoSettleMenuItems,
           LEGACY_MENU_ACTIONS[0]!,
           SLIM_MENU_ACTIONS[1]!,
@@ -1006,6 +1043,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       pin: pinMenuItems,
       secondary: [
         ...titleMenuItems,
+        ...ticketMenuItems,
         ...autoSettleMenuItems,
         LEGACY_MENU_ACTIONS[0]!,
         CARD_MENU_ACTIONS[1]!,
@@ -1021,10 +1059,23 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozedRow,
     swipeActions.secondary,
     thread.branch,
+    ticketMenuItems,
     titleMenuItems,
   ]);
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      const ticketAction = parseTicketMenuAction(nativeEvent.event);
+      if (ticketAction !== null) {
+        if (ticketAction.type === "open-tickets") {
+          navigation.navigate("ThreadTickets", {
+            environmentId: String(thread.environmentId),
+            threadId: String(thread.id),
+          });
+        } else {
+          ticketActions.handleTicketMenuAction(nativeEvent.event);
+        }
+        return;
+      }
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
@@ -1073,6 +1124,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       }
     },
     [
+      navigation,
+      ticketActions,
       onNewThreadOnBranch,
       thread,
       handleArchive,
@@ -1195,6 +1248,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         </Text>
         <View className="flex-row items-center gap-1.5" style={{ minHeight: titleLineHeight }}>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+          {priorityIndicator ? (
+            <ThreadPriorityGlyph
+              indicator={priorityIndicator}
+              selected={selected}
+              mutedTintClassName={rowAppearance.mutedIconTintClassName}
+            />
+          ) : null}
           {pinnedRow ? (
             <SymbolView
               name="pin"
