@@ -133,13 +133,16 @@ These cases measure routing decisions with simulated tools, not delivered child 
 | tickets-link-key-named-in-prompt             | bad     | A ticket named in the request is linked, and no provisional priority is set beside it.                                  |
 | tickets-link-key-from-branch                 | bad     | A ticket known only from the branch name and a commit subject is linked.                                                |
 | tickets-provisional-priority-no-ticket       | bad     | A ticketless urgent request gets a High or Highest agent priority, never `userRequested`, and links nothing.            |
-| tickets-urgent-wording-is-not-a-user-request | bad     | The user's word "urgent" is not written as the user's own priority.                                                     |
+| tickets-urgent-wording-is-not-a-user-request | bad     | The user's word "urgent" yields a provisional priority, never one written as the user's own.                            |
+| tickets-custom-scale-names                   | bad     | On a site with its own priority names, an accepted `set_thread_priority` call exists, retries after the error included. |
+| tickets-plain-question-gets-priority         | bad     | A plain question links and unlinks nothing and still gets a provisional priority.                                       |
 | tickets-explicit-priority-request            | guard   | "Set the priority to Low" is written with `userRequested`.                                                              |
-| tickets-custom-scale-names                   | guard   | On a site with its own priority names, an accepted `set_thread_priority` call exists, retries after the error included. |
+| tickets-explicit-priority-on-ticketed-thread | guard   | The same request on a thread with a linked ticket is still written with `userRequested`.                                |
+| tickets-background-ticket-not-linked         | guard   | A ticket named only as history for the work is not linked.                                                              |
 | tickets-unlink-on-request                    | guard   | A ticket the user says is not part of the work is unlinked, and none is linked.                                         |
-| tickets-plain-question-control               | control | A plain question links and unlinks nothing and still gets a provisional priority.                                       |
+| tickets-linked-plain-question-control        | control | A plain question on a ticketed thread links, unlinks and prioritizes nothing.                                           |
 
-"Before" means the first-draft tool descriptions and an empty `<ticket_linking>` block, so the `bad` cases test what the instruction text adds. No model has run these cases yet: they are built and proven with `--dry-run` only, so the wording of the block and the descriptions is unproven by evals.
+"Before" means the first-draft tool descriptions and an empty `<ticket_linking>` block, so the `bad` cases test what the instruction text adds. Only that block asks for a provisional priority, so every case that requires a `set_thread_priority` call is `bad`; a `guard` or `control` case passes on the empty block and fails only on overcorrection. No model has run these cases yet: they are built and proven with `--dry-run` only, so the wording of the block and the descriptions is unproven by evals.
 
 ```sh
 pnpm mcp-tool-use --cases mcp-tool-use/cases/tickets.ndjson --dry-run

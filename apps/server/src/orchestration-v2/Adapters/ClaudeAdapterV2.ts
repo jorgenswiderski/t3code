@@ -1952,7 +1952,7 @@ export function makeClaudeQueryOptions(input: {
       append: [
         buildRuntimeInstructions({
           harness: "Claude Code",
-          ticketLinking: input.ticketLinking === true,
+          ticketLinking: input.ticketLinking === true && input.mcpServers !== undefined,
         }) +
           (input.mcpServers === undefined
             ? ""

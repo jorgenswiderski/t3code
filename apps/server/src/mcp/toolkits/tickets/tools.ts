@@ -23,9 +23,7 @@ const dependencies = [
   JiraService.JiraService,
 ];
 
-const ThreadParameter = Schema.optional(
-  ThreadId.annotate({ description: "Thread. Default: this thread." }),
-);
+const ThreadParameter = Schema.optional(ThreadId);
 
 export class TicketTrackerNotConfiguredError extends Schema.TaggedError<TicketTrackerNotConfiguredError>()(
   "TicketTrackerNotConfiguredError",

@@ -725,11 +725,11 @@ const ticketCases = () =>
 
 it("builds the ticket cases in a Jira-connected world, each with authored Acme data", () => {
   const cases = ticketCases();
-  assert.equal(cases.length, 8);
+  assert.equal(cases.length, 11);
   assert.equal(new Set(cases.map((c) => c.id)).size, cases.length);
   assert.deepEqual(
     cases.map((c) => c.kind),
-    ["bad", "bad", "bad", "bad", "guard", "guard", "guard", "control"],
+    [...Array(6).fill("bad"), ...Array(4).fill("guard"), "control"],
   );
   const base = buildBase(template, {
     model: "claude-sonnet-5-5",

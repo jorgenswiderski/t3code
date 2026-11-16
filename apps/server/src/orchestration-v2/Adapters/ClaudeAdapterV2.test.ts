@@ -306,6 +306,30 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isUndefined(options.extraArgs?.["dangerously-skip-permissions"]);
   });
 
+  it("names the ticket tools only when the session has the T3 MCP server", () => {
+    const base = {
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-ticket-text",
+      resume: false,
+      cwd: "/workspace",
+      settings: DEFAULT_CLAUDE_SETTINGS,
+      ticketLinking: true,
+    };
+    const appended = (withMcp: boolean) => {
+      const { systemPrompt } = ClaudeAdapterV2.makeClaudeQueryOptions({
+        ...base,
+        ...(withMcp
+          ? { mcpServers: { "t3-code": { type: "http" as const, url: "http://127.0.0.1/mcp" } } }
+          : {}),
+      });
+      return typeof systemPrompt === "object" && "append" in systemPrompt
+        ? (systemPrompt.append ?? "")
+        : "";
+    };
+    assert.include(appended(true), "<ticket_linking>");
+    assert.notInclude(appended(false), "<ticket_linking>");
+  });
+
   it("passes every --add-dir launch directory to Claude", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,

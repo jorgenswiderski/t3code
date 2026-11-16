@@ -2181,6 +2181,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             if (declined !== undefined)
               yield* eventPermit.withPermits(1)(finish(turn, "failed", declined));
           } else {
+            const hasT3Mcp = (yield* mcpSessions.read(turnInput.threadId)) !== undefined;
             const result = yield* request(
               "turn/start",
               {
@@ -2191,7 +2192,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                       harness: "Muse Code",
                       model: session.model ?? undefined,
                       reasoningEffort: effort,
-                      ticketLinking,
+                      ticketLinking: ticketLinking && hasT3Mcp,
                     }),
                   },
                   ...parts,

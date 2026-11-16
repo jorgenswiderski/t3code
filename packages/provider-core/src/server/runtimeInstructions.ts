@@ -5,7 +5,7 @@ Link each PR you create, take over, or push to: link_pull_request, or link_pull_
 
 /** Appended only while Jira is connected, so users without it pay no prompt text. */
 const TICKET_LINKING_INSTRUCTIONS = `<ticket_linking>
-Link each Jira ticket the work is for with link_ticket as soon as the prompt, branch, PR or commit shows it; alreadyLinked is success. Skip tickets named only as background. With a ticket linked, set no priority: Jira's applies. Otherwise, plain questions included, call set_thread_priority with a provisional priority for the request's urgency and importance. Set userRequested only if the user asked for that exact priority; urgent wording is not that. Unlink only on request or for a clearly wrong link. If linking fails, say so.
+Link each Jira ticket the work is for with link_ticket as soon as the prompt, branch, PR or commit shows it; alreadyLinked is success. Skip tickets named only as background. With a ticket linked, set no provisional priority: Jira's applies. Otherwise, plain questions included, call set_thread_priority once with a provisional priority for the request's urgency and importance, and again only if that changes. Set userRequested only if the user asked for that exact priority; urgent wording is not that. Unlink only on request or for a clearly wrong link. If linking fails, say so.
 </ticket_linking>`;
 
 /** Omit model and effort when the harness manages them dynamically. */
