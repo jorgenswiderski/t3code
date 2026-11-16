@@ -20,6 +20,7 @@ import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -138,6 +139,8 @@ interface ConnectionCache {
   readonly generation: number;
   readonly rankFieldId: Option.Option<string | null>;
   readonly projectKeys: ReadonlySet<string> | null;
+  /** False when this connection began with a token its secret provider could not read. */
+  readonly tokenRead: boolean;
 }
 
 const UNREADABLE_TOKEN = "Could not read the Jira API token from its secret provider.";
@@ -165,7 +168,10 @@ export const make = Effect.gen(function* () {
     generation: 0,
     rankFieldId: Option.none(),
     projectKeys: null,
+    tokenRead: true,
   });
+  // Asks the settings stream to connect again with the saved settings.
+  const reconnects = yield* Queue.sliding<void>(1);
   const statusChanges = yield* Effect.acquireRelease(
     PubSub.unbounded<JiraConnectionStatus>(),
     PubSub.shutdown,
@@ -265,12 +271,17 @@ export const make = Effect.gen(function* () {
   const readyConnection = Effect.gen(function* () {
     const read = yield* readConnection;
     if (read.type !== "ready") return yield* new JiraNotConfiguredError();
-    const status = yield* Ref.get(statusRef);
-    // Repeated failing Basic-auth requests can lock the Atlassian account; only a refresh or a settings change retries.
-    if (status.error?.kind === "auth") {
-      return yield* new JiraAuthError({ status: 401, message: status.error.message });
-    }
     const cache = yield* Ref.get(cacheRef);
+    if (!cache.tokenRead) {
+      // The token reads now (its provider was unlocked), so no request failed; connect afresh.
+      yield* Queue.offer(reconnects, undefined);
+    } else {
+      const status = yield* Ref.get(statusRef);
+      // Repeated failing Basic-auth requests can lock the Atlassian account; only a refresh or a settings change retries.
+      if (status.error?.kind === "auth") {
+        return yield* new JiraAuthError({ status: 401, message: status.error.message });
+      }
+    }
     return { connection: read.connection, cache };
   });
 
@@ -297,7 +308,12 @@ export const make = Effect.gen(function* () {
     const now = yield* nowIso;
     const generation = yield* Effect.gen(function* () {
       const next = (yield* Ref.get(cacheRef)).generation + 1;
-      yield* Ref.set(cacheRef, { generation: next, rankFieldId: Option.none(), projectKeys: null });
+      yield* Ref.set(cacheRef, {
+        generation: next,
+        rankFieldId: Option.none(),
+        projectKeys: null,
+        tokenRead: !(read.type === "invalid" && read.kind === "auth"),
+      });
       switch (read.type) {
         case "none":
           yield* publishStatus({ ...DISCONNECTED, siteUrl: read.siteUrl });
@@ -312,7 +328,12 @@ export const make = Effect.gen(function* () {
           });
           yield* publishScale(DEFAULT_TICKET_PRIORITY_SCALE);
           break;
-        case "ready":
+        case "ready": {
+          // Another site's priorities are not this one's; the same site keeps its scale across a reconnect.
+          const previous = yield* Ref.get(statusRef);
+          if (previous.siteUrl !== read.connection.siteUrl) {
+            yield* publishScale(DEFAULT_TICKET_PRIORITY_SCALE);
+          }
           yield* publishStatus({
             state: "connected",
             siteUrl: read.connection.siteUrl,
@@ -320,6 +341,7 @@ export const make = Effect.gen(function* () {
             error: null,
           });
           break;
+        }
       }
       return next;
     }).pipe(statusLock.withPermits(1));
@@ -347,6 +369,7 @@ export const make = Effect.gen(function* () {
     Stream.map((settings) => settings?.jira ?? null),
     // A reconnect only when what Jira sees changes; the token compares raw (literal or reference).
     Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
+    Stream.merge(Stream.fromQueue(reconnects).pipe(Stream.mapEffect(() => savedJira))),
     Stream.switchMap((jira) => Stream.fromEffect(connect(jira))),
     Stream.runDrain,
     Effect.forkScoped,
@@ -427,7 +450,7 @@ export const make = Effect.gen(function* () {
       } satisfies JiraTestConnectionResult;
     }
     const connection = { siteUrl, email: settings.email, apiToken: token.success };
-    const generation = (yield* Ref.get(cacheRef)).generation;
+    const { generation, tokenRead } = yield* Ref.get(cacheRef);
     const result = yield* Effect.all([
       readAccountName(connection),
       readPriorityScale(connection),
@@ -448,7 +471,12 @@ export const make = Effect.gen(function* () {
     const [accountName, priorityScale] = result.success;
     // A passing test of the saved settings ends an auth pause without waiting for the hourly refresh.
     if (input.settings === undefined && (yield* readConnection).type === "ready") {
-      yield* record(generation, { type: "success", accountName });
+      if (tokenRead) {
+        yield* record(generation, { type: "success", accountName });
+        yield* whenCurrent(generation, publishScale(priorityScale));
+      } else {
+        yield* Queue.offer(reconnects, undefined);
+      }
     }
     return { type: "connected", accountName, priorityScale } satisfies JiraTestConnectionResult;
   });

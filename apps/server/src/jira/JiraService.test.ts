@@ -5,6 +5,7 @@ import {
   DEFAULT_TICKET_PRIORITY_SCALE,
   type JiraConnectionStatus,
   type PriorityRef,
+  SecretProviderId,
   ThreadTicketKey,
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -236,10 +237,13 @@ const settingsLayer = ServerSettings.layer.pipe(
   ),
 );
 
-const jiraLayer = (fake: FakeJira) =>
+const jiraLayer = (
+  fake: FakeJira,
+  resolver: Partial<SecretResolver.SecretResolver["Service"]> = {},
+) =>
   Layer.effect(JiraService, make).pipe(
     Layer.provideMerge(settingsLayer),
-    Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+    Layer.provide(Layer.mock(SecretResolver.SecretResolver)(resolver)),
     Layer.provide(FetchHttpClient.layer),
     Layer.provideMerge(Layer.succeed(FetchHttpClient.Fetch, fake.fetch)),
   );
@@ -256,6 +260,28 @@ const SITE_PRIORITIES: ReadonlyArray<PriorityRef> = [
   { id: "4", name: "Low" },
   { id: "5", name: "Lowest" },
 ];
+const CUSTOM_PRIORITIES: ReadonlyArray<PriorityRef> = [
+  { id: "1", name: "Blocker" },
+  { id: "2", name: "Minor" },
+];
+const tokenReference = {
+  provider: SecretProviderId.make("personal"),
+  reference: "op://Private/Jira/token",
+};
+/** A secret provider whose one secret reads only once `unlocked` is set. */
+const lockedProvider = () => {
+  const provider = {
+    unlocked: false,
+    resolver: {
+      read: (references: ReadonlyArray<unknown>) =>
+        Effect.sync(() =>
+          references.map(() => (provider.unlocked ? savedJira.apiToken : undefined)),
+        ),
+      label: () => Effect.succeed("Personal"),
+    },
+  };
+  return provider;
+};
 const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
 /** Collects each stream's emissions so a test can await the next one or prove there was none. */
@@ -315,6 +341,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("JiraService", (i
     const fake = makeFakeJira();
     return Effect.gen(function* () {
       const jira = yield* JiraService;
+      const settings = yield* ServerSettings.ServerSettingsService;
       const watcher = yield* connectHealthy(fake);
       assert.deepEqual(
         fake.requests.map((request) => request.path),
@@ -342,15 +369,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("JiraService", (i
       // The project read follows the account and priority reads, so both were recorded by then.
       yield* fake.untilRequests(7);
       assert.equal(fake.requests[4]?.path, "/rest/api/3/myself");
-      assert.equal(yield* Queue.size(watcher.statuses), 0);
-      assert.equal(yield* Queue.size(watcher.scales), 0);
 
       fake.state.priorities = [...SITE_PRIORITIES].reverse();
       yield* TestClock.adjust("1 hour");
+      // Queues are ordered: the first scale taken being the changed one means the first refresh emitted none.
       assert.deepEqual(yield* Queue.take(watcher.scales), [...SITE_PRIORITIES].reverse());
       yield* fake.untilRequests(10);
-      assert.equal(yield* Queue.size(watcher.scales), 0);
-      assert.equal(yield* Queue.size(watcher.statuses), 0);
+
+      // Likewise the disconnect being the next status and scale means no refresh emitted either.
+      yield* settings.updateSettings({ jira: null });
+      assert.equal((yield* Queue.take(watcher.statuses)).state, "disconnected");
+      assert.deepEqual(yield* Queue.take(watcher.scales), DEFAULT_TICKET_PRIORITY_SCALE);
     }).pipe(Effect.provide(jiraLayer(fake)), Effect.scoped);
   });
 
@@ -389,7 +418,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("JiraService", (i
   });
 
   it.effect("ends an auth pause when a test of the saved settings passes", () => {
-    const fake = makeFakeJira();
+    const fake = makeFakeJira({ priorities: [...CUSTOM_PRIORITIES] });
     fake.failNext("/rest/api/3/myself", { status: 401 });
     return Effect.gen(function* () {
       const jira = yield* JiraService;
@@ -405,8 +434,75 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("JiraService", (i
         accountName: "Ada Lovelace",
         error: null,
       });
+      assert.deepEqual(yield* jira.priorityScale, CUSTOM_PRIORITIES);
       yield* jira.fetchTickets([key("PROJ-1")]);
       assert.equal(fake.requests.at(-1)?.path, "/rest/api/3/issue/bulkfetch");
+    }).pipe(Effect.provide(jiraLayer(fake)), Effect.scoped);
+  });
+
+  it.effect("connects afresh once a token that could not be read becomes readable", () => {
+    const fake = makeFakeJira({ priorities: [...CUSTOM_PRIORITIES] });
+    const locked = lockedProvider();
+    return Effect.gen(function* () {
+      const jira = yield* JiraService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const watcher = yield* watch();
+      yield* settings.updateSettings({ jira: { ...savedJira, apiToken: tokenReference } });
+      const failed = yield* watcher.untilStatus((status) => status.state === "error");
+      assert.equal(failed.error?.kind, "auth");
+      assert.isFalse(yield* jira.isConfigured);
+      assert.lengthOf(fake.requests, 0);
+
+      locked.unlocked = true;
+      const results = yield* jira.fetchTickets([key("PROJ-1")]);
+      assert.equal(results.get(key("PROJ-1"))?.type, "unreachable");
+      const connected = yield* watcher.untilStatus((status) => status.accountName !== null);
+      assert.equal(connected.state, "connected");
+      assert.isNull(connected.error);
+      yield* watcher.untilScale((scale) => scale[0]?.id === "1");
+      assert.deepEqual(yield* jira.priorityScale, CUSTOM_PRIORITIES);
+    }).pipe(Effect.provide(jiraLayer(fake, locked.resolver)), Effect.scoped);
+  });
+
+  it.effect("connects afresh when a test of the saved settings reads a once-locked token", () => {
+    const fake = makeFakeJira({ priorities: [...CUSTOM_PRIORITIES] });
+    const locked = lockedProvider();
+    return Effect.gen(function* () {
+      const jira = yield* JiraService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const watcher = yield* watch();
+      yield* settings.updateSettings({ jira: { ...savedJira, apiToken: tokenReference } });
+      yield* watcher.untilStatus((status) => status.state === "error");
+
+      locked.unlocked = true;
+      assert.equal((yield* jira.testConnection({})).type, "connected");
+      const connected = yield* watcher.untilStatus((status) => status.accountName !== null);
+      assert.isNull(connected.error);
+      yield* watcher.untilScale((scale) => scale[0]?.id === "1");
+      assert.deepEqual(yield* jira.priorityScale, CUSTOM_PRIORITIES);
+    }).pipe(Effect.provide(jiraLayer(fake, locked.resolver)), Effect.scoped);
+  });
+
+  it.effect("keeps the scale across a reconnect to the same site, not to another site", () => {
+    const fake = makeFakeJira({ priorities: [...CUSTOM_PRIORITIES] });
+    return Effect.gen(function* () {
+      const jira = yield* JiraService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const watcher = yield* connectHealthy(fake);
+      assert.deepEqual(yield* jira.priorityScale, CUSTOM_PRIORITIES);
+
+      yield* settings.updateSettings({ jira: { ...savedJira, email: "other@example.com" } });
+      yield* watcher.untilStatus((status) => status.accountName === null);
+      assert.deepEqual(yield* jira.priorityScale, CUSTOM_PRIORITIES);
+      yield* watcher.untilStatus((status) => status.accountName === "Ada Lovelace");
+
+      fake.failNext("/rest/api/3/myself", { status: 401 });
+      yield* settings.updateSettings({
+        jira: { ...savedJira, siteUrl: "https://other.atlassian.net" },
+      });
+      const failed = yield* watcher.untilStatus((status) => status.state === "error");
+      assert.equal(failed.siteUrl, "https://other.atlassian.net");
+      assert.deepEqual(yield* jira.priorityScale, DEFAULT_TICKET_PRIORITY_SCALE);
     }).pipe(Effect.provide(jiraLayer(fake)), Effect.scoped);
   });
 
@@ -427,7 +523,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("JiraService", (i
       const error = yield* jira.projectKeys.pipe(Effect.flip);
       assert.equal(error._tag, "JiraUnavailableError");
       assert.deepEqual(yield* jira.status, failed);
-      assert.equal(yield* Queue.size(watcher.statuses), 0);
+      // The disconnect being the next status means the repeated failure emitted none.
+      yield* settings.updateSettings({ jira: null });
+      assert.equal((yield* Queue.take(watcher.statuses)).state, "disconnected");
     }).pipe(Effect.provide(jiraLayer(fake)), Effect.scoped);
   });
 

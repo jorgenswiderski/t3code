@@ -135,7 +135,11 @@ function JiraConnection({
       <div className="grid gap-3 px-4 py-4 sm:px-5">
         <div className="grid gap-1 text-sm">
           <p>
-            {status.accountName === null ? "Checking…" : `Connected as ${status.accountName}`}{" "}
+            {status.accountName !== null
+              ? `Connected as ${status.accountName}`
+              : status.state === "connected"
+                ? "Checking…"
+                : "Not connected"}{" "}
             <span className="text-muted-foreground">
               on {siteHost(status.siteUrl ?? saved.siteUrl)}
             </span>
