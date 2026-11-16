@@ -251,7 +251,7 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
-import { openLinkTicketDialog } from "./tickets/LinkTicketDialog";
+import { openLinkTicketDialog } from "./tickets/linkTicketDialogState";
 import { useThreadTicketActions } from "~/hooks/useThreadTicketActions";
 import { ticketPriorityScaleOf } from "@t3tools/client-runtime/state/thread-priority";
 import {

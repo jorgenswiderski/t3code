@@ -7,7 +7,6 @@ import {
   type EnvironmentId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
 import { useRef, useState } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -25,16 +24,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
-
-// Host in chat to survive command palette dismissal.
-const linkTicketDialogThreadAtom = Atom.make<ScopedThreadRef | null>(null).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("tickets:link-dialog-thread"),
-);
-
-export function openLinkTicketDialog(threadRef: ScopedThreadRef): void {
-  appAtomRegistry.set(linkTicketDialogThreadAtom, threadRef);
-}
+import { linkTicketDialogThreadAtom } from "./linkTicketDialogState";
 
 export function LinkTicketDialogHost() {
   const threadRef = useAtomValue(linkTicketDialogThreadAtom);

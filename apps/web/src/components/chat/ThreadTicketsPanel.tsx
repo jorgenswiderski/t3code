@@ -21,7 +21,7 @@ import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { formatDayAwareTimestamp } from "../../timestampFormat";
-import { openLinkTicketDialog } from "../tickets/LinkTicketDialog";
+import { openLinkTicketDialog } from "../tickets/linkTicketDialogState";
 import { Badge } from "../ui/badge";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";

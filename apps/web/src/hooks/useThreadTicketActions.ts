@@ -13,7 +13,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-ticket-presentation";
 import type { ScopedThreadRef, ServerConfig, ThreadTicketKey } from "@t3tools/contracts";
 
-import { openLinkTicketDialog } from "../components/tickets/LinkTicketDialog";
+import { openLinkTicketDialog } from "../components/tickets/linkTicketDialogState";
 import type { ThreadTicketMenuState } from "../components/threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { readEnvironmentServerConfig } from "../state/threadTickets";
