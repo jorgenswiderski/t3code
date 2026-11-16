@@ -49,7 +49,7 @@ export function asLaunchingThread<T extends EnvironmentThreadShell>(thread: T): 
   };
 }
 
-type InboxThreadInput = Pick<
+export type InboxThreadInput = Pick<
   EnvironmentThreadShell,
   "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun"
 >;
