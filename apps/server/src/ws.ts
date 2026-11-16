@@ -115,6 +115,7 @@ import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
+import * as JiraService from "./jira/JiraService.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
@@ -395,6 +396,8 @@ export const withLateConfigDiscovery = <E, R>(
             return [{ ...current, providers: event.payload.providers }, [event]];
           case "settingsUpdated":
             return [{ ...current, settings: event.payload.settings }, [event]];
+          case "ticketTrackerUpdated":
+            return [{ ...current, ...event.payload }, [event]];
           // Themes and usage-limit sources survive snapshots because snapshots never include them.
           default:
             return [current, [event]];
@@ -1540,6 +1543,7 @@ export const layerWsRpc = (
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
       const textGenerators = yield* TextGenerators.TextGenerators;
+      const jira = yield* JiraService.JiraService;
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const sourceControlSignIn = yield* SourceControlSignIn.SourceControlSignIn;
@@ -1990,6 +1994,8 @@ export const layerWsRpc = (
           }),
           newProjectsRoot: managedFolders.namedProjectsRoot,
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
+          ticketPriorityScale: yield* jira.priorityScale,
+          jiraStatus: yield* jira.status,
         };
       });
 
@@ -2745,6 +2751,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
         [WS_METHODS.serverListTextGeneratorModels]: (input) => textGenerators.listModels(input),
+        [WS_METHODS.serverTestJiraConnection]: (input) => jira.testConnection(input),
         [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
@@ -3412,6 +3419,35 @@ export const layerWsRpc = (
                       })),
                     )
                   : Stream.empty;
+              const ticketTrackerUpdates =
+                input.ticketTracker === true
+                  ? Stream.zipLatestWith(
+                      jira.streamPriorityScale,
+                      jira.streamStatus,
+                      (ticketPriorityScale, jiraStatus) => ({ ticketPriorityScale, jiraStatus }),
+                    ).pipe(
+                      // Both streams start with their current value; comparing to the snapshot sends only later changes.
+                      (updates) =>
+                        Stream.concat(
+                          rpcInitialItems([
+                            {
+                              ticketPriorityScale: config.ticketPriorityScale,
+                              jiraStatus: config.jiraStatus,
+                            },
+                          ]),
+                          updates,
+                        ),
+                      Stream.changesWith(
+                        (previous, next) => JSON.stringify(previous) === JSON.stringify(next),
+                      ),
+                      Stream.drop(1),
+                      Stream.map((payload) => ({
+                        version: 1 as const,
+                        type: "ticketTrackerUpdated" as const,
+                        payload,
+                      })),
+                    )
+                  : Stream.empty;
               const settingsUpdates = settingsChanges.pipe(
                 Stream.map((settings) =>
                   ServerSettings.redactServerSettingsForClient(settings, settingsClient),
@@ -3429,7 +3465,10 @@ export const layerWsRpc = (
                   providerStatuses,
                   Stream.merge(
                     settingsUpdates,
-                    Stream.merge(environmentThemeUpdates, usageLimitSourceUpdates),
+                    Stream.merge(
+                      environmentThemeUpdates,
+                      Stream.merge(usageLimitSourceUpdates, ticketTrackerUpdates),
+                    ),
                   ),
                 ),
               );
