@@ -94,7 +94,7 @@ import {
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
-import { OPEN_TICKETS_MENU_ACTION, buildPriorityMenuAction } from "./thread-ticket-menu";
+import { buildTicketMenuItems } from "./thread-ticket-menu";
 import { ThreadPriorityGlyph } from "./ThreadPriorityGlyph";
 import { useThreadTicketActions } from "./useThreadTicketActions";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
@@ -967,15 +967,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const ticketMenuItems = useMemo<MenuAction[]>(
     () =>
-      ticketUiLevel === "off"
-        ? []
-        : [
-            buildPriorityMenuAction(
-              threadPriorityMenu({ priority: threadPriority, ticketLinks }, ticketScale),
-            ),
-            OPEN_TICKETS_MENU_ACTION,
-          ],
-    [ticketUiLevel, ticketScale, threadPriority, ticketLinks],
+      buildTicketMenuItems({
+        uiLevel: ticketUiLevel,
+        canOperate: ticketActions.canOperate,
+        priorityMenu: threadPriorityMenu({ priority: threadPriority, ticketLinks }, ticketScale),
+      }),
+    [ticketUiLevel, ticketActions.canOperate, ticketScale, threadPriority, ticketLinks],
   );
   const menuActions = useMemo<MenuAction[]>(() => {
     const nested = Platform.OS === "ios";

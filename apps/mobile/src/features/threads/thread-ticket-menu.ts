@@ -7,6 +7,8 @@ import {
 } from "@t3tools/client-runtime/state/thread-ticket-presentation";
 import type { MenuAction } from "@react-native-menu/menu";
 
+import type { TicketUiLevel } from "../../state/thread-tickets";
+
 /** Shared by the list row menu and the tickets sheet, so both agree on ids and check marks. */
 export function buildPriorityMenuAction(menu: ReturnType<typeof threadPriorityMenu>): MenuAction {
   return {
@@ -34,3 +36,16 @@ export const OPEN_TICKETS_MENU_ACTION: MenuAction = {
   title: "Jira tickets…",
   image: "ticket",
 };
+
+/** Read-only clients keep the view-only tickets entry; the Priority submenu would do nothing for them. */
+export function buildTicketMenuItems(input: {
+  readonly uiLevel: TicketUiLevel;
+  readonly canOperate: boolean;
+  readonly priorityMenu: ReturnType<typeof threadPriorityMenu>;
+}): MenuAction[] {
+  if (input.uiLevel === "off") return [];
+  return [
+    ...(input.canOperate ? [buildPriorityMenuAction(input.priorityMenu)] : []),
+    OPEN_TICKETS_MENU_ACTION,
+  ];
+}

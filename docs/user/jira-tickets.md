@@ -53,8 +53,9 @@ A thread's priority comes from the first of these that applies:
 On mobile, touch and hold a thread in the list and choose **Priority**, or use **Priority** at the top
 of the **Jira tickets** sheet.
 
-A small arrow on a thread in the sidebar (or beside the pin in the mobile list) shows the priority, and its tooltip says where it came from:
-**You**, **Jira** with the ticket, or **Agent guess**. A priority you set that is not on the current
+A small arrow on a thread in the sidebar (or beside the pin in the mobile list) shows the priority.
+On the web, hover it to see where it came from: **You**, **Jira** with the ticket, or **Agent guess**.
+On mobile, a screen reader announces the same. A priority you set that is not on the current
 scale, for example after you connect a different Jira site, shows with a dashed icon until you pick a
 new one or clear it.
 
