@@ -40,6 +40,8 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerConfig from "../config.ts";
+import * as JiraService from "../jira/JiraService.ts";
+import * as JiraServiceTest from "../jira/testing/JiraServiceTest.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
@@ -1301,6 +1303,116 @@ it.effect("hides tools for links and refuses another environment while the beta 
         isError: true,
         content: [{ text: expect.stringContaining("cannot reach linked environments") }],
       });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+const listTicketToolNames = Effect.fn("McpHttpServerTest.listTicketToolNames")(function* (
+  jira: Layer.Layer<JiraService.JiraService> | undefined,
+) {
+  const token = "ticketsToken";
+  const scope: McpInvocationContext.McpThreadInvocationScope = {
+    environmentId,
+    requestNamespace: token,
+    thread: {
+      threadId: ThreadId.make("thread-tickets"),
+      providerSessionId: token,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    },
+    client: undefined,
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 1,
+  };
+  const TicketsProbeToolkit = Toolkit.make(
+    Tool.make("tickets_probe", {
+      description: "Needs Jira.",
+      success: Schema.Struct({ ok: Schema.Boolean }),
+      failure: OrchestratorMcpFailure,
+      failureMode: "return",
+    }).annotate(McpSchema.EnabledWhen, McpInvocationContext.visibleWhileTicketsOn),
+    Tool.make("always", {
+      description: "Always listed.",
+      success: Schema.Struct({ ok: Schema.Boolean }),
+      failure: OrchestratorMcpFailure,
+      failureMode: "return",
+    }),
+  );
+  const serverLayer = McpHttpServer.layerMcpTransport(
+    McpHttpServer.toolkitRegistration(
+      TicketsProbeToolkit,
+      McpToolAccess.toLayer(TicketsProbeToolkit, {
+        tickets_probe: McpToolAccess.reads(() => Effect.succeed({ ok: true })),
+        always: McpToolAccess.reads(() => Effect.succeed({ ok: true })),
+      }),
+    ),
+  ).pipe(
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+    Layer.provide(
+      Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+        resolve: (presented) => Effect.succeed(presented === token ? scope : undefined),
+      }),
+    ),
+    (layer) => (jira === undefined ? layer : Layer.provide(layer, jira)),
+  );
+  yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+    Layer.build,
+  );
+  const httpClient = yield* HttpClient.HttpClient;
+  const headers = {
+    accept: "application/json, text/event-stream",
+    authorization: `Bearer ${token}`,
+  };
+  const initialize = yield* httpClient.post("/mcp", {
+    headers,
+    body: HttpBody.text(
+      `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+      "application/json",
+    ),
+  });
+  return () =>
+    httpClient
+      .post("/mcp", {
+        headers: {
+          ...headers,
+          "mcp-session-id": initialize.headers["mcp-session-id"]!,
+          "mcp-protocol-version": "2025-06-18",
+        },
+        body: HttpBody.text(
+          JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+          "application/json",
+        ),
+      })
+      .pipe(
+        Effect.flatMap((response) => response.json),
+        Effect.map((body) =>
+          (body as { result: { tools: ReadonlyArray<{ name: string }> } }).result.tools.map(
+            (tool) => tool.name,
+          ),
+        ),
+      );
+});
+
+it.effect("lists ticket tools only while Jira is configured", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const jira = yield* JiraServiceTest.makeTestJiraService();
+      const listed = yield* listTicketToolNames(jira.layer);
+
+      expect(yield* listed()).toEqual(["always"]);
+      yield* jira.controller.update({ configured: true });
+      expect(yield* listed()).toEqual(["tickets_probe", "always"]);
+      yield* jira.controller.update({ configured: false });
+      expect(yield* listed()).toEqual(["always"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("omits ticket tools when the server has no Jira service", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const listed = yield* listTicketToolNames(undefined);
+      expect(yield* listed()).toEqual(["always"]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
