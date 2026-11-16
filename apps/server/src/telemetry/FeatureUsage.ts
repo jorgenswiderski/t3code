@@ -36,6 +36,8 @@ const COMMAND_FEATURES: {
   "thread.pin": () => ({ feature: "thread.pin" }),
   "thread.settle": () => ({ feature: "thread.settle" }),
   "thread.pull-request.link": () => ({ feature: "thread.pull_request.link" }),
+  "thread.ticket.link": (command) => use("thread.ticket.link", command.source),
+  "thread.priority.set": (command) => use("thread.priority.set", command.source),
   "thread.pull-request.watch": (command) =>
     use("thread.pull_request.watch", command.watching ? "on" : "off"),
   "thread.runtime-mode.set": (command) => use("thread.runtime_mode.set", command.runtimeMode),

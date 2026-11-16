@@ -23,6 +23,7 @@ import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type ChatAttachment,
   CommandId,
+  EMPTY_THREAD_PRIORITY,
   type GuestMessageId,
   isCompactionCommandMessage,
   isOrchestrationV2WorkActive,
@@ -79,6 +80,12 @@ import {
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
+import {
+  linkThreadTicketLinks,
+  setThreadPriorityValue,
+  syncThreadTicketLinks,
+  unlinkThreadTicketLinks,
+} from "./threadTicketReducer.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
   backgroundWorkHoldsCompletion,
@@ -603,6 +610,10 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pin.reorder":
     case "thread.active.reorder":
     case "thread.tag.set":
+    case "thread.ticket.link":
+    case "thread.ticket.unlink":
+    case "thread.ticket-link.sync":
+    case "thread.priority.set":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
@@ -3516,6 +3527,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.unpin"
           | "thread.pin.reorder"
           | "thread.tag.set"
+          | "thread.ticket.link"
+          | "thread.ticket.unlink"
+          | "thread.ticket-link.sync"
+          | "thread.priority.set"
           | "thread.active.reorder"
           | "thread.mark-unread"
           | "thread.metadata.update"
@@ -4097,6 +4112,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : current.filter((tag) => tag !== command.tag),
           };
         }
+        case "thread.ticket.link":
+        case "thread.ticket.unlink":
+        case "thread.ticket-link.sync": {
+          const links = thread.ticketLinks ?? [];
+          const ticketLinks =
+            command.type === "thread.ticket.link"
+              ? linkThreadTicketLinks(links, {
+                  key: command.key,
+                  url: command.url ?? null,
+                  source: command.source,
+                  linkedAt: DateTime.formatIso(now),
+                })
+              : command.type === "thread.ticket.unlink"
+                ? unlinkThreadTicketLinks(links, { key: command.key, branch: thread.branch })
+                : syncThreadTicketLinks(links, command);
+          return ticketLinks === links ? thread : { ...thread, ticketLinks };
+        }
+        case "thread.priority.set": {
+          const current = thread.priority ?? EMPTY_THREAD_PRIORITY;
+          const priority = setThreadPriorityValue(current, command);
+          return priority === current ? thread : { ...thread, priority };
+        }
         case "thread.mark-unread": {
           // Retire the wake before rewinding the visit, preserving its settlement timer.
           const snoozeExpired =
@@ -4452,6 +4489,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       return;
     }
+    if (
+      (command.type === "thread.ticket.link" ||
+        command.type === "thread.ticket.unlink" ||
+        command.type === "thread.ticket-link.sync" ||
+        command.type === "thread.priority.set") &&
+      updatedThread === thread
+    ) {
+      return;
+    }
     const eventType = (() => {
       switch (command.type) {
         case "thread.archive":
@@ -4478,6 +4524,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.active-reordered" as const;
         case "thread.tag.set":
           return "thread.tags-updated" as const;
+        case "thread.ticket.link":
+        case "thread.ticket.unlink":
+        case "thread.ticket-link.sync":
+          return "thread.ticket-links-updated" as const;
+        case "thread.priority.set":
+          return "thread.priority-updated" as const;
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
         case "thread.metadata.update":
@@ -13703,6 +13755,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pin.reorder":
       case "thread.active.reorder":
       case "thread.tag.set":
+      case "thread.ticket.link":
+      case "thread.ticket.unlink":
+      case "thread.ticket-link.sync":
+      case "thread.priority.set":
       case "thread.mark-unread":
       case "thread.metadata.update":
       case "thread.pull-request.link":
@@ -14077,6 +14133,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
+          // Ticket and priority commands that change nothing succeed without an event.
+          command.type === "thread.ticket.link" ||
+          command.type === "thread.ticket.unlink" ||
+          command.type === "thread.ticket-link.sync" ||
+          command.type === "thread.priority.set" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),

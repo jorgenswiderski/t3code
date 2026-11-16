@@ -71,6 +71,7 @@ import * as EventSink from "./EventSink.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionReplay from "./testkit/ProjectionReplay.ts";
+import { makeTicketSnapshot } from "./testkit/ticketFixtures.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestWatchReactor from "./PullRequestWatchReactor.ts";
 import { PULL_REQUEST_WATCH_WAKE_LIMIT } from "./pullRequestWatch.ts";
@@ -2674,6 +2675,72 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         DateTime.toEpochMillis(untaggedShell.updatedAt),
       );
 
+      const firstSnapshot = makeTicketSnapshot();
+      const laterSyncedAt = "2026-11-13T10:01:00.000Z";
+      for (const [step, command, eventType] of [
+        [
+          "link",
+          { type: "thread.ticket.link", key: "PROJ-1", source: "manual" },
+          "thread.ticket-links-updated",
+        ],
+        ["relink", { type: "thread.ticket.link", key: "PROJ-1", source: "manual" }, null],
+        [
+          "sync",
+          {
+            type: "thread.ticket-link.sync",
+            key: "PROJ-1",
+            observedAt: firstSnapshot.syncedAt,
+            result: { type: "snapshot", snapshot: firstSnapshot },
+          },
+          "thread.ticket-links-updated",
+        ],
+        [
+          "sync-equal",
+          {
+            type: "thread.ticket-link.sync",
+            key: "PROJ-1",
+            observedAt: laterSyncedAt,
+            result: { type: "snapshot", snapshot: { ...firstSnapshot, syncedAt: laterSyncedAt } },
+          },
+          null,
+        ],
+        [
+          "priority",
+          { type: "thread.priority.set", source: "user", priority: { id: "2", name: "High" } },
+          "thread.priority-updated",
+        ],
+        [
+          "priority-same",
+          { type: "thread.priority.set", source: "user", priority: { id: "2", name: "High" } },
+          null,
+        ],
+        ["unlink", { type: "thread.ticket.unlink", key: "PROJ-1" }, "thread.ticket-links-updated"],
+      ] as const) {
+        const result = yield* orchestrator.dispatch({
+          ...command,
+          commandId: CommandId.make(`runtime-layer-lifecycle-ticket-${step}`),
+          threadId,
+        });
+        assert.deepEqual(
+          result.storedEvents.map((stored) => stored.event.type),
+          eventType === null ? [] : [eventType],
+          step,
+        );
+        const shell = shellOf(yield* orchestrator.getShellSnapshot());
+        if (step === "link") assert.equal(shell.ticketLinks?.[0]?.key, "PROJ-1");
+        if (step === "sync") assert.equal(shell.ticketLinks?.[0]?.snapshot?.title, "Fix login");
+        if (step === "sync-equal") {
+          assert.equal(shell.ticketLinks?.[0]?.snapshot?.syncedAt, firstSnapshot.syncedAt);
+        }
+        if (step === "priority") assert.equal(shell.priority?.user?.name, "High");
+        if (step === "unlink") assert.deepEqual(shell.ticketLinks ?? [], []);
+      }
+      // Ticket links and priority are not activity either.
+      assert.equal(
+        DateTime.toEpochMillis(shellOf(yield* orchestrator.getShellSnapshot()).updatedAt),
+        DateTime.toEpochMillis(untaggedShell.updatedAt),
+      );
+
       const preAutoProjection = yield* orchestrator.getThreadProjection(threadId);
       const staleAutoSettle = yield* orchestrator
         .dispatch({
@@ -2755,6 +2822,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         commandId: CommandId.make("runtime-layer-lifecycle-archive"),
         threadId,
       });
+      const archivedPriority = yield* orchestrator.dispatch({
+        type: "thread.priority.set",
+        commandId: CommandId.make("runtime-layer-lifecycle-priority-archived"),
+        threadId,
+        source: "agent",
+        priority: { id: "4", name: "Low" },
+      });
+      assert.lengthOf(archivedPriority.storedEvents, 1);
       const archivedShell = yield* orchestrator.getShellSnapshot();
       assert.notInclude(
         archivedShell.threads.map((thread) => thread.id),
