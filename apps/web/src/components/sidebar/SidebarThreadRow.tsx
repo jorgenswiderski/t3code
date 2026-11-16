@@ -1,9 +1,9 @@
 import { useAtomMount } from "@effect/atom-react";
 import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
+import { threadHasTicketData } from "@t3tools/client-runtime/state/thread-ticket-presentation";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadContextGlyphBadge, ThreadContextTooltipLine } from "../pacing/ThreadContextGlyph";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
-import { threadHasTicketData } from "@t3tools/client-runtime/state/thread-ticket-presentation";
 import { ThreadPriorityIndicator } from "../tickets/ThreadPriorityIndicator";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";

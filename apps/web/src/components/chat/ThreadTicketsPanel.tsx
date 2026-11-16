@@ -47,14 +47,17 @@ function statusBadge(chip: TicketChip) {
 function TicketTooltipBody({ chip }: { readonly chip: TicketChip }) {
   const status = chip.status;
   const lines = [
-    status.kind === "synced"
-      ? status.name
-      : status.kind === "unreachable"
-        ? status.reasonText
-        : status.label,
-    chip.priorityName ? `Priority ${chip.priorityName}` : null,
-    chip.sourceLabel,
-  ].filter((line): line is string => line !== null);
+    [
+      "status",
+      status.kind === "synced"
+        ? status.name
+        : status.kind === "unreachable"
+          ? status.reasonText
+          : status.label,
+    ],
+    ["priority", chip.priorityName ? `Priority ${chip.priorityName}` : null],
+    ["source", chip.sourceLabel],
+  ] as const;
   return (
     <div className="flex min-w-0 max-w-80 flex-col gap-1.5 px-1 py-2">
       <div className="flex min-w-0 items-baseline gap-1.5 text-xs leading-snug">
@@ -62,11 +65,13 @@ function TicketTooltipBody({ chip }: { readonly chip: TicketChip }) {
         <span className="min-w-0 font-medium text-foreground">{chip.title ?? "No title yet"}</span>
       </div>
       <div className="grid gap-1 text-xs text-foreground/75">
-        {lines.map((line) => (
-          <div key={line} className="min-w-0 truncate">
-            {line}
-          </div>
-        ))}
+        {lines.map(([field, line]) =>
+          line === null ? null : (
+            <div key={field} className="min-w-0 truncate">
+              {line}
+            </div>
+          ),
+        )}
       </div>
     </div>
   );
