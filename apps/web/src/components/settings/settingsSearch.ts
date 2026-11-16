@@ -465,6 +465,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "inbox-order",
+    title: "Inbox order",
+    to: "/settings/general",
+    searchTerms: ["inbox sort order priority jira recently returned"],
+  },
+  {
     id: "boring-sidebar",
     title: "Boring sidebar (group by project)",
     to: "/settings/labs",
