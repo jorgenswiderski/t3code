@@ -27,10 +27,6 @@ const ThreadParameter = Schema.optional(
   ThreadId.annotate({ description: "Thread. Default: this thread." }),
 );
 
-const TicketParameter = TrimmedNonEmptyString.annotate({
-  description: "Ticket key (ACME-123) or its browse URL on the connected Jira site.",
-});
-
 export class TicketTrackerNotConfiguredError extends Schema.TaggedError<TicketTrackerNotConfiguredError>()(
   "TicketTrackerNotConfiguredError",
   {},
@@ -151,8 +147,8 @@ export type SetThreadPriorityResult = typeof SetThreadPriorityResult.Type;
 
 const LinkTicketTool = Tool.make("link_ticket", {
   description:
-    "Link a Jira ticket to this thread. Linking a ticket that is already linked succeeds.",
-  parameters: Schema.Struct({ ticket: TicketParameter, threadId: ThreadParameter }),
+    "Link a Jira ticket to this thread, or to `threadId`. `ticket` is a key (ACME-123) or a browse URL on the connected Jira site. Succeeds with `alreadyLinked=true` when it was already linked.",
+  parameters: Schema.Struct({ ticket: TrimmedNonEmptyString, threadId: ThreadParameter }),
   success: LinkTicketResult,
   failure: TicketToolError,
   dependencies,
@@ -166,8 +162,8 @@ const LinkTicketTool = Tool.make("link_ticket", {
 
 const UnlinkTicketTool = Tool.make("unlink_ticket", {
   description:
-    "Remove a Jira ticket link from this thread. Succeeds with `wasLinked=false` when it was not linked.",
-  parameters: Schema.Struct({ ticket: TicketParameter, threadId: ThreadParameter }),
+    "Remove a Jira ticket link from this thread, or from `threadId`. `ticket` is a key or a browse URL. Succeeds with `wasLinked=false` when it was not linked.",
+  parameters: Schema.Struct({ ticket: TrimmedNonEmptyString, threadId: ThreadParameter }),
   success: UnlinkTicketResult,
   failure: TicketToolError,
   dependencies,
@@ -181,12 +177,13 @@ const UnlinkTicketTool = Tool.make("unlink_ticket", {
 
 const SetThreadPriorityTool = Tool.make("set_thread_priority", {
   description:
-    "Set this thread's priority, a name or id from the connected Jira site's priority scale (Highest, High, Medium, Low, Lowest unless the site changed it). By default it records your provisional priority. With `userRequested`, it records the user's own priority. `null` clears the value that would be written. An unknown priority fails with the valid names.",
+    "Set the priority of this thread, or of `threadId`. By default it records your provisional priority; `userRequested` records the user's own instead. `priority` is a name or id from the connected Jira site's scale, by default (highest first) Highest, High, Medium, Low, Lowest. An unknown priority fails with the valid names. `null` clears the priority this call would write.",
   parameters: Schema.Struct({
     priority: Schema.NullOr(TrimmedNonEmptyString),
     userRequested: Schema.optional(
       Schema.Boolean.annotate({
-        description: "Only when the user explicitly asked for this priority.",
+        description:
+          "Writes the user's own priority. Only when the user explicitly asked for this priority value.",
       }),
     ),
     threadId: ThreadParameter,
