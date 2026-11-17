@@ -1364,6 +1364,17 @@ export const CloudSpeechCredentials = Schema.Struct({
   openrouter: CloudSpeechCredential,
 });
 
+// Bad entries drop alone, so a hand edit cannot reset settings.
+const LenientStringArray = Schema.Array(Schema.Unknown).pipe(
+  Schema.decodeTo(
+    Schema.Array(Schema.String),
+    SchemaTransformation.transform<ReadonlyArray<string>, ReadonlyArray<unknown>>({
+      decode: (values) => values.filter((value) => typeof value === "string"),
+      encode: (values) => values,
+    }),
+  ),
+);
+
 export const ServerSettings = Schema.Struct({
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1458,18 +1469,11 @@ export const ServerSettings = Schema.Struct({
   snoozePresets: SnoozePresetSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNOOZE_PRESETS)),
   ),
-  /** Clients hide threads with these tags while `hideTaggedThreads` is on. Bad entries drop alone, so a hand edit cannot reset settings. */
-  hiddenThreadTags: Schema.Array(Schema.Unknown).pipe(
-    Schema.decodeTo(
-      Schema.Array(Schema.String),
-      SchemaTransformation.transform<ReadonlyArray<string>, ReadonlyArray<unknown>>({
-        decode: (values) => values.filter((value) => typeof value === "string"),
-        encode: (values) => values,
-      }),
-    ),
-    Schema.withDecodingDefault(Effect.succeed([])),
-  ),
+  /** Clients hide threads with these tags while `hideTaggedThreads` is on. */
+  hiddenThreadTags: LenientStringArray.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   hideTaggedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Clients show these MCP servers' apps as ordinary tool calls. */
+  hiddenMcpAppServers: LenientStringArray.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Beta: guest links for this machine's threads. Off refuses new links and pauses existing ones. */
   guestSharingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
@@ -1895,6 +1899,7 @@ export const ServerSettingsPatch = Schema.Struct({
   snoozePresets: Schema.optionalKey(SnoozePresetSettings),
   hiddenThreadTags: Schema.optionalKey(Schema.Array(Schema.String)),
   hideTaggedThreads: Schema.optionalKey(Schema.Boolean),
+  hiddenMcpAppServers: Schema.optionalKey(Schema.Array(Schema.String)),
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
   promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),

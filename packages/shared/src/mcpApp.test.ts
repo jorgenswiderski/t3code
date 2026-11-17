@@ -11,6 +11,7 @@ import {
   mcpAppToolResourceUri,
   readMcpAppCsp,
   readMcpAppReference,
+  withMcpAppServerHidden,
 } from "./mcpApp.ts";
 
 describe("mcpAppContentSecurityPolicy", () => {
@@ -294,5 +295,32 @@ describe("MCP App cookie bootstrap", () => {
     });
     expect(() => execute(injectMcpAppCookieBootstrap(vendor), document)).toThrow(failure);
     expect(() => Reflect.get(document, "cookie")).toThrow(failure);
+  });
+});
+
+describe("withMcpAppServerHidden", () => {
+  it("keeps the list trimmed and unique while hiding and showing a server", () => {
+    const rows: ReadonlyArray<readonly [string[], string, boolean, string[]]> = [
+      [[], "claude.ai Atlassian Rovo", true, ["claude.ai Atlassian Rovo"]],
+      [["linear"], " claude.ai Atlassian Rovo ", true, ["linear", "claude.ai Atlassian Rovo"]],
+      [
+        ["linear", "claude.ai Atlassian Rovo"],
+        "claude.ai Atlassian Rovo",
+        true,
+        ["linear", "claude.ai Atlassian Rovo"],
+      ],
+      [["linear"], "   ", true, ["linear"]],
+      [
+        [" linear", "", "linear", "claude.ai Atlassian Rovo"],
+        "claude.ai Atlassian Rovo",
+        false,
+        ["linear"],
+      ],
+      [["linear", " claude.ai Atlassian Rovo"], "claude.ai Atlassian Rovo ", false, ["linear"]],
+      [["linear"], "absent", false, ["linear"]],
+    ];
+    for (const [servers, server, hidden, expected] of rows) {
+      expect(withMcpAppServerHidden(servers, server, hidden)).toEqual(expected);
+    }
   });
 });

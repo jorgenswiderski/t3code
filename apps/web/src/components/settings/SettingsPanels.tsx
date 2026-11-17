@@ -108,6 +108,7 @@ import { searchableSetting } from "./settingsSearch";
 import { sameWorkDays } from "./usagePacingSettings.logic";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
 import { AdvancedSettings } from "./AdvancedSettings";
+import { HiddenMcpAppsSettings } from "./HiddenMcpAppsSettings";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
 import { StorageCleanupSections } from "./StorageSettings";
 import { UpdateTrackSwitchDialog } from "./UpdateTrackSwitchDialog";
@@ -1294,6 +1295,8 @@ export function ChatSettingsPanel() {
         <ToolCallVisibilityRow />
         <ScreenReaderAnnouncementsRow />
       </SettingsSection>
+
+      <HiddenMcpAppsSettings />
     </SettingsPageContainer>
   );
 }

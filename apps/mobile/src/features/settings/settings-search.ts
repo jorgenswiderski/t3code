@@ -61,6 +61,11 @@ const SETTINGS_SEARCH_TERMS = {
     "last project",
   ],
   SettingsThreads: [
+    "hidden mcp apps",
+    "mcp",
+    "apps",
+    "hide apps",
+    "show apps",
     "new threads",
     "default workspace",
     "default permissions",

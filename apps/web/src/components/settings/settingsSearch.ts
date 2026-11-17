@@ -493,6 +493,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "hidden-mcp-apps",
+    title: "Hidden MCP apps",
+    to: "/settings/chat",
+    scope: "environment",
+    searchTerms: ["mcp apps hidden show server widget card inline connector jira"],
+  },
+  {
     id: "screen-reader-announcements",
     title: "Screen reader announcements",
     to: "/settings/chat",

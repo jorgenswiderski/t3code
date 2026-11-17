@@ -229,7 +229,7 @@ import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
 import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
-import { ThreadMcpApp } from "./McpAppWebView";
+import { McpAppFeedRow } from "./McpAppFeedRow";
 import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { readEnvironmentScope, usePreparedConnection } from "../../state/session";
@@ -1738,14 +1738,11 @@ function renderFeedEntry(
 
   if (entry.type === "mcp-app") {
     return (
-      <ThreadMcpApp
+      <McpAppFeedRow
         key={entry.app.attachmentId}
         environmentId={props.environmentId}
-        threadId={entry.sourceThreadId}
-        conversationThreadId={props.threadId}
-        itemId={entry.itemId}
-        revision={entry.revision}
-        app={entry.app}
+        threadId={props.threadId}
+        entry={entry}
         width={props.contentWidth}
       />
     );

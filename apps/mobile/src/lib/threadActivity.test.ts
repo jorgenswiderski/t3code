@@ -39,23 +39,53 @@ const threadId = ThreadId.make("thread-1");
 const sourceThreadId = ThreadId.make("thread-source");
 const runId = RunId.make("run-1");
 
-it("shows a captured MCP app for a failed deferred write", () => {
-  const mcpApp = {
-    attachmentId: "deferred-app-html",
-    server: "github",
-    tool: "create_pull_request",
-    resourceUri: "ui://github-mcp-server/pr-create",
-  };
-  const item: OrchestrationV2TurnItem = {
-    ...base("deferred-app", "2026-08-29T00:00:00.000Z", 1),
-    type: "dynamic_tool",
-    toolName: "github.create_pull_request",
-    status: "failed",
-    input: {},
-    output: { t3McpApp: mcpApp, result: { content: [], isError: true } },
-  };
-  expect(buildThreadFeed([projected(item, 0)])).toMatchObject([{ type: "mcp-app", app: mcpApp }]);
-});
+it.each([false, true])(
+  "shows a captured MCP app for a failed deferred write until its server is hidden (cache: %s)",
+  (cached) => {
+    const cache = cached ? createThreadFeedCache() : undefined;
+    const mcpApp = {
+      attachmentId: "deferred-app-html",
+      server: "github",
+      tool: "create_pull_request",
+      resourceUri: "ui://github-mcp-server/pr-create",
+    };
+    const appItem = (id: string, app: typeof mcpApp): OrchestrationV2TurnItem => ({
+      ...base(id, "2026-08-29T00:00:00.000Z", 1),
+      type: "dynamic_tool",
+      toolName: "github.create_pull_request",
+      status: "failed",
+      input: {},
+      output: { t3McpApp: app, result: { content: [], isError: true } },
+    });
+    const user = projected(userMessage(), 0);
+    const app = projected(appItem("deferred-app", mcpApp), 1);
+    const spaced = projected(appItem("spaced-app", { ...mcpApp, server: "github " }), 1);
+    const build = (rows: OrchestrationV2ProjectedTurnItem[], hidden?: ReadonlySet<string>) =>
+      buildThreadFeed(rows, { cache, hiddenMcpAppServers: hidden });
+    const expectShown = (feed: ThreadFeedEntry[]) =>
+      expect(feed).toMatchObject([{ type: "message" }, { type: "mcp-app", app: mcpApp }]);
+    const expectHidden = (feed: ThreadFeedEntry[], id: string) => {
+      expect(feed.map((entry) => entry.type)).toEqual(["message", "activity-group"]);
+      const group = feed[1];
+      expect(
+        group?.type === "activity-group" ? group.activities[0]?.projectedItem.item.id : null,
+      ).toBe(TurnItemId.make(id));
+    };
+
+    const shown = build([user, app]);
+    expectShown(shown);
+    const hidden = build([user, app], new Set(["github"]));
+    expectHidden(hidden, "deferred-app");
+    const hiddenAgain = build([user, app], new Set(["github"]));
+    expectHidden(hiddenAgain, "deferred-app");
+    const other = build([user, app], new Set(["linear"]));
+    expectShown(other);
+    const unhidden = build([user, app], new Set());
+    expectShown(unhidden);
+    for (const feed of [hidden, hiddenAgain, other, unhidden]) expect(feed[0]).toBe(shown[0]);
+    expectHidden(build([user, spaced], new Set(["github"])), "spaced-app");
+  },
+);
 
 it("keeps historical plan detail accessible from its paged turn item", () => {
   const item = {

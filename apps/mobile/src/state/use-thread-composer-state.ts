@@ -61,6 +61,7 @@ import {
 } from "../features/threads/pending-thread-feed";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
 import { appAtomRegistry } from "./atom-registry";
+import { serverEnvironment } from "./server";
 import { pendingThreadCreationMessage } from "./pending-thread-creation";
 import {
   composerAttachmentUploadBlockReason,
@@ -256,6 +257,9 @@ export function useThreadComposerState(input: {
   // cannot be an either/or with the loaded messages.
   const pendingCreationMessage = selectedThreadCreation?.message ?? null;
   const [feedCache] = useState(createThreadFeedCache);
+  const hiddenMcpAppServers = useAtomValue(
+    serverEnvironment.hiddenMcpAppServersAtom(selectedThreadShell?.environmentId ?? null),
+  );
   const selectedThreadFeed = (() => {
     const pendingCreation =
       pendingCreationMessage !== null &&
@@ -268,6 +272,7 @@ export function useThreadComposerState(input: {
       nodes: selectedThreadNodes,
       checkpointSummaries,
       cache: feedCache,
+      hiddenMcpAppServers,
     });
     const pendingAcknowledgments = selectPendingAcknowledgedMessages(acknowledgedMessages, {
       threadKey: selectedThreadKey,
