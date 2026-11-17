@@ -1,23 +1,14 @@
 import { AuthSettingsWriteScope, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import { withMcpAppServerHidden } from "@t3tools/shared/mcpApp";
 import { useRef } from "react";
 import { Pressable, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
-import { appAtomRegistry } from "../../state/atom-registry";
-import { serverEnvironment } from "../../state/server";
+import { OUTDATED_SERVER_MESSAGE, setMcpAppServerHidden } from "../../state/hidden-mcp-app-servers";
 import { useEnvironmentScope } from "../../state/session";
-import { useAtomCommand } from "../../state/use-atom-command";
 import { showGitActionResult } from "../../state/use-vcs-action-state";
 import type { ThreadFeedEntry } from "../../lib/threadActivity";
 import { ThreadMcpApp } from "./McpAppWebView";
-
-const OUTDATED_SERVER_MESSAGE = "This environment's server may need an update.";
 
 export function McpAppFeedRow(props: {
   readonly environmentId: EnvironmentId;
@@ -28,44 +19,28 @@ export function McpAppFeedRow(props: {
   const { environmentId, entry } = props;
   const { app } = entry;
   const canHide = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
-  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: "hide MCP apps",
-    reportFailure: false,
-  });
   const writing = useRef(false);
 
   const write = async () => {
-    const current =
-      appAtomRegistry.get(serverEnvironment.settingsValueAtom(environmentId))
-        ?.hiddenMcpAppServers ?? [];
-    const result = await updateSettings({
-      environmentId,
-      input: { patch: { hiddenMcpAppServers: withMcpAppServerHidden(current, app.server, true) } },
-    });
-    if (result._tag === "Success") {
-      const server = app.server.trim();
-      if (result.value.hiddenMcpAppServers.some((stored) => stored.trim() === server)) {
-        showGitActionResult({
-          type: "success",
-          title: `Apps from ${app.server} hidden`,
-          description: "Show them again in Settings → Threads.",
-        });
-      } else {
-        showGitActionResult({
-          type: "error",
-          title: `Could not hide apps from ${app.server}`,
-          description: OUTDATED_SERVER_MESSAGE,
-        });
-      }
-      return;
+    const outcome = await setMcpAppServerHidden(environmentId, app.server, true);
+    if (outcome._tag === "Applied") {
+      showGitActionResult({
+        type: "success",
+        title: `Apps from ${app.server} hidden`,
+        description: "Show them again in Settings → Threads.",
+      });
+    } else if (outcome._tag !== "Interrupted") {
+      showGitActionResult({
+        type: "error",
+        title: `Could not hide apps from ${app.server}`,
+        description:
+          outcome._tag === "Failed"
+            ? outcome.error instanceof Error
+              ? outcome.error.message
+              : String(outcome.error)
+            : OUTDATED_SERVER_MESSAGE,
+      });
     }
-    if (isAtomCommandInterrupted(result)) return;
-    const error = squashAtomCommandFailure(result);
-    showGitActionResult({
-      type: "error",
-      title: `Could not hide apps from ${app.server}`,
-      description: error instanceof Error ? error.message : String(error),
-    });
   };
 
   const hide = () => {

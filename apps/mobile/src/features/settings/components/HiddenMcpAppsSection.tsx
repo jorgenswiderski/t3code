@@ -1,15 +1,17 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { withMcpAppServerHidden } from "@t3tools/shared/mcpApp";
 import { View } from "react-native";
 
 import { AppText } from "../../../components/ui/AppText";
+import * as Dialog from "../../../components/ui/Dialog";
 import { Button } from "../../../components/ui/Button";
 import { ListRowLayout } from "../../../components/ui/ListRowLayout";
-import { appAtomRegistry } from "../../../state/atom-registry";
+import {
+  OUTDATED_SERVER_MESSAGE,
+  setMcpAppServerHidden,
+} from "../../../state/hidden-mcp-app-servers";
 import { serverEnvironment } from "../../../state/server";
 import type { SettingsTarget } from "../settings-environment-filter";
-import { useSettingsWriter } from "../useSettingsWriter";
 import { SettingsSection } from "./SettingsSection";
 
 const TITLE = "Hidden MCP apps";
@@ -41,20 +43,19 @@ function EnvironmentHiddenMcpApps(props: {
   const servers = [
     ...useAtomValue(serverEnvironment.hiddenMcpAppServersAtom(environment.environmentId)),
   ];
-  const write = useSettingsWriter();
 
-  const show = (server: string) => {
-    const current =
-      appAtomRegistry.get(serverEnvironment.settingsValueAtom(environment.environmentId))
-        ?.hiddenMcpAppServers ?? [];
-    void write(
-      [{ environment }],
-      [
-        {
-          environmentId: environment.environmentId,
-          patch: { hiddenMcpAppServers: withMcpAppServerHidden(current, server, false) },
-        },
-      ],
+  const show = async (server: string) => {
+    const outcome = await setMcpAppServerHidden(environment.environmentId, server, false);
+    if (outcome._tag === "Applied" || outcome._tag === "Interrupted") return;
+    Dialog.alert(
+      "Could not save settings",
+      `${environment.label}: ${
+        outcome._tag === "Failed"
+          ? outcome.error instanceof Error
+            ? outcome.error.message
+            : String(outcome.error)
+          : OUTDATED_SERVER_MESSAGE
+      }`,
     );
   };
 
@@ -83,7 +84,7 @@ function EnvironmentHiddenMcpApps(props: {
                   <Button
                     label="Show"
                     accessibilityLabel={`Show apps from ${server}`}
-                    onPress={() => show(server)}
+                    onPress={() => void show(server)}
                   />
                 ) : undefined
               }

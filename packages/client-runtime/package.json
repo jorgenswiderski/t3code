@@ -283,6 +283,10 @@
       "types": "./src/state/review.ts",
       "default": "./src/state/review.ts"
     },
+    "./state/hidden-mcp-app-servers": {
+      "types": "./src/state/hiddenMcpAppServers.ts",
+      "default": "./src/state/hiddenMcpAppServers.ts"
+    },
     "./state/runtime": {
       "types": "./src/state/runtime.ts",
       "default": "./src/state/runtime.ts"
