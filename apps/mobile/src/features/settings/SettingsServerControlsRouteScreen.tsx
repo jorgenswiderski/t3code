@@ -28,6 +28,7 @@ import { DatabaseStorageNotice } from "./components/DatabaseStorageNotice";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { HiddenMcpAppsSection } from "./components/HiddenMcpAppsSection";
 import { SourceControlSignInSection } from "./components/SourceControlSignInSection";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
@@ -395,6 +396,12 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   />
                 </SettingsSection>
                 <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
+                {projectSelected ? null : (
+                  <HiddenMcpAppsSection
+                    environments={selectedTargets}
+                    canWrite={(environmentId) => writableEnvironments.has(environmentId)}
+                  />
+                )}
               </>
             ) : null}
 

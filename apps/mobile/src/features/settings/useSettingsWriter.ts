@@ -16,7 +16,7 @@ export function useSettingsWriter() {
   });
 
   return async (
-    targets: readonly ScopedMobileSettingsTarget[],
+    targets: readonly Pick<ScopedMobileSettingsTarget, "environment">[],
     writes: readonly {
       readonly environmentId: EnvironmentId;
       readonly patch: ServerSettingsPatch;
