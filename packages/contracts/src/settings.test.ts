@@ -140,13 +140,19 @@ describe("ServerSettings usage price overrides", () => {
   });
 });
 
-it("drops a hand-edited non-string hidden tag and keeps the rest of the settings", () => {
+it("drops hand-edited non-string hidden entries and keeps the rest of the settings", () => {
+  expect(decodeServerSettings({}).hiddenMcpAppServers).toEqual([]);
   const settings = decodeServerSettings({
     hiddenThreadTags: ["private", 123],
+    hiddenMcpAppServers: ["claude.ai Atlassian Rovo", 7, null],
     hideTaggedThreads: true,
   });
   expect(settings.hiddenThreadTags).toEqual(["private"]);
+  expect(settings.hiddenMcpAppServers).toEqual(["claude.ai Atlassian Rovo"]);
   expect(settings.hideTaggedThreads).toBe(true);
+  expect(decodeServerSettingsPatch({ hiddenMcpAppServers: ["linear"] })).toEqual({
+    hiddenMcpAppServers: ["linear"],
+  });
 });
 
 describe("ServerSettings secret providers", () => {
