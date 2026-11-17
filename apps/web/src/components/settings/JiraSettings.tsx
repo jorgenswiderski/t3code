@@ -10,7 +10,7 @@ import {
   type SecretReference,
 } from "@t3tools/contracts";
 import { CheckIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -219,10 +219,15 @@ function JiraConnection({
     >
       <fieldset disabled={busy || !canEdit} className="contents">
         <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-          Link threads to Jira Cloud issues to read their status and priority. Use an API token with
-          scopes for Jira from the Atlassian account that can see those issues, and grant the
-          read-only scopes <code>{JIRA_CLASSIC_TOKEN_SCOPES[0]}</code> and{" "}
-          <code>{JIRA_CLASSIC_TOKEN_SCOPES[1]}</code>.{" "}
+          Link threads to Jira Cloud issues to read their status and priority. Use a scoped Jira API
+          token from the Atlassian account that can see those issues, with the read-only scopes{" "}
+          {JIRA_CLASSIC_TOKEN_SCOPES.map((scope, index) => (
+            <Fragment key={scope}>
+              {index > 0 ? " and " : null}
+              <code>{scope}</code>
+            </Fragment>
+          ))}
+          . These also allow reading comments and attachments, which T3 Code doesn't use.{" "}
           <InlineButton
             render={<a href={API_TOKEN_URL} target="_blank" rel="noreferrer noopener" />}
           >
@@ -326,7 +331,7 @@ function TokenScopes() {
         <div className="flex items-center gap-1">
           <CollapsibleTrigger render={<InlineButton tone="muted" />}>
             <ChevronRightIcon aria-hidden className="size-3 [[data-panel-open]_&]:rotate-90" />
-            Tighter: granular scopes instead
+            Tighter option: granular scopes
           </CollapsibleTrigger>
           <Button
             size="icon-xs"
