@@ -1324,6 +1324,63 @@ describe("HTML renders in the timeline", () => {
     expect(entries.find((entry) => entry.kind === "mcp-app")).toMatchObject({ mcpApp });
   });
 
+  it("shows a hidden server's app as an ordinary tool call, and brings it back, without a reload", () => {
+    const appCall = (id: string, second: number, server: string, tool: string) =>
+      visible({
+        ...base(id, second),
+        type: "dynamic_tool",
+        toolName: `${server}.${tool}`,
+        input: {},
+        output: {
+          t3McpApp: {
+            attachmentId: `${id}-html`,
+            server,
+            tool,
+            resourceUri: `ui://${server}/app`,
+          },
+          result: { content: [] },
+        },
+      });
+    const input = {
+      visibleTurnItems: [
+        appCall("a", 1, "weather", "get_weather"),
+        appCall("b", 2, "github", "create_pull_request"),
+        appCall("c", 3, "linear ", "list_issues"),
+      ],
+      optimisticMessages: [],
+    };
+    const kinds = (entries: ReadonlyArray<TimelineEntry>) => entries.map((entry) => entry.kind);
+
+    for (const [hidden, expected] of [
+      [undefined, ["mcp-app", "mcp-app", "mcp-app"]],
+      [new Set(["weather"]), ["work", "mcp-app", "mcp-app"]],
+      [new Set(["weather", "github", "linear"]), ["work", "work", "work"]],
+      [new Set<string>(), ["mcp-app", "mcp-app", "mcp-app"]],
+    ] as const) {
+      const entries = deriveTimelineEntriesFromVisibleTurnItems({
+        ...input,
+        ...(hidden === undefined ? {} : { hiddenMcpAppServers: hidden }),
+      });
+      expect(kinds(entries)).toEqual(expected);
+      entries.forEach((entry, index) => {
+        if (entry.kind !== "work") return;
+        expect(entry.id).toBe(["a", "b", "c"][index]);
+        expect(entry.entry.itemType).toBe("dynamic_tool");
+      });
+    }
+
+    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
+    const hiddenInput = { ...input, hiddenMcpAppServers: new Set(["weather"]) };
+    const hidden = deriveTimelineEntriesFromVisibleTurnItemsWithState(hiddenInput, previous);
+    expect(kinds(hidden.entries)).toEqual(["work", "mcp-app", "mcp-app"]);
+    expect(hidden.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(hiddenInput));
+
+    const shownInput = { ...input, hiddenMcpAppServers: new Set<string>() };
+    const shown = deriveTimelineEntriesFromVisibleTurnItemsWithState(shownInput, hidden);
+    expect(kinds(shown.entries)).toEqual(["mcp-app", "mcp-app", "mcp-app"]);
+    expect(shown.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(shownInput));
+  });
+
   it("keeps a render visible when its superseded attempt folds", () => {
     const attempt: OrchestrationV2RunAttempt = {
       id: RunAttemptId.make("attempt-superseded"),

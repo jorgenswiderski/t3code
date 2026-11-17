@@ -492,6 +492,7 @@ export interface TimelineEntriesInput {
   readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
   readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
   readonly plans?: ReadonlyArray<OrchestrationV2PlanArtifact>;
+  readonly hiddenMcpAppServers?: ReadonlySet<string>;
 }
 
 export interface TimelineEntriesProjection {
@@ -647,7 +648,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     }
 
     const mcpApp = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
-    if (mcpApp !== undefined) {
+    if (mcpApp !== undefined && input.hiddenMcpAppServers?.has(mcpApp.server.trim()) !== true) {
       entries.push({
         id: item.id,
         kind: "mcp-app",
@@ -868,7 +869,8 @@ function reuseTimelineEntries(
     !shallow(input.attachmentUrlById, before.attachmentUrlById) ||
     !shallow(input.attempts, before.attempts) ||
     !shallow(input.nodes, before.nodes) ||
-    !shallow(input.plans, before.plans)
+    !shallow(input.plans, before.plans) ||
+    !shallow(input.hiddenMcpAppServers, before.hiddenMcpAppServers)
   ) {
     return null;
   }

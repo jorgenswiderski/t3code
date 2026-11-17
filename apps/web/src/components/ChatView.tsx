@@ -1532,7 +1532,11 @@ export default function ChatView(props: ChatViewProps) {
           { ...codexFeedbackMessage(submission, "assistant"), runId: null },
         ],
   );
+  const hiddenMcpAppServers = useAtomValue(
+    serverEnvironment.hiddenMcpAppServersAtom(environmentId),
+  );
   const timelineEntriesInput = {
+    hiddenMcpAppServers,
     optimisticMessages: optimisticUserMessages,
     anchoredMessages: anchoredTimelineMessages,
     attachmentUrlById: timelineAttachmentUrlById,
