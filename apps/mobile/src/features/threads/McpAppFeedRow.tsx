@@ -1,0 +1,116 @@
+import { AuthSettingsWriteScope, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { withMcpAppServerHidden } from "@t3tools/shared/mcpApp";
+import { useRef } from "react";
+import { Pressable, View } from "react-native";
+
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { showGitActionResult } from "../../state/use-vcs-action-state";
+import type { ThreadFeedEntry } from "../../lib/threadActivity";
+import { ThreadMcpApp } from "./McpAppWebView";
+
+const OUTDATED_SERVER_MESSAGE = "This environment's server may need an update.";
+
+export function McpAppFeedRow(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly entry: Extract<ThreadFeedEntry, { readonly type: "mcp-app" }>;
+  readonly width: number;
+}) {
+  const { environmentId, entry } = props;
+  const { app } = entry;
+  const canHide = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "hide MCP apps",
+    reportFailure: false,
+  });
+  const writing = useRef(false);
+
+  const hide = async () => {
+    if (writing.current) return;
+    writing.current = true;
+    try {
+      const current =
+        appAtomRegistry.get(serverEnvironment.settingsValueAtom(environmentId))
+          ?.hiddenMcpAppServers ?? [];
+      const result = await updateSettings({
+        environmentId,
+        input: {
+          patch: { hiddenMcpAppServers: withMcpAppServerHidden(current, app.server, true) },
+        },
+      });
+      if (result._tag === "Success") {
+        const server = app.server.trim();
+        if (result.value.hiddenMcpAppServers.some((entry) => entry.trim() === server)) {
+          showGitActionResult({
+            type: "success",
+            title: `Apps from ${app.server} hidden`,
+            description: "Show them again in Settings → Threads.",
+          });
+        } else {
+          showGitActionResult({
+            type: "error",
+            title: `Could not hide apps from ${app.server}`,
+            description: OUTDATED_SERVER_MESSAGE,
+          });
+        }
+        return;
+      }
+      if (isAtomCommandInterrupted(result)) return;
+      const error = squashAtomCommandFailure(result);
+      showGitActionResult({
+        type: "error",
+        title: `Could not hide apps from ${app.server}`,
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      writing.current = false;
+    }
+  };
+
+  return (
+    <View>
+      <View className="flex-row items-center">
+        <Text
+          className="min-w-0 flex-1 text-foreground-muted"
+          numberOfLines={1}
+          textRole="footnote"
+        >
+          {`${app.server} · ${app.tool}`}
+        </Text>
+        {canHide ? (
+          <Pressable
+            accessibilityLabel={`Hide apps from ${app.server}`}
+            accessibilityRole="button"
+            className="min-h-11 min-w-11 items-center justify-center active:opacity-60"
+            onPress={() => void hide()}
+          >
+            <SymbolView
+              name="eye.slash"
+              size={18}
+              tintColorClassName="accent-icon-subtle"
+              type="monochrome"
+            />
+          </Pressable>
+        ) : null}
+      </View>
+      <ThreadMcpApp
+        environmentId={environmentId}
+        threadId={entry.sourceThreadId}
+        conversationThreadId={props.threadId}
+        itemId={entry.itemId}
+        revision={entry.revision}
+        app={app}
+        width={props.width}
+      />
+    </View>
+  );
+}
