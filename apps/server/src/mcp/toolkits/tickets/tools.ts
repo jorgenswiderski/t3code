@@ -175,7 +175,7 @@ const UnlinkTicketTool = Tool.make("unlink_ticket", {
 
 const SetThreadPriorityTool = Tool.make("set_thread_priority", {
   description:
-    "Set the priority of this thread, or of `threadId`. By default it records your provisional priority; `userRequested` records the user's own instead. `priority` is a name or id from the connected Jira site's scale, by default (highest first) Highest, High, Medium, Low, Lowest. An unknown priority fails with the valid names. `null` clears the priority this call would write.",
+    "Set the priority of this thread, or of `threadId`. By default it records your provisional priority; `userRequested` records the user's own instead. `priority` is a name or id from the connected Jira site's scale, by default (highest first) Highest, High, Medium, Low, Lowest. An unknown priority fails with the valid names. `null` clears your provisional priority, or with `userRequested` both the user's and yours.",
   parameters: Schema.Struct({
     priority: Schema.NullOr(TrimmedNonEmptyString),
     userRequested: Schema.optional(
