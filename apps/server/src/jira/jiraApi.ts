@@ -81,7 +81,7 @@ const sendJira = Effect.fn("Jira.send")(
       return yield* new JiraUnavailableError({ message: `Jira returned HTTP ${status}.` });
     }
     if (status < 200 || status >= 300) {
-      return yield* new JiraResponseError({ message: `Jira returned HTTP ${status}.` });
+      return yield* new JiraResponseError({ status, message: `Jira returned HTTP ${status}.` });
     }
     const body = yield* response.json.pipe(
       Effect.mapError(() => new JiraResponseError({ message: UNREADABLE_REPLY })),
@@ -209,10 +209,13 @@ export const readPriorityScale = Effect.fn("Jira.readPriorityScale")(function* (
     Priorities,
   ).pipe(
     Effect.catchTags({
+      // Only a removed endpoint falls back; other errors keep the last good scale and show in the status.
       JiraResponseError: (error) =>
-        Effect.logWarning("Jira's priority list could not be read; using the default scale", {
-          message: error.message,
-        }).pipe(Effect.as([])),
+        error.status === 404 || error.status === 410
+          ? Effect.logWarning("Jira no longer lists priorities; using the default scale").pipe(
+              Effect.as([]),
+            )
+          : Effect.fail(error),
     }),
   );
   const scale: ReadonlyArray<PriorityRef> = values

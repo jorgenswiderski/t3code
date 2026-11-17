@@ -57,7 +57,7 @@ export class JiraUnavailableError extends Schema.TaggedError<JiraUnavailableErro
 ) {}
 export class JiraResponseError extends Schema.TaggedError<JiraResponseError>()(
   "JiraResponseError",
-  { message: Schema.String },
+  { message: Schema.String, status: Schema.optional(Schema.Number) },
 ) {}
 export type JiraError =
   | JiraNotConfiguredError

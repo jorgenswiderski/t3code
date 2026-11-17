@@ -213,6 +213,22 @@ describe("jiraApi", () => {
     }),
   );
 
+  it.effect.each<{ name: string; response: FakeJiraResponse; message: string }>([
+    { name: "a 400", response: { status: 400 }, message: "Jira returned HTTP 400." },
+    {
+      name: "an unreadable reply",
+      response: { status: 200, body: { unexpected: true } },
+      message: "Jira returned a reply T3 Code couldn't read.",
+    },
+  ])("fails on $name rather than replacing the scale with the default", ({ response, message }) =>
+    Effect.gen(function* () {
+      const fake = makeFakeJira();
+      fake.failNext("/rest/api/3/priority", response);
+      const error = yield* withFake(fake)(readPriorityScale(connection)).pipe(Effect.flip);
+      assert.deepInclude(error, { _tag: "JiraResponseError", message });
+    }),
+  );
+
   it.effect("prefers the lexo-rank field named Rank", () =>
     Effect.gen(function* () {
       const rank = { custom: RANK_FIELD_TYPE };
