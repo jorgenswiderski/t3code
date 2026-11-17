@@ -76,12 +76,13 @@ it.each([false, true])(
     expectShown(shown);
     const hidden = build([user, app], new Set(["github"]));
     expectHidden(hidden, "deferred-app");
-    expectHidden(build([user, app], new Set(["github"])), "deferred-app");
+    const hiddenAgain = build([user, app], new Set(["github"]));
+    expectHidden(hiddenAgain, "deferred-app");
     const other = build([user, app], new Set(["linear"]));
     expectShown(other);
     const unhidden = build([user, app], new Set());
     expectShown(unhidden);
-    for (const feed of [hidden, other, unhidden]) expect(feed[0]).toBe(shown[0]);
+    for (const feed of [hidden, hiddenAgain, other, unhidden]) expect(feed[0]).toBe(shown[0]);
     expectHidden(build([user, spaced], new Set(["github"])), "spaced-app");
   },
 );

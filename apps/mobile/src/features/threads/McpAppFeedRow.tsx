@@ -44,7 +44,7 @@ export function McpAppFeedRow(props: {
     });
     if (result._tag === "Success") {
       const server = app.server.trim();
-      if (result.value.hiddenMcpAppServers.some((entry) => entry.trim() === server)) {
+      if (result.value.hiddenMcpAppServers.some((stored) => stored.trim() === server)) {
         showGitActionResult({
           type: "success",
           title: `Apps from ${app.server} hidden`,

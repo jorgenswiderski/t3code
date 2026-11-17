@@ -2325,7 +2325,7 @@ export function buildThreadFeed(
     }
     const app = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
     const appServer = app?.server.trim();
-    if (app && !hiddenMcpAppServers.has(app.server.trim())) {
+    if (app && appServer !== undefined && !hiddenMcpAppServers.has(appServer)) {
       const entry: RawThreadFeedEntry = {
         type: "mcp-app",
         id: `mcp-app:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
