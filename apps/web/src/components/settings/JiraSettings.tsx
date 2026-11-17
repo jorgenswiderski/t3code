@@ -1,15 +1,17 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   isSecretReference,
+  JIRA_API_TOKEN_SCOPES,
   type EnvironmentId,
   type JiraConnectionStatus,
   type JiraErrorKind,
   type JiraSettings,
   type SecretReference,
 } from "@t3tools/contracts";
-import { ExternalLinkIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
@@ -17,6 +19,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { type JiraDraft, jiraSettingsPatch } from "./JiraSettings.logic";
@@ -27,8 +30,6 @@ import { SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 const API_TOKEN_URL = "https://id.atlassian.com/manage-profile/security/api-tokens";
-const SCOPES_DOCS_URL =
-  "https://github.com/pingdotgg/t3code/blob/main/docs/user/jira-tickets.md#connect-jira";
 const ERROR_LABELS: Record<JiraErrorKind, string> = {
   auth: "Authentication failed",
   unavailable: "Jira unavailable",
@@ -224,14 +225,9 @@ function JiraConnection({
           >
             Create an API token with scopes
             <ExternalLinkIcon aria-hidden className="size-3" />
-          </InlineButton>{" "}
-          <InlineButton
-            render={<a href={SCOPES_DOCS_URL} target="_blank" rel="noreferrer noopener" />}
-          >
-            Scopes it needs
-            <ExternalLinkIcon aria-hidden className="size-3" />
           </InlineButton>
         </p>
+        <TokenScopes />
         {!canEdit ? (
           <p className="text-xs text-muted-foreground">
             This connection lacks permission to change settings on this environment.
@@ -313,6 +309,37 @@ function TestOutcomeText({ outcome }: { readonly outcome: TestOutcome }) {
     >
       {outcome?.message}
     </p>
+  );
+}
+
+function TokenScopes() {
+  const { copyToClipboard, isCopied } = useCopyToClipboard({ timeout: 1500, target: "scopes" });
+  return (
+    <div className="max-w-2xl text-xs text-muted-foreground">
+      <Collapsible>
+        <div className="flex items-center gap-1">
+          <CollapsibleTrigger render={<InlineButton tone="muted" />}>
+            <ChevronRightIcon aria-hidden className="size-3 [[data-panel-open]_&]:rotate-90" />
+            Scopes it needs
+          </CollapsibleTrigger>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Copy scopes"
+            onClick={() => copyToClipboard(JIRA_API_TOKEN_SCOPES.join("\n"), undefined)}
+          >
+            {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+          </Button>
+        </div>
+        <CollapsiblePanel>
+          <ul role="list" className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono">
+            {JIRA_API_TOKEN_SCOPES.map((scope) => (
+              <li key={scope}>{scope}</li>
+            ))}
+          </ul>
+        </CollapsiblePanel>
+      </Collapsible>
+    </div>
   );
 }
 

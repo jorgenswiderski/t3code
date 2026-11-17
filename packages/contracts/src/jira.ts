@@ -28,6 +28,30 @@ export function normalizeJiraSiteUrl(input: string): string | null {
   }
 }
 
+/** The read-only granular scopes the API token needs for every Jira call T3 Code makes. */
+export const JIRA_API_TOKEN_SCOPES = [
+  "read:application-role:jira",
+  "read:avatar:jira",
+  "read:field:jira",
+  "read:field-configuration:jira",
+  "read:group:jira",
+  "read:issue:jira",
+  "read:issue-meta:jira",
+  "read:issue-security-level:jira",
+  "read:issue-type:jira",
+  "read:issue-type-hierarchy:jira",
+  "read:issue.changelog:jira",
+  "read:issue.vote:jira",
+  "read:priority:jira",
+  "read:project:jira",
+  "read:project-category:jira",
+  "read:project.component:jira",
+  "read:project.property:jira",
+  "read:project-version:jira",
+  "read:status:jira",
+  "read:user:jira",
+] as const;
+
 export const JiraSiteUrl = TrimmedNonEmptyString.check(
   Schema.makeFilter((value) => normalizeJiraSiteUrl(value) === value),
 );
