@@ -1102,6 +1102,23 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:hidden-thread-tags:${environmentId}`),
     ),
   );
+  const emptyHiddenMcpAppServersAtom = Atom.make<ReadonlySet<string>>(new Set<string>()).pipe(
+    Atom.withLabel("environment-data:server:hidden-mcp-app-servers:empty"),
+  );
+  const hiddenMcpAppServersAtom = Atom.family((environmentId: EnvironmentId | null) => {
+    if (environmentId === null) return emptyHiddenMcpAppServersAtom;
+    return Atom.make((get): ReadonlySet<string> => {
+      const servers = get(settingsValueAtom(environmentId))?.hiddenMcpAppServers ?? [];
+      return new Set(servers.map((server) => server.trim()).filter((server) => server !== ""));
+    }).pipe(
+      // Trimming makes a new set on every settings push; keep equal sets stable.
+      Atom.withEquality(
+        (a: ReadonlySet<string>, b: ReadonlySet<string>) =>
+          a === b || (a.size === b.size && [...a].every((server) => b.has(server))),
+      ),
+      Atom.withLabel(`environment-data:server:hidden-mcp-app-servers:${environmentId}`),
+    );
+  });
   const usagePricesAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
       const overrides = get(settingsValueAtom(environmentId))?.usagePriceOverrides ?? {};
@@ -1230,6 +1247,7 @@ export function createServerEnvironmentAtoms<R, E>(
     updateStateAtom,
     settingsValueAtom,
     hiddenThreadTagsAtom,
+    hiddenMcpAppServersAtom,
     usageModelFilterAtom,
     providersValueAtom,
     providerAuthState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
