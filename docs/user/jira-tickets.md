@@ -82,7 +82,8 @@ A thread's priority comes from the first of these that applies:
 3. The agent's guess. Set your own priority to override it.
 
 **Clear priority** removes both your priority and the agent's guess. A linked ticket's priority still
-shows until you unlink the ticket or it loses its priority in Jira.
+shows until you unlink the ticket, it loses its priority in Jira, or it is Done and you settle the
+thread.
 
 On mobile, touch and hold a thread in the list and choose **Priority**, or use **Priority** at the top
 of the **Jira tickets** sheet.
