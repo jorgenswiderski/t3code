@@ -146,6 +146,7 @@ export const make = Effect.gen(function* () {
   // Set from a 429's Retry-After; sweeps before it make no request and keep `pendingKeys`.
   let pausedUntilMs = 0;
   const lastBranch = new Map<ThreadId, string | null>();
+  const failedBranches = new Set<ThreadId>();
 
   const logSkipped =
     (message: string, fields: Record<string, unknown>) =>
@@ -242,10 +243,15 @@ export const make = Effect.gen(function* () {
     });
 
   const detectBranchTickets = Effect.fn("TicketSyncReactor.detectBranchTickets")(
-    function* (thread: OrchestrationV2AppThread) {
+    function* (eventType: ThreadPayloadEvent["type"], thread: OrchestrationV2AppThread) {
       const previous = lastBranch.get(thread.id);
       lastBranch.set(thread.id, thread.branch);
-      if (previous !== undefined && previous === thread.branch) return;
+      const retry = failedBranches.delete(thread.id);
+      // A thread first seen after a restart only records its branch, so branches that predate
+      // this process (or a later Jira connect) gain no links; a thread that is new does detect.
+      const branchChanged =
+        previous === undefined ? eventType === "thread.created" : previous !== thread.branch;
+      if (!branchChanged && !retry) return;
       if (thread.archivedAt !== null) return;
       // Dismissed links are in ticketLinks too, so a dismissed key is never offered again.
       const present = new Set((thread.ticketLinks ?? []).map((link) => link.key));
@@ -263,12 +269,12 @@ export const make = Effect.gen(function* () {
         });
       }
     },
-    (effect, thread) =>
+    (effect, _eventType, thread) =>
       effect.pipe(
         Effect.catchCause((cause) => {
           if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
-          // Forget the branch so the thread's next event retries after a Jira or dispatch failure.
-          lastBranch.delete(thread.id);
+          // The thread's next event retries after a Jira or dispatch failure.
+          failedBranches.add(thread.id);
           return Effect.logWarning("branch ticket detection skipped", { threadId: thread.id });
         }),
       ),
@@ -277,6 +283,7 @@ export const make = Effect.gen(function* () {
   const onDomainEvent = (event: OrchestrationV2DomainEvent) => {
     if (event.type === "thread.deleted") {
       lastBranch.delete(event.threadId);
+      failedBranches.delete(event.threadId);
       return Effect.void;
     }
     if (!isThreadPayloadEvent(event)) return Effect.void;
@@ -287,7 +294,7 @@ export const make = Effect.gen(function* () {
           )
         : [];
     return Effect.forEach(unsynced, (link) => requestFetch(link.key), { discard: true }).pipe(
-      Effect.andThen(detectBranchTickets(event.payload)),
+      Effect.andThen(detectBranchTickets(event.type, event.payload)),
       Effect.catchCause(logSkipped("ticket sync event skipped", { threadId: event.threadId })),
     );
   };

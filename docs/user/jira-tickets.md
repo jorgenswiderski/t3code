@@ -48,7 +48,8 @@ A thread's priority comes from the first of these that applies:
    **Clear my priority** removes it.
 2. The highest priority among its linked tickets. A Done ticket still counts until you settle the
    thread.
-3. The agent's guess.
+3. The agent's guess. **Clear my priority** does not remove it. Set your own priority to override it,
+   or ask the agent to clear it.
 
 On mobile, touch and hold a thread in the list and choose **Priority**, or use **Priority** at the top
 of the **Jira tickets** sheet.

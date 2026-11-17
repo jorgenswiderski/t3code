@@ -89,7 +89,9 @@ export function threadPriorityIndicator(
 /** Rows without any ticket data skip mounting the indicator, so they subscribe to nothing extra. */
 export function threadHasTicketData(thread: IndicatorThread): boolean {
   return (
-    thread.ticketLinks.length > 0 || thread.priority.user !== null || thread.priority.agent !== null
+    visibleThreadTicketLinks(thread.ticketLinks).length > 0 ||
+    thread.priority.user !== null ||
+    thread.priority.agent !== null
   );
 }
 

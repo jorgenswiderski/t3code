@@ -13,6 +13,7 @@ import {
   jiraSyncNotice,
   parseTicketMenuAction,
   priorityGlyphLevel,
+  threadHasTicketData,
   threadPriorityIndicator,
   threadPriorityMenu,
   ticketChipModel,
@@ -183,6 +184,20 @@ describe("threadPriorityIndicator", () => {
       position: 3,
       level: 2,
     });
+  });
+});
+
+describe("threadHasTicketData", () => {
+  it("ignores dismissed branch links and counts everything else", () => {
+    const dismissed = link("PROJ-1", { source: "branch-dismissed", snapshot: null });
+    const cases: ReadonlyArray<readonly [ReturnType<typeof thread>, boolean]> = [
+      [thread(), false],
+      [thread([dismissed]), false],
+      [thread([dismissed, link("PROJ-2")]), true],
+      [thread([dismissed], { user: ref("High") }), true],
+      [thread([], { agent: ref("Low") }), true],
+    ];
+    for (const [input, expected] of cases) expect(threadHasTicketData(input)).toBe(expected);
   });
 });
 

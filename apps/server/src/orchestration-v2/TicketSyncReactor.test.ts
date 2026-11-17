@@ -869,12 +869,39 @@ describe("TicketSyncReactor branch tickets", () => {
         yield* Queue.offer(
           fixture.domainEvents,
           threadEvent(
-            "thread.metadata-updated",
+            "thread.created",
             withBranch("abc-12", { archivedAt: DateTime.makeUnsafe("2026-11-12T00:00:00.000Z") }),
           ),
         );
         yield* flushEvents(fixture, reactor);
         assert.deepStrictEqual(yield* Ref.get(fixture.linkCalls), []);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
+  it.effect("does not backfill a branch that predates this process", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeHarness({ jira: { projectKeys: new Set(["ABC"]) } });
+      yield* Effect.gen(function* () {
+        const reactor = yield* startReactor(fixture);
+        // The first event the process sees for an existing thread only records its branch.
+        yield* Queue.offer(
+          fixture.domainEvents,
+          threadEvent("thread.metadata-updated", withBranch("abc-12")),
+        );
+        yield* flushEvents(fixture, reactor);
+        assert.deepStrictEqual(yield* Ref.get(fixture.linkCalls), []);
+        assert.strictEqual(yield* Ref.get(fixture.projectKeyReads), 0);
+
+        yield* Queue.offer(
+          fixture.domainEvents,
+          threadEvent("thread.metadata-updated", withBranch("abc-13")),
+        );
+        yield* flushEvents(fixture, reactor);
+        assert.deepStrictEqual(
+          (yield* Ref.get(fixture.linkCalls)).map((call) => call.key),
+          ["ABC-13"],
+        );
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
