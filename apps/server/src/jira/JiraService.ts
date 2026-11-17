@@ -487,31 +487,30 @@ export const make = Effect.gen(function* () {
       } satisfies JiraTestConnectionResult;
     }
     const { generation, tokenRead } = yield* Ref.get(cacheRef);
-    const result = yield* readCloudId(siteUrl).pipe(
-      Effect.flatMap((cloudId) => {
-        const connection: JiraApiConnection = {
-          cloudId,
-          email: settings.email,
-          apiToken: token.success,
-        };
-        return Effect.all([readAccountName(connection), readPriorityScale(connection)]);
-      }),
-      withHttp,
-      Effect.result,
-    );
-    if (result._tag === "Failure") {
-      const error = result.failure;
-      return {
+    const failed = (error: JiraRequestError, responseKind: "response" | "invalid_site") =>
+      ({
         type: "failed",
         kind:
           error._tag === "JiraAuthError"
             ? "auth"
             : error._tag === "JiraUnavailableError"
               ? "unavailable"
-              : "response",
+              : responseKind,
         message: error.message,
-      } satisfies JiraTestConnectionResult;
-    }
+      }) satisfies JiraTestConnectionResult;
+    const cloudId = yield* readCloudId(siteUrl).pipe(withHttp, Effect.result);
+    // A site that can't be found is the site field's problem, not the token's.
+    if (cloudId._tag === "Failure") return failed(cloudId.failure, "invalid_site");
+    const connection: JiraApiConnection = {
+      cloudId: cloudId.success,
+      email: settings.email,
+      apiToken: token.success,
+    };
+    const result = yield* Effect.all([
+      readAccountName(connection),
+      readPriorityScale(connection),
+    ]).pipe(withHttp, Effect.result);
+    if (result._tag === "Failure") return failed(result.failure, "response");
     const [accountName, priorityScale] = result.success;
     // A passing test of the saved settings ends an auth pause without waiting for the hourly refresh.
     if (input.settings === undefined && (yield* readConnection).type === "ready") {

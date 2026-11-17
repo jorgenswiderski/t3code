@@ -87,7 +87,7 @@ describe("jiraApi", () => {
           {
             url: "https://acme.atlassian.net/_edge/tenant_info",
             authorization: null,
-            redirect: "error",
+            redirect: "manual",
           },
         ],
       );
@@ -98,6 +98,21 @@ describe("jiraApi", () => {
     {
       name: "a 404",
       response: { status: 404 },
+      expected: { _tag: "JiraResponseError", message: "Couldn't find that Jira site." },
+    },
+    {
+      name: "a 401",
+      response: { status: 401 },
+      expected: { _tag: "JiraResponseError", message: "Couldn't find that Jira site." },
+    },
+    {
+      name: "a 403",
+      response: { status: 403 },
+      expected: { _tag: "JiraResponseError", message: "Couldn't find that Jira site." },
+    },
+    {
+      name: "a redirect",
+      response: { status: 302, headers: { location: "https://id.atlassian.com/login" } },
       expected: { _tag: "JiraResponseError", message: "Couldn't find that Jira site." },
     },
     {
@@ -746,6 +761,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("JiraService", (i
       );
       assert.equal(testRequests[2]?.authorization, basicAuth);
       assert.deepEqual(yield* jira.status, before);
+    }).pipe(Effect.provide(jiraLayer(fake)), Effect.scoped);
+  });
+
+  it.effect("reports a site whose cloud ID can't be read as an invalid site", () => {
+    const fake = makeFakeJira();
+    fake.failNext("/_edge/tenant_info", { status: 404 });
+    return Effect.gen(function* () {
+      const jira = yield* JiraService;
+      const result = yield* jira.testConnection({ settings: savedJira });
+      assert.deepEqual(result, {
+        type: "failed",
+        kind: "invalid_site",
+        message: "Couldn't find that Jira site.",
+      });
+      assert.lengthOf(fake.requests, 1);
     }).pipe(Effect.provide(jiraLayer(fake)), Effect.scoped);
   });
 

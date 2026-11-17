@@ -46,11 +46,12 @@ const sendJira = Effect.fn("Jira.send")(
   function* <S extends Schema.Decoder<unknown>>(
     request: HttpClientRequest.HttpClientRequest,
     schema: S,
+    redirect: "error" | "manual" = "error",
   ) {
     const http = yield* HttpClient.HttpClient;
     const response = yield* http.execute(request.pipe(HttpClientRequest.acceptJson)).pipe(
       // A redirect could carry the credential to another origin.
-      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+      Effect.provideService(FetchHttpClient.RequestInit, { redirect }),
       Effect.provideService(HttpClient.TracerPropagationEnabled, false),
       Effect.mapError(() => new JiraUnavailableError({ message: "Couldn't reach Jira." })),
     );
@@ -156,14 +157,13 @@ const authed = (connection: JiraApiConnection, request: HttpClientRequest.HttpCl
 
 /** The site's cloud ID, read without credentials so the token never reaches the site host. */
 export const readCloudId = Effect.fn("Jira.readCloudId")(function* (siteUrl: string) {
+  const siteNotFound = () => Effect.fail(new JiraResponseError({ message: SITE_NOT_FOUND }));
+  // No credential is sent, so a redirect is read as a 3xx (a site that isn't there) instead of followed.
   const info = yield* sendJira(
     HttpClientRequest.get(`${siteUrl}/_edge/tenant_info`),
     TenantInfo,
-  ).pipe(
-    Effect.catchTags({
-      JiraResponseError: () => Effect.fail(new JiraResponseError({ message: SITE_NOT_FOUND })),
-    }),
-  );
+    "manual",
+  ).pipe(Effect.catchTags({ JiraAuthError: siteNotFound, JiraResponseError: siteNotFound }));
   return info.cloudId;
 });
 
