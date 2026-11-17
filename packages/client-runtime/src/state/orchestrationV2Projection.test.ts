@@ -188,6 +188,38 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.updatedAt).toEqual(archivedAt);
   });
 
+  it("ticket and priority events are not activity", () => {
+    const occurredAt = DateTime.makeUnsafe("2026-06-20T03:00:00.000Z");
+    const ticketLinks = [
+      {
+        tracker: "jira",
+        key: "PROJ-1",
+        url: null,
+        source: "manual",
+        linkedAt: "2026-06-20T03:00:00.000Z",
+        snapshot: null,
+        syncError: null,
+      },
+    ] as const;
+    const priority = { user: { id: "2", name: "High" }, agent: null };
+    for (const [type, fields] of [
+      ["thread.ticket-links-updated", { ticketLinks }],
+      ["thread.priority-updated", { priority }],
+    ] as const) {
+      const event = {
+        id: `event-${type}`,
+        type,
+        threadId,
+        occurredAt,
+        payload: { ...emptyProjection.thread, ...fields, updatedAt: occurredAt },
+      } as OrchestrationV2DomainEvent;
+
+      const next = applyOrchestrationV2ProjectionEvent(emptyProjection, event);
+      expect(next?.thread).toMatchObject(fields);
+      expect(next?.updatedAt).toEqual(emptyProjection.updatedAt);
+    }
+  });
+
   it("applies thread.auto-compact-updated to the thread", () => {
     const occurredAt = DateTime.makeUnsafe("2026-06-20T02:00:00.000Z");
     const event = {

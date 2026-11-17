@@ -29,8 +29,15 @@ import {
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
-import { isListedThreadLineage, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
-import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
+import { sortInboxThreadsByPriority } from "@t3tools/client-runtime/state/thread-priority";
+import {
+  DEFAULT_TICKET_PRIORITY_SCALE,
+  isListedThreadLineage,
+  type EnvironmentId,
+  type PriorityRef,
+  type ProjectId,
+} from "@t3tools/contracts";
+import type { SidebarInboxSortOrder, SnoozePresetSetting } from "@t3tools/contracts/settings";
 import type { MenuAction } from "@react-native-menu/menu";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
@@ -664,6 +671,10 @@ export function buildThreadListV2Items(input: {
   readonly settledLimit?: number;
   readonly now: string;
   readonly workingShelfEnabled?: boolean;
+  /** `"priority"` orders the inbox by effective priority and ignores pending manual orders. */
+  readonly inboxSortOrder?: SidebarInboxSortOrder;
+  /** Each thread resolves priority against its own environment's scale. */
+  readonly priorityScaleFor?: (thread: EnvironmentThreadShell) => ReadonlyArray<PriorityRef>;
   readonly workingShelfExpanded?: boolean;
   readonly isWorking?: (thread: EnvironmentThreadShell) => boolean;
   readonly inboxReturnAt?: (thread: EnvironmentThreadShell) => number | undefined;
@@ -799,9 +810,16 @@ export function buildThreadListV2Items(input: {
     };
   }
 
-  const orderedActive = workingShelfEnabled
-    ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
-    : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
+  const orderedActive =
+    input.inboxSortOrder === "priority"
+      ? sortInboxThreadsByPriority(
+          active,
+          input.priorityScaleFor ?? (() => DEFAULT_TICKET_PRIORITY_SCALE),
+          input.inboxReturnAt,
+        )
+      : workingShelfEnabled
+        ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
+        : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
   const orderedWorking = sortWorkingThreadsBySend(working);
   const orderedSnoozed = [...snoozed].sort(
     (left, right) =>

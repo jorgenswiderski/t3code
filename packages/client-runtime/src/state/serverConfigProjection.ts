@@ -136,5 +136,18 @@ export function applyServerConfigProjection(
         latestEvent: event,
         source: "live",
       }));
+    case "ticketTrackerUpdated":
+      return Option.map(current, (projection) => ({
+        config: {
+          ...projection.config,
+          ticketPriorityScale: reuseUnchanged(
+            projection.config.ticketPriorityScale,
+            event.payload.ticketPriorityScale,
+          ),
+          jiraStatus: reuseUnchanged(projection.config.jiraStatus, event.payload.jiraStatus),
+        },
+        latestEvent: event,
+        source: "live",
+      }));
   }
 }

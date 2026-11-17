@@ -1,0 +1,103 @@
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { SettingsSecretValue } from "./settingsSecretValue.ts";
+import { PriorityRef } from "./threadTicket.ts";
+
+const JIRA_CLOUD_HOST = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+atlassian\.net$/;
+
+/** A Jira Cloud site's https origin; a bare host gets https, and any path (a pasted board URL) is dropped. */
+export function normalizeJiraSiteUrl(input: string): string | null {
+  const trimmed = input.trim();
+  if (trimmed === "") return null;
+  try {
+    const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.port !== "" ||
+      !JIRA_CLOUD_HOST.test(url.hostname)
+    ) {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+/** The classic read-only scopes that cover every Jira call T3 Code makes; the quick setup. */
+export const JIRA_CLASSIC_TOKEN_SCOPES = ["read:jira-work", "read:jira-user"] as const;
+
+/** The granular read-only scopes that cover the same calls; the tightest setup. */
+export const JIRA_GRANULAR_TOKEN_SCOPES = [
+  "read:application-role:jira",
+  "read:avatar:jira",
+  "read:field:jira",
+  "read:field-configuration:jira",
+  "read:group:jira",
+  "read:issue:jira",
+  "read:issue-meta:jira",
+  "read:issue-security-level:jira",
+  "read:issue-type:jira",
+  "read:issue-type-hierarchy:jira",
+  "read:issue.changelog:jira",
+  "read:issue.vote:jira",
+  "read:priority:jira",
+  "read:project:jira",
+  "read:project-category:jira",
+  "read:project.component:jira",
+  "read:project.property:jira",
+  "read:project-version:jira",
+  "read:status:jira",
+  "read:user:jira",
+] as const;
+
+export const JiraSiteUrl = TrimmedNonEmptyString.check(
+  Schema.makeFilter((value) => normalizeJiraSiteUrl(value) === value),
+);
+
+export const JiraSettings = Schema.Struct({
+  // Stored leniently so an odd saved value cannot fail the whole settings file; JiraService normalizes.
+  siteUrl: TrimmedNonEmptyString,
+  email: TrimmedNonEmptyString,
+  /** `secretSetting` from settings.ts, which imports this module. */
+  apiToken: SettingsSecretValue.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    Schema.annotateKey({ settingsSecret: true }),
+  ),
+});
+export type JiraSettings = typeof JiraSettings.Type;
+
+export const JiraErrorKind = Schema.Literals(["auth", "unavailable", "response"]);
+export type JiraErrorKind = typeof JiraErrorKind.Type;
+
+export const JiraConnectionStatus = Schema.Struct({
+  state: Schema.Literals(["disconnected", "connected", "error"]),
+  siteUrl: Schema.NullOr(TrimmedNonEmptyString),
+  accountName: Schema.NullOr(TrimmedNonEmptyString),
+  error: Schema.NullOr(
+    Schema.Struct({ kind: JiraErrorKind, message: Schema.String, since: IsoDateTime }),
+  ),
+});
+export type JiraConnectionStatus = typeof JiraConnectionStatus.Type;
+
+/** Unsaved settings to test; an empty or redacted token uses the saved one. */
+export const JiraTestConnectionInput = Schema.Struct({ settings: Schema.optional(JiraSettings) });
+export type JiraTestConnectionInput = typeof JiraTestConnectionInput.Type;
+
+export const JiraTestConnectionResult = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("connected"),
+    accountName: TrimmedNonEmptyString,
+    priorityScale: Schema.Array(PriorityRef),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("failed"),
+    kind: Schema.Literals(["auth", "unavailable", "response", "invalid_site"]),
+    message: Schema.String,
+  }),
+]);
+export type JiraTestConnectionResult = typeof JiraTestConnectionResult.Type;

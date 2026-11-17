@@ -16,7 +16,10 @@ import type {
   ProviderInstanceId,
   RunId,
   ThreadId,
+  ThreadPriority,
+  ThreadTicketLink,
 } from "@t3tools/contracts";
+import { EMPTY_THREAD_PRIORITY } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
@@ -189,6 +192,8 @@ export interface EnvironmentThreadShell {
   readonly pinOrderKey: string | null;
   readonly activeOrderKey: string | null;
   readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
+  readonly ticketLinks: ReadonlyArray<ThreadTicketLink>;
+  readonly priority: ThreadPriority;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly branchPullRequest?: ThreadLinkedPullRequest | null;
   /**
@@ -298,6 +303,8 @@ export function presentThreadShell(
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     pullRequests: threadPullRequestsOf(thread),
+    ticketLinks: thread.ticketLinks ?? [],
+    priority: thread.priority ?? EMPTY_THREAD_PRIORITY,
     linkedPullRequest: thread.linkedPullRequest ?? null,
     branchPullRequest: thread.branchPullRequest ?? null,
     lineage: thread.lineage,

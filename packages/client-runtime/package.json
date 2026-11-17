@@ -347,6 +347,14 @@
       "types": "./src/state/threadInbox.ts",
       "default": "./src/state/threadInbox.ts"
     },
+    "./state/thread-priority": {
+      "types": "./src/state/threadPriority.ts",
+      "default": "./src/state/threadPriority.ts"
+    },
+    "./state/thread-ticket-presentation": {
+      "types": "./src/state/threadTicketPresentation.ts",
+      "default": "./src/state/threadTicketPresentation.ts"
+    },
     "./state/thread-relationships": {
       "types": "./src/state/threadRelationships.ts",
       "default": "./src/state/threadRelationships.ts"

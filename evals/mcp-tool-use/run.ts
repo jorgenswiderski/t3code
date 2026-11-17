@@ -40,10 +40,14 @@ import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationCo
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
 import * as Contracts from "@t3tools/contracts";
 import {
+  DEFAULT_TICKET_PRIORITY_SCALE,
   EnvironmentId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   PullRequestState,
   ThreadId,
+  findPriorityInScale,
+  jiraBrowseUrl,
+  parseTicketReference,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
@@ -63,6 +67,12 @@ import {
   PullRequestsToolkit,
 } from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
 import { ThreadToolkit } from "../../apps/server/src/mcp/toolkits/thread/tools.ts";
+import {
+  TicketPriorityUnknownError,
+  TicketReferenceInvalidError,
+  TicketSiteMismatchError,
+  TicketsToolkit,
+} from "../../apps/server/src/mcp/toolkits/tickets/tools.ts";
 import { WorktreeToolkit } from "../../apps/server/src/mcp/toolkits/worktree/tools.ts";
 import {
   CLAUDE_PROVIDER,
@@ -179,6 +189,8 @@ const PriorToolCall = Schema.Struct({
 const McpToolUseCall = Schema.Struct({
   tool: Schema.String,
   args: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  /** true: the matching call must have succeeded, so a call T3 refused earns nothing. */
+  succeeded: Schema.optional(Schema.Boolean),
 });
 type McpToolUseCall = typeof McpToolUseCall.Type;
 
@@ -294,6 +306,20 @@ export const McpToolUseCase = Schema.Struct({
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
     /** The Linked environments beta is on, so T3 lists its link tools. */
     linkedEnvironments: Schema.optional(Schema.Boolean),
+    /**
+     * Jira is connected, on the Acme site: T3 lists the ticket tools and names them in its text.
+     * Absent, neither exists.
+     */
+    jira: Schema.optional(
+      Schema.Struct({
+        /** Priority names on the site, highest first. Default: Highest, High, Medium, Low, Lowest. */
+        scale: Schema.optional(Schema.Array(Schema.String)),
+        /** Tickets already linked to the thread. */
+        linkedTickets: Schema.optional(
+          Schema.Array(Schema.Struct({ key: Schema.String, title: Schema.String })),
+        ),
+      }),
+    ),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
@@ -438,6 +464,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PreviewControlsToolkit,
   WorktreeToolkit,
   PullRequestsToolkit,
+  TicketsToolkit,
   PreviewToolkit,
   DeviceToolkit,
   HtmlToolkit,
@@ -488,10 +515,17 @@ const pastedSecret = (name: string, input: Readonly<Record<string, unknown>>) =>
 const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
-const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?: boolean }) =>
+// T3 lists the ticket tools only while Jira is connected.
+const hiddenWhileTicketsOff = enabledWhen(McpInvocationContext.visibleWhileTicketsOn);
+const visibleT3Tools = (options: {
+  readonly subagent?: boolean;
+  readonly links?: boolean;
+  readonly tickets?: boolean;
+}) =>
   t3Tools.filter(
     (tool) =>
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
+      (options.tickets === true || !hiddenWhileTicketsOff.has(tool.name)) &&
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
 
@@ -499,7 +533,7 @@ const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?:
  * T3's Claude Code options for an eval thread: its system prompt append and its hooks. `device` says
  * whether the thread holds the `device` capability, as agent device access decides.
  */
-const claudeQueryOptions = (model: Model, device = true) => {
+const claudeQueryOptions = (model: Model, device = true, tickets = false) => {
   // Refs whose device text follows the capability read deviceToolsAvailable; older ones ignore it.
   const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
     readonly deviceToolsAvailable?: boolean;
@@ -510,13 +544,14 @@ const claudeQueryOptions = (model: Model, device = true) => {
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
     deviceToolsAvailable: device,
+    ticketLinking: tickets,
   };
   return makeClaudeQueryOptions(input);
 };
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
-export const t3SystemAppend = (model: Model, device = true) => {
-  const { systemPrompt } = claudeQueryOptions(model, device);
+export const t3SystemAppend = (model: Model, device = true, tickets = false) => {
+  const { systemPrompt } = claudeQueryOptions(model, device, tickets);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -599,6 +634,8 @@ export const buildBase = (
     readonly keepUserInstructions: boolean;
     readonly subagent?: boolean;
     readonly links?: boolean;
+    /** Jira is connected: the ticket tools are listed and T3's text names them. */
+    readonly tickets?: boolean;
     /** A native subagent starts from its task: T3 appends nothing to its system prompt. */
     readonly nativeSubagent?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
@@ -626,7 +663,9 @@ export const buildBase = (
     .toSorted()
     .join("\n");
   const { model } = options;
-  const append = options.nativeSubagent ? "" : t3SystemAppend(model, options.deviceAccess);
+  const append = options.nativeSubagent
+    ? ""
+    : t3SystemAppend(model, options.deviceAccess, options.tickets === true);
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -683,7 +722,7 @@ type Base = ReturnType<typeof buildBase> & {
 };
 
 /** Keep the captured harness prompt and tools; replace app-owned context and the real user. */
-const buildCodexBase = (
+export const buildCodexBase = (
   template: typeof ResponsesRequest.Type,
   options: {
     readonly model: Model;
@@ -691,6 +730,7 @@ const buildCodexBase = (
     readonly effort?: string | undefined;
     readonly subagent?: boolean;
     readonly links?: boolean;
+    readonly tickets?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
     readonly deviceAccess?: boolean;
   },
@@ -727,7 +767,7 @@ const buildCodexBase = (
     return [JSON.parse(clean(JSON.stringify(item))) as Block];
   });
   const context = buildCodexAdditionalContext(
-    { model: options.model, reasoningEffort: effort },
+    { model: options.model, reasoningEffort: effort, ticketLinking: options.tickets === true },
     { browser: true, device: options.deviceAccess ?? true },
   );
   input.push(
@@ -826,6 +866,9 @@ type Sample = {
   readonly shell: Array<ShellEntry>;
   readonly shellUsage: Usage;
   readonly linked: Set<string>;
+  /** Jira ticket keys linked to the thread, and the priority names the agent and the user set. */
+  readonly linkedTickets: Set<string>;
+  readonly priorities: { agent: string | null; user: string | null };
   readonly codeStore: Record<string, unknown>;
   nextTask: number;
   /** Threads the agent launched in this sample, by id, so reading one shows its own brief. */
@@ -875,6 +918,8 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     shell,
     shellUsage: emptyUsage(),
     linked: new Set([...urls, ...shell.flatMap(createdPullRequests)]),
+    linkedTickets: new Set((testCase.setup.jira?.linkedTickets ?? []).map(({ key }) => key)),
+    priorities: { agent: null, user: null },
     codeStore: {},
     nextTask: Math.max(0, ...taskNumbers) + 1,
     threads: new Map(),
@@ -1096,6 +1141,39 @@ const linkedEntry = (sample: Sample, url: string) => {
   return { ...pr, state: seeded?.state ?? "open", title: seeded?.title ?? null };
 };
 
+const JIRA_SITE = "https://acme.atlassian.net";
+const jiraScale = ({ testCase }: Sample) =>
+  testCase.setup.jira?.scale === undefined
+    ? DEFAULT_TICKET_PRIORITY_SCALE
+    : testCase.setup.jira.scale.map((name, index) => ({ id: String(10001 + index), name }));
+const ticketKey = (input: Readonly<Record<string, unknown>>) =>
+  parseTicketReference(valueText(input.ticket))?.key ?? valueText(input.ticket);
+
+/** The error T3 gives a ticket call it refuses, in T3's own words, or undefined when it goes through. */
+export const ticketToolFailure = (
+  sample: Sample,
+  name: string,
+  input: Readonly<Record<string, unknown>>,
+) => {
+  if (name === "link_ticket" || name === "unlink_ticket") {
+    const parsed = parseTicketReference(valueText(input.ticket));
+    if (parsed === null) return new TicketReferenceInvalidError().message;
+    if (parsed.url !== null && new URL(parsed.url).origin !== JIRA_SITE) {
+      return new TicketSiteMismatchError({ siteUrl: JIRA_SITE }).message;
+    }
+  }
+  if (name === "set_thread_priority" && typeof input.priority === "string") {
+    const scale = jiraScale(sample);
+    if (findPriorityInScale(scale, input.priority) === null) {
+      return new TicketPriorityUnknownError({
+        priority: input.priority,
+        scale: scale.map(({ name }) => name),
+      }).message;
+    }
+  }
+  return undefined;
+};
+
 /** A believable T3 result for a tool the case does not mock. */
 export const t3Default = (
   sample: Sample,
@@ -1191,6 +1269,27 @@ export const t3Default = (
         linkedCount: targets.length,
         ...(invalidUrls.length > 0 ? { invalidUrls } : {}),
       };
+    }
+    case "link_ticket": {
+      const key = ticketKey(input);
+      const alreadyLinked = sample.linkedTickets.has(key);
+      sample.linkedTickets.add(key);
+      return { key, url: jiraBrowseUrl(JIRA_SITE, key), alreadyLinked };
+    }
+    case "unlink_ticket": {
+      const key = ticketKey(input);
+      return { key, wasLinked: sample.linkedTickets.delete(key) };
+    }
+    case "set_thread_priority": {
+      const scale = jiraScale(sample);
+      const source = input.userRequested === true ? "user" : "agent";
+      const priority =
+        typeof input.priority === "string"
+          ? (findPriorityInScale(scale, input.priority)?.ref ?? null)
+          : null;
+      const changed = sample.priorities[source] !== (priority?.name ?? null);
+      sample.priorities[source] = priority?.name ?? null;
+      return { source, priority, changed, scale: scale.map(({ name }) => name) };
     }
     case "request_secret": {
       // T3 names a ref and a file with 32 hex characters, new for each request, in its secrets dir.
@@ -1610,6 +1709,8 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {
       return failed(SUBAGENT_WATCH_ERROR);
     }
+    const refused = ticketToolFailure(sample, name, input);
+    if (refused !== undefined) return failed(refused);
     const value = t3Default(sample, name, input);
     if (name === "request_secret") savedSecretFile(sample, value);
     return toolResult(
@@ -1760,9 +1861,17 @@ export const gradeSample = (
   const calls = attempted.filter((call) => !(call.failed && isPageTool(call.tool)));
   const count = (tool: string) => calls.filter((call) => call.tool === tool).length;
   // `tool` may list alternatives, as in "link_pull_request|watch_pull_request".
-  const found = ({ tool, args = {} }: McpToolUseCall, among = calls) =>
-    among.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
-  const label = ({ tool, args }: McpToolUseCall) => (args ? `${tool} ${valueText(args)}` : tool);
+  const found = ({ tool, args = {}, succeeded }: McpToolUseCall, among = calls) =>
+    among.some(
+      (call) =>
+        tool.split("|").includes(call.tool) &&
+        (succeeded !== true || call.failed !== true) &&
+        matches(args, call.input),
+    );
+  const label = ({ tool, args, succeeded }: McpToolUseCall) =>
+    [tool, ...(args ? [valueText(args)] : []), ...(succeeded === true ? ["(succeeded)"] : [])].join(
+      " ",
+    );
   for (const call of expect.calls ?? []) add(`calls ${label(call)}`, found(call));
   if (expect.distinctCalls !== undefined) {
     const expected = expect.distinctCalls.map(({ tool, args }) => ({ tool, input: args ?? {} }));
@@ -2460,6 +2569,7 @@ const main = Effect.gen(function* () {
     role: McpToolUseCase["setup"]["role"],
     deviceAccess: boolean,
     links: boolean,
+    tickets: boolean,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -2470,6 +2580,7 @@ const main = Effect.gen(function* () {
               effort: flags.effort,
               subagent: role === "delegated-child",
               links,
+              tickets,
               deviceAccess,
             }),
           ),
@@ -2482,6 +2593,7 @@ const main = Effect.gen(function* () {
               subagent: role === "delegated-child",
               nativeSubagent: role === "native-subagent",
               links,
+              tickets,
               deviceAccess,
             });
             return role === "native-subagent"
@@ -2493,18 +2605,19 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.linkedEnvironments === true}`;
-  const base = yield* buildFor("top", true, false);
-  const bases = new Map<string, Base>([["top:true:false", base]]);
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.jira !== undefined}`;
+  const base = yield* buildFor("top", true, false, false);
+  const bases = new Map<string, Base>([["top:true:false:false", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", access, links] = key.split(":") as [
+    const [role = "top", access, links, tickets] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
       string,
       string,
+      string,
     ];
-    bases.set(key, yield* buildFor(role, access === "true", links === "true"));
+    bases.set(key, yield* buildFor(role, access === "true", links === "true", tickets === "true"));
   }
   const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";

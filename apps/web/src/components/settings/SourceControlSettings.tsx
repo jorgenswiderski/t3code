@@ -35,6 +35,7 @@ import { SourceControlAccountSettings } from "./SourceControlAccountSettings";
 import { SourceControlAppSignInSettings } from "./SourceControlAppSignInSettings";
 import { SourceControlTokenSettings } from "./SourceControlTokenSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { JiraSettingsSection } from "./JiraSettings";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
   SettingsPageContainer,
@@ -521,6 +522,7 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
+      <JiraSettingsSection />
       <SourceControlWritingSettingsSection />
     </SettingsPageContainer>
   );

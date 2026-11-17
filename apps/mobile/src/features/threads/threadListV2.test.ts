@@ -1634,6 +1634,44 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
   });
 });
 
+describe("Inbox order", () => {
+  const prioritized = (id: string, name: string | null, createdAt: string) =>
+    makeThread({
+      id: ThreadId.make(id),
+      title: id,
+      createdAt,
+      priority: { user: name === null ? null : { id: name, name }, agent: null },
+    });
+  // Newest first is "none", then "low-new", then "high-old"; priority must reorder them.
+  const threads = [
+    prioritized("high-old", "High", "2026-06-01T00:00:00.000Z"),
+    prioritized("low-new", "Low", "2026-06-01T02:00:00.000Z"),
+    prioritized("none", null, "2026-06-01T03:00:00.000Z"),
+  ];
+  const order = (input: Partial<Parameters<typeof buildThreadListV2Items>[0]>) =>
+    buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      ...input,
+    }).items.map((item) => item.thread.id);
+
+  it("orders active threads by priority, with the Working section off or on", () => {
+    expect(order({ inboxSortOrder: "priority" })).toEqual(["high-old", "low-new", "none"]);
+    expect(order({ inboxSortOrder: "priority", workingShelfEnabled: true })).toEqual([
+      "high-old",
+      "low-new",
+      "none",
+    ]);
+    expect(order({ inboxSortOrder: "returned", workingShelfEnabled: true })).toEqual([
+      "none",
+      "low-new",
+      "high-old",
+    ]);
+  });
+});
+
 describe("Working section beta", () => {
   const running = {
     status: "running" as const,

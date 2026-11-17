@@ -46,6 +46,15 @@ import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
 import {
+  PriorityRef,
+  StoredThreadPriority,
+  StoredThreadTicketLinks,
+  ThreadTicketCommandSource,
+  ThreadTicketKey,
+  ThreadTicketSnapshot,
+  ThreadTicketSyncError,
+} from "./threadTicket.ts";
+import {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
 } from "./threadSearch.ts";
@@ -473,6 +482,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
+  ticketLinks: Schema.optional(StoredThreadTicketLinks),
+  priority: Schema.optional(StoredThreadPriority),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
@@ -1958,6 +1969,8 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.model-selection-updated",
       "thread.provider-switched",
       "thread.guest-share-updated",
+      "thread.ticket-links-updated",
+      "thread.priority-updated",
     ]),
     payload: OrchestrationV2AppThread,
   }),
@@ -2148,6 +2161,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
+  ticketLinks: Schema.optional(StoredThreadTicketLinks),
+  priority: Schema.optional(StoredThreadPriority),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(OrchestrationV2AppThread.fields.forkedFrom),
@@ -2858,6 +2873,8 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.model-selection-updated",
       "thread.provider-switched",
       "thread.guest-share-updated",
+      "thread.ticket-links-updated",
+      "thread.priority-updated",
     ]),
     payload: OrchestrationV2AppThreadJson,
   }),
@@ -3198,6 +3215,27 @@ export const OrchestrationV2Command = Schema.Union([
     linkedPullRequest: Schema.optional(ThreadLinkedPullRequest),
   }),
   Schema.Struct({
+    type: Schema.Literal("thread.ticket.link"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    key: ThreadTicketKey,
+    url: Schema.optional(TrimmedNonEmptyString),
+    source: ThreadTicketCommandSource,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.ticket.unlink"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    key: ThreadTicketKey,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.priority.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    source: Schema.Literals(["user", "agent"]),
+    priority: Schema.NullOr(PriorityRef),
+  }),
+  Schema.Struct({
     type: Schema.Literal("thread.title.regeneration.complete"),
     commandId: CommandId,
     threadId: ThreadId,
@@ -3469,6 +3507,17 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("thread.ticket-link.sync"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    key: ThreadTicketKey,
+    observedAt: IsoDateTime,
+    result: Schema.Union([
+      Schema.Struct({ type: Schema.Literal("snapshot"), snapshot: ThreadTicketSnapshot }),
+      Schema.Struct({ type: Schema.Literal("unreachable"), syncError: ThreadTicketSyncError }),
+    ]),
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),

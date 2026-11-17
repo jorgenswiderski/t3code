@@ -56,6 +56,7 @@ import {
   THREAD_HISTORY_PAGE_POLICY,
   THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
+import { makeTicketLink } from "./testkit/ticketFixtures.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 
 import { layerReaderDatabase, traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
@@ -1834,6 +1835,39 @@ const backgroundThreadUpdatesKeepTimestamp = Effect.gen(function* () {
   const reordered = yield* readActivity;
   assert.deepEqual(reordered.updatedAt, createdAt);
   assert.equal(reordered.thread.activeOrderKey, "a");
+
+  const shellsOf = Effect.gen(function* () {
+    const projection = yield* readActivity;
+    const listed = (yield* store.getShellSnapshot()).threads.find((entry) => entry.id === threadId);
+    return [
+      yield* store.getThreadShell(threadId),
+      listed,
+      ProjectionStore.threadShellFromProjection(projection),
+    ] as const;
+  });
+  const ticketLinks = [makeTicketLink()];
+  yield* store.apply({
+    id: EventId.make("event:background-updates:ticket-links-updated"),
+    type: "thread.ticket-links-updated",
+    threadId,
+    occurredAt: DateTime.add(createdAt, { minutes: 60 }),
+    payload: { ...reordered.thread, ticketLinks },
+  });
+  for (const shell of yield* shellsOf) {
+    assert.deepEqual(shell?.ticketLinks, ticketLinks);
+    assert.isUndefined(shell?.priority);
+  }
+  const priority = { user: { id: "2", name: "High" }, agent: null };
+  yield* store.apply({
+    id: EventId.make("event:background-updates:priority-updated"),
+    type: "thread.priority-updated",
+    threadId,
+    occurredAt: DateTime.add(createdAt, { minutes: 65 }),
+    payload: { ...reordered.thread, ticketLinks, priority },
+  });
+  for (const shell of yield* shellsOf) {
+    assert.deepEqual(shell?.priority, priority);
+  }
 
   // An already-unpinned thread keeps its activity time even when replay's envelope advances.
   yield* store.apply({

@@ -45,6 +45,7 @@ import {
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as JiraService from "../jira/JiraService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
@@ -357,6 +358,7 @@ export const layerWithOptions = (
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      const jira = yield* Effect.serviceOption(JiraService.JiraService);
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const promptSuggestionStore = yield* SubscriptionRef.make<
@@ -374,6 +376,10 @@ export const layerWithOptions = (
             Effect.map((settings) => settings.promptSuggestionsEnabled),
             Effect.orElseSucceed(() => false),
           );
+      // Adapters decide when to read it: text must never run ahead of the session's tool list.
+      const ticketLinkingEnabled = Option.isNone(jira)
+        ? Effect.succeed(false)
+        : jira.value.isConfigured.pipe(Effect.orElseSucceed(() => false));
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
           if (Option.isNone(serverSettings)) return { browser: true, device: false };
@@ -2474,6 +2480,7 @@ export const layerWithOptions = (
                   modelSelection: input.modelSelection,
                   runtimePolicy: input.runtimePolicy,
                   promptSuggestions: promptSuggestionsEnabled,
+                  ticketLinking: ticketLinkingEnabled,
                   ...(input.resumeFromSession === undefined
                     ? {}
                     : { resumeFromSession: input.resumeFromSession }),

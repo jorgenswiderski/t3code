@@ -21,6 +21,7 @@ export function ThreadHeader(props: {
   readonly hasThreadCwd: boolean;
   readonly inspectorMode: ThreadInspectorMode | null;
   readonly onOpenFilesInspector: () => void;
+  readonly onOpenTickets?: () => void;
 }) {
   const goBack = useWorkspaceBackNavigation("threads");
   const { toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
@@ -40,6 +41,14 @@ export function ThreadHeader(props: {
         },
       ]
     : [];
+  if (props.onOpenTickets) {
+    actions.push({
+      accessibilityLabel: "Jira tickets and priority",
+      icon: "ticket",
+      separateBackground: false,
+      onPress: props.onOpenTickets,
+    });
+  }
   const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
 
   return (

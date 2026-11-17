@@ -351,7 +351,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Thread details",
     to: "/settings/appearance",
     searchTerms: [
-      "customize show hide panel card environment editor scripts branch pull request git changes servers automations lineage usage limits 5 hour weekly quota tokens context window",
+      "customize show hide panel card environment editor scripts branch pull request jira ticket tickets priority git changes servers automations lineage usage limits 5 hour weekly quota tokens context window",
     ],
   },
   {
@@ -463,6 +463,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Working section",
     to: "/settings/general",
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
+  },
+  {
+    id: "inbox-order",
+    title: "Inbox order",
+    to: "/settings/general",
+    searchTerms: ["inbox sort order priority jira recently returned"],
   },
   {
     id: "boring-sidebar",
@@ -1163,6 +1169,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       `version control git ${SOURCE_CONTROL_HOST_TERMS} hosting integrations credentials scan server environment`,
     ],
+  },
+  {
+    id: "jira-connection",
+    title: "Jira",
+    to: "/settings/source-control",
+    targetId: "jira-connection",
+    scope: "environment-defaults",
+    environmentOnly: true,
+    searchTerms: ["jira atlassian ticket issue priority rank api token connect"],
   },
   {
     id: "git-fetch-interval",

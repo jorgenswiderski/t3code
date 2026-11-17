@@ -51,6 +51,12 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("keeps Jira connection tests, which send the saved token, behind settings write", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.serverTestJiraConnection)).toBe(
+      AuthSettingsWriteScope,
+    );
+  });
+
   it("separates passive terminal observation from operations that can change a shell", () => {
     for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);

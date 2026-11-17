@@ -65,6 +65,9 @@ export type T3McpToolSummaryAction =
   | "unwatch-pr"
   | "write-pr-guides"
   | "read-pr-guide"
+  | "link-ticket"
+  | "unlink-ticket"
+  | "set-priority"
   | "browser"
   | "device"
   | "html-preview"
@@ -101,6 +104,9 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "link-pr",
     "pull-request",
   ),
+  link_ticket: tool(["Link", "Linking", "Linked", "a Jira ticket"], "link-ticket"),
+  unlink_ticket: tool(["Unlink", "Unlinking", "Unlinked", "a Jira ticket"], "unlink-ticket"),
+  set_thread_priority: tool(["Set", "Setting", "Set", "thread priority"], "set-priority"),
   link_pull_requests: tool(
     ["Link", "Linking", "Linked", "pull requests"],
     "link-pr",

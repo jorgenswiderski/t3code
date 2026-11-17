@@ -41,6 +41,7 @@ const settings = Schema.decodeSync(ServerSettings)({
     },
   ],
   cloudSpeechCredentials: { openai: personal("op://voice"), xai: "" },
+  jira: { siteUrl: "https://acme.atlassian.net", email: "me@acme.test", apiToken: work },
 });
 
 it.each([
@@ -56,7 +57,7 @@ it.each([
       "Voice · OpenAI",
     ],
   ],
-  ["work", ["Antigravity Work · OTHER_TOKEN", "GitHub · ghe.acme.test"]],
+  ["work", ["Antigravity Work · OTHER_TOKEN", "GitHub · ghe.acme.test", "Jira"]],
   ["unused", []],
 ])("lists what reads from secret provider %s", (providerId, uses) => {
   expect(secretProviderUses(settings, providerId).map((use) => use.label)).toEqual(uses);

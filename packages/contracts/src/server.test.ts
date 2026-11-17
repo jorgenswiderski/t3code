@@ -6,6 +6,7 @@ import { ServerProviderUsageWindow } from "./providerUsageLimits.ts";
 import {
   OtlpEndpointCheckInput,
   resolveEnvironmentMachineKind,
+  ServerConfig,
   ServerObservability,
   ServerProvider,
   ServerProviders,
@@ -214,5 +215,17 @@ describe("ServerProvider.threadAutoCompact", () => {
         threadAutoCompact: { minTokens: 0, maxTokens: 1000000 },
       }),
     ).toThrow();
+  });
+});
+
+describe("ServerConfig", () => {
+  it("decodes a snapshot from a server that predates the ticket tracker fields", () => {
+    const decodeTicketTrackerFields = Schema.decodeUnknownSync(
+      Schema.Struct({
+        ticketPriorityScale: ServerConfig.fields.ticketPriorityScale,
+        jiraStatus: ServerConfig.fields.jiraStatus,
+      }),
+    );
+    expect(decodeTicketTrackerFields({})).toEqual({});
   });
 });

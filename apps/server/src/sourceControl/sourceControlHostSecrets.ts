@@ -124,6 +124,7 @@ export const invalidateSettingsSecrets = Effect.fn("SettingsSecrets.invalidate")
       | "easDeviceHosts"
       | "simlockDeviceHosts"
       | "cloudSpeechCredentials"
+      | "jira"
     >,
     E
   >,
@@ -137,6 +138,9 @@ export const invalidateSettingsSecrets = Effect.fn("SettingsSecrets.invalidate")
       ),
       ...collectDeviceHostSecretReferences(current),
       ...Object.values(current.cloudSpeechCredentials).filter(isSecretReference),
+      ...(current.jira !== null && isSecretReference(current.jira.apiToken)
+        ? [current.jira.apiToken]
+        : []),
     ]),
     Effect.orElseSucceed(() => undefined),
   );
