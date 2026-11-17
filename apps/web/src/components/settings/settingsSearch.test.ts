@@ -216,6 +216,7 @@ describe("searchSettings", () => {
       ["Native sessions", "providers"],
       ["CODEX_HOME path", "providers"],
       ["Shadow home path", "providers"],
+      ["Hidden MCP apps", "hidden-mcp-apps"],
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
     }

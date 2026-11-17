@@ -8,6 +8,7 @@ import { GitForkIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
+import { McpAppCaption } from "./McpAppCaption";
 import { McpAppFrame } from "./McpAppFrame";
 import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { ChangedFilesCard } from "./ChangedFilesTree";
@@ -277,6 +278,7 @@ export function McpAppTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
 
   return (
     <div className="min-w-0 px-1">
+      <McpAppCaption environmentId={ctx.activeThreadEnvironmentId} app={row.mcpApp} />
       <McpAppFrame
         key={row.mcpApp.attachmentId}
         environmentId={ctx.activeThreadEnvironmentId}
