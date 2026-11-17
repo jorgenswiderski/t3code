@@ -202,12 +202,13 @@ describe("threadHasTicketData", () => {
 });
 
 describe("threadPriorityMenu", () => {
-  it("checks the entry the user value resolves to and keeps Clear enabled for stale values", () => {
+  it("checks the entry the user value resolves to and enables Clear for any stored value", () => {
     const cases: ReadonlyArray<readonly [ReturnType<typeof thread>, string | null, boolean]> = [
       [thread(), null, false],
       [thread([], { user: ref("High") }), "High", true],
       [thread([], { user: { id: "stale", name: "high" } }), "High", true],
       [thread([], { user: { id: "9", name: "Expedite" } }), null, true],
+      [thread([], { agent: ref("Low") }), null, true],
     ];
     for (const [input, checked, canClear] of cases) {
       const menu = threadPriorityMenu(input, SCALE);

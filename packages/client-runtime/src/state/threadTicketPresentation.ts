@@ -107,7 +107,7 @@ export function threadPriorityMenu(
   const user = thread.priority.user ? findPriorityInScale(scale, thread.priority.user) : null;
   return {
     entries: scale.map((ref, index) => ({ ref, checked: user?.position === index })),
-    canClear: thread.priority.user !== null,
+    canClear: thread.priority.user !== null || thread.priority.agent !== null,
     currentLabel:
       threadPriorityIndicator(
         { priority: thread.priority, ticketLinks: thread.ticketLinks ?? [] },

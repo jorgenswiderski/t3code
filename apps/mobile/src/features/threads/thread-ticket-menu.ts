@@ -24,7 +24,7 @@ export function buildPriorityMenuAction(menu: ReturnType<typeof threadPriorityMe
       })),
       {
         id: PRIORITY_CLEAR_MENU_ID,
-        title: "Clear my priority",
+        title: "Clear priority",
         attributes: { disabled: !menu.canClear },
       },
     ],
