@@ -26,22 +26,24 @@ import * as ServerSettings from "../serverSettings.ts";
 import { SECRET_REDACTED } from "../settingsSecrets.ts";
 import {
   fetchTicketBatch,
-  type JiraConnection,
+  type JiraApiConnection,
   readAccountName,
+  readCloudId,
   readPriorityScale,
   readRankFieldId,
   RANK_FIELD_TYPE,
 } from "./jiraApi.ts";
 import { JiraService, make } from "./JiraService.ts";
 import {
+  FAKE_CLOUD_ID,
   FAKE_RANK_FIELD_ID,
   type FakeJira,
   type FakeJiraResponse,
   makeFakeJira,
 } from "./testing/FakeJiraHttp.ts";
 
-const connection: JiraConnection = {
-  siteUrl: "https://acme.atlassian.net",
+const connection: JiraApiConnection = {
+  cloudId: FAKE_CLOUD_ID,
   email: "me@example.com",
   apiToken: "s3cr3t-api",
 };
@@ -57,19 +59,65 @@ const withFake =
     );
 
 describe("jiraApi", () => {
-  it.effect("sends basic auth, asks for JSON and refuses redirects", () =>
+  it.effect("sends basic auth to the gateway, asks for JSON and refuses redirects", () =>
     Effect.gen(function* () {
       const fake = makeFakeJira();
       assert.equal(yield* withFake(fake)(readAccountName(connection)), "Ada Lovelace");
       assert.deepEqual(
-        fake.requests.map(({ path, authorization, redirect }) => ({
-          path,
-          authorization,
-          redirect,
-        })),
-        [{ path: "/rest/api/3/myself", authorization: basicAuth, redirect: "error" }],
+        fake.requests.map(({ url, authorization, redirect }) => ({ url, authorization, redirect })),
+        [
+          {
+            url: `https://api.atlassian.com/ex/jira/${FAKE_CLOUD_ID}/rest/api/3/myself`,
+            authorization: basicAuth,
+            redirect: "error",
+          },
+        ],
       );
       assert.include(fake.requests[0]?.accept ?? "", "application/json");
+    }),
+  );
+
+  it.effect("reads the cloud ID from the site without credentials", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeJira();
+      assert.equal(yield* withFake(fake)(readCloudId("https://acme.atlassian.net")), FAKE_CLOUD_ID);
+      assert.deepEqual(
+        fake.requests.map(({ url, authorization, redirect }) => ({ url, authorization, redirect })),
+        [
+          {
+            url: "https://acme.atlassian.net/_edge/tenant_info",
+            authorization: null,
+            redirect: "error",
+          },
+        ],
+      );
+    }),
+  );
+
+  it.effect.each<{ name: string; response: FakeJiraResponse; expected: Record<string, unknown> }>([
+    {
+      name: "a 404",
+      response: { status: 404 },
+      expected: { _tag: "JiraResponseError", message: "Couldn't find that Jira site." },
+    },
+    {
+      name: "a cloud ID that is not a UUID",
+      response: { status: 200, body: { cloudId: "../../evil" } },
+      expected: { _tag: "JiraResponseError", message: "Couldn't find that Jira site." },
+    },
+    {
+      name: "a network failure",
+      response: { type: "network-error" },
+      expected: { _tag: "JiraUnavailableError", message: "Couldn't reach Jira." },
+    },
+  ])("maps $name from the tenant lookup to a fixed error", ({ response, expected }) =>
+    Effect.gen(function* () {
+      const fake = makeFakeJira();
+      fake.failNext("/_edge/tenant_info", response);
+      const error = yield* withFake(fake)(readCloudId("https://acme.atlassian.net")).pipe(
+        Effect.flip,
+      );
+      assert.deepInclude(error, expected);
     }),
   );
 
@@ -80,7 +128,8 @@ describe("jiraApi", () => {
       expected: {
         _tag: "JiraAuthError",
         status: 401,
-        message: "Jira rejected the email or API token (401).",
+        message:
+          "Jira rejected the email or API token (401). T3 Code needs an API token with scopes.",
       },
     },
     {
@@ -89,7 +138,7 @@ describe("jiraApi", () => {
       expected: {
         _tag: "JiraAuthError",
         status: 403,
-        message: "Jira refused access for this account (403).",
+        message: "The API token is missing a required read scope (403).",
       },
     },
     {
@@ -134,7 +183,7 @@ describe("jiraApi", () => {
     }),
   );
 
-  it.effect("reads every page of priorities in site order", () =>
+  it.effect("reads the priority list in site order", () =>
     Effect.gen(function* () {
       const priorities = Array.from({ length: 150 }, (_, index) => ({
         id: String(index + 1),
@@ -142,13 +191,21 @@ describe("jiraApi", () => {
       }));
       const fake = makeFakeJira({ priorities });
       assert.deepEqual(yield* withFake(fake)(readPriorityScale(connection)), priorities);
-      assert.equal(fake.requests.length, 2);
+      assert.deepEqual(
+        fake.requests.map((request) => request.path),
+        ["/rest/api/3/priority"],
+      );
     }),
   );
 
-  it.effect("falls back to the default scale when the site lists no priorities", () =>
+  it.effect.each<{ name: string; response?: FakeJiraResponse }>([
+    { name: "the site lists no priorities" },
+    { name: "the list is gone (404)", response: { status: 404 } },
+    { name: "the list is gone (410)", response: { status: 410 } },
+  ])("falls back to the default scale when $name", ({ response }) =>
     Effect.gen(function* () {
       const fake = makeFakeJira({ priorities: [] });
+      if (response !== undefined) fake.failNext("/rest/api/3/priority", response);
       assert.deepEqual(
         yield* withFake(fake)(readPriorityScale(connection)),
         DEFAULT_TICKET_PRIORITY_SCALE,
@@ -318,7 +375,7 @@ const connectHealthy = Effect.fn(function* (fake: FakeJira) {
   yield* settings.updateSettings({ jira: savedJira });
   yield* watcher.untilStatus((status) => status.accountName === "Ada Lovelace");
   yield* watcher.untilScale((scale) => scale[0]?.id === "1");
-  yield* fake.untilRequests(4);
+  yield* fake.untilRequests(5);
   return watcher;
 });
 
@@ -344,12 +401,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("JiraService", (i
       const settings = yield* ServerSettings.ServerSettingsService;
       const watcher = yield* connectHealthy(fake);
       assert.deepEqual(
-        fake.requests.map((request) => request.path),
+        fake.requests.map(({ host, path, authorization }) => ({
+          host,
+          path,
+          authenticated: authorization === basicAuth,
+        })),
         [
-          "/rest/api/3/myself",
-          "/rest/api/3/priority/search",
-          "/rest/api/3/project/search",
-          "/rest/api/3/field",
+          { host: "acme.atlassian.net", path: "/_edge/tenant_info", authenticated: false },
+          ...[
+            "/rest/api/3/myself",
+            "/rest/api/3/priority",
+            "/rest/api/3/project/search",
+            "/rest/api/3/field",
+          ].map((path) => ({ host: "api.atlassian.com", path, authenticated: true })),
         ],
       );
       assert.deepEqual(yield* jira.status, {
@@ -367,14 +431,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("JiraService", (i
 
       yield* TestClock.adjust("1 hour");
       // The project read follows the account and priority reads, so both were recorded by then.
-      yield* fake.untilRequests(7);
-      assert.equal(fake.requests[4]?.path, "/rest/api/3/myself");
+      // The cloud ID is kept for the connection, so the refresh does not look it up again.
+      yield* fake.untilRequests(8);
+      assert.equal(fake.requests[5]?.path, "/rest/api/3/myself");
 
       fake.state.priorities = [...SITE_PRIORITIES].reverse();
       yield* TestClock.adjust("1 hour");
       // Queues are ordered: the first scale taken being the changed one means the first refresh emitted none.
       assert.deepEqual(yield* Queue.take(watcher.scales), [...SITE_PRIORITIES].reverse());
-      yield* fake.untilRequests(10);
+      yield* fake.untilRequests(11);
+      assert.lengthOf(
+        fake.requests.filter((request) => request.path === "/_edge/tenant_info"),
+        1,
+      );
 
       // Likewise the disconnect being the next status and scale means no refresh emitted either.
       yield* settings.updateSettings({ jira: null });
@@ -395,7 +464,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("JiraService", (i
       const failed = yield* watcher.untilStatus((status) => status.state === "error");
       assert.deepEqual(failed.error, {
         kind: "auth",
-        message: "Jira rejected the email or API token (401).",
+        message:
+          "Jira rejected the email or API token (401). T3 Code needs an API token with scopes.",
         since,
       });
       assert.deepEqual(yield* jira.priorityScale, DEFAULT_TICKET_PRIORITY_SCALE);
@@ -529,6 +599,33 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("JiraService", (i
     }).pipe(Effect.provide(jiraLayer(fake)), Effect.scoped);
   });
 
+  it.effect("sends no credential when the site's cloud ID cannot be read", () => {
+    const fake = makeFakeJira();
+    fake.failNext("/_edge/tenant_info", { status: 404 });
+    return Effect.gen(function* () {
+      const jira = yield* JiraService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const watcher = yield* watch();
+      yield* settings.updateSettings({ jira: savedJira });
+      const failed = yield* watcher.untilStatus((status) => status.state === "error");
+      assert.deepInclude(failed.error, {
+        kind: "response",
+        message: "Couldn't find that Jira site.",
+      });
+      assert.deepEqual(
+        fake.requests.map(({ path, authorization }) => ({ path, authorization })),
+        [{ path: "/_edge/tenant_info", authorization: null }],
+      );
+
+      // The next read looks the cloud ID up again rather than giving up on the connection.
+      yield* jira.projectKeys;
+      assert.deepEqual(
+        fake.requests.slice(1).map((request) => request.path),
+        ["/_edge/tenant_info", "/rest/api/3/project/search"],
+      );
+    }).pipe(Effect.provide(jiraLayer(fake)), Effect.scoped);
+  });
+
   it.effect("keeps the first error time while the same outage persists", () => {
     const fake = makeFakeJira();
     fake.failNext("/rest/api/3/myself", { status: 500 });
@@ -622,7 +719,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("JiraService", (i
         accountName: "Grace Hopper",
         priorityScale: SITE_PRIORITIES,
       });
-      assert.equal(fake.requests.at(-1)?.authorization, basicAuth);
+      const testRequests = fake.requests.slice(-3);
+      assert.deepEqual(
+        testRequests.map(({ host, path }) => `${host}${path}`),
+        [
+          "acme.atlassian.net/_edge/tenant_info",
+          "api.atlassian.com/rest/api/3/myself",
+          "api.atlassian.com/rest/api/3/priority",
+        ],
+      );
+      assert.equal(testRequests[2]?.authorization, basicAuth);
       assert.deepEqual(yield* jira.status, before);
     }).pipe(Effect.provide(jiraLayer(fake)), Effect.scoped);
   });

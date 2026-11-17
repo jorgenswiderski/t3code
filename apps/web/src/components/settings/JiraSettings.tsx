@@ -27,6 +27,8 @@ import { SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 const API_TOKEN_URL = "https://id.atlassian.com/manage-profile/security/api-tokens";
+const SCOPES_DOCS_URL =
+  "https://github.com/pingdotgg/t3code/blob/main/docs/user/jira-tickets.md#connect-jira";
 const ERROR_LABELS: Record<JiraErrorKind, string> = {
   auth: "Authentication failed",
   unavailable: "Jira unavailable",
@@ -215,12 +217,18 @@ function JiraConnection({
     >
       <fieldset disabled={busy || !canEdit} className="contents">
         <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-          Link threads to Jira Cloud issues to read their status and priority. Use an API token from
-          the Atlassian account that can see those issues.{" "}
+          Link threads to Jira Cloud issues to read their status and priority. Use an API token with
+          scopes for Jira, read-only, from the Atlassian account that can see those issues.{" "}
           <InlineButton
             render={<a href={API_TOKEN_URL} target="_blank" rel="noreferrer noopener" />}
           >
-            Create an API token
+            Create an API token with scopes
+            <ExternalLinkIcon aria-hidden className="size-3" />
+          </InlineButton>{" "}
+          <InlineButton
+            render={<a href={SCOPES_DOCS_URL} target="_blank" rel="noreferrer noopener" />}
+          >
+            Scopes it needs
             <ExternalLinkIcon aria-hidden className="size-3" />
           </InlineButton>
         </p>

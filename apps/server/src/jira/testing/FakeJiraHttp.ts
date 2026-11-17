@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import { RANK_FIELD_TYPE } from "../jiraApi.ts";
 
 export const FAKE_RANK_FIELD_ID = "customfield_10019";
+export const FAKE_CLOUD_ID = "c5667f2b-e3a6-4fa7-9765-eee47ed2c80c";
+const GATEWAY_HOST = "api.atlassian.com";
 
 export interface FakeJiraIssue {
   readonly summary: string | null;
@@ -20,6 +22,8 @@ export interface FakeJiraField {
 }
 
 export interface FakeJiraState {
+  /** What the site's tenant_info reports, and the only cloud ID the gateway answers for. */
+  cloudId: string;
   accountName: string;
   priorities: Array<PriorityRef>;
   fields: Array<FakeJiraField>;
@@ -39,6 +43,8 @@ export type FakeJiraResponse =
 
 export interface FakeJiraRequest {
   readonly method: string;
+  readonly host: string;
+  /** The Jira REST path, without the gateway's `/ex/jira/{cloudId}` prefix. */
   readonly path: string;
   readonly url: string;
   readonly body: unknown;
@@ -62,9 +68,10 @@ const DEFAULT_PRIORITIES: Array<PriorityRef> = [
   { id: "5", name: "Lowest" },
 ];
 
-/** An in-memory Jira Cloud site behind a fake `fetch`. */
+/** An in-memory Jira Cloud site and Atlassian's API gateway behind a fake `fetch`. */
 export function makeFakeJira(initial: Partial<FakeJiraState> = {}) {
   const state: FakeJiraState = {
+    cloudId: FAKE_CLOUD_ID,
     accountName: "Ada Lovelace",
     priorities: [...DEFAULT_PRIORITIES],
     fields: [
@@ -97,17 +104,28 @@ export function makeFakeJira(initial: Partial<FakeJiraState> = {}) {
     return json({ startAt, maxResults, values, isLast: startAt + values.length >= items.length });
   };
 
-  const answer = (method: string, url: URL, body: unknown): Response => {
-    const route = `${method} ${url.pathname}`;
+  // The site answers only the unauthenticated tenant lookup; Jira's REST API lives on the gateway.
+  const routeOf = (url: URL): string | null => {
+    if (url.hostname !== GATEWAY_HOST) {
+      return url.pathname === "/_edge/tenant_info" ? url.pathname : null;
+    }
+    const prefix = `/ex/jira/${state.cloudId}/`;
+    return url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length - 1) : null;
+  };
+
+  const answer = (method: string, path: string | null, url: URL, body: unknown): Response => {
+    const route = `${method} ${path}`;
     switch (route) {
+      case "GET /_edge/tenant_info":
+        return json({ cloudId: state.cloudId });
       case "GET /rest/api/3/myself":
         return json({
           accountId: "account-1",
           displayName: state.accountName,
           emailAddress: "me@example.com",
         });
-      case "GET /rest/api/3/priority/search":
-        return page(state.priorities, url);
+      case "GET /rest/api/3/priority":
+        return json(state.priorities);
       case "GET /rest/api/3/field":
         return json(state.fields);
       case "GET /rest/api/3/project/search":
@@ -162,9 +180,11 @@ export function makeFakeJira(initial: Partial<FakeJiraState> = {}) {
           ? rawBody
           : new TextDecoder().decode(rawBody as Uint8Array);
     const body: unknown = text === undefined ? undefined : JSON.parse(text);
+    const path = routeOf(url);
     requests.push({
       method,
-      path: url.pathname,
+      host: url.hostname,
+      path: path ?? url.pathname,
       url: url.href,
       body,
       authorization: headers.get("authorization"),
@@ -175,14 +195,14 @@ export function makeFakeJira(initial: Partial<FakeJiraState> = {}) {
       requestWaiters.splice(requestWaiters.indexOf(waiter), 1);
       waiter.resolve();
     }
-    const held = holds.get(url.pathname)?.shift();
+    const held = path === null ? undefined : holds.get(path)?.shift();
     if (held !== undefined) {
       held.arrive();
       await held.gate;
-      return held.response === undefined ? answer(method, url, body) : respond(held.response);
+      return held.response === undefined ? answer(method, path, url, body) : respond(held.response);
     }
-    const next = scripted.get(url.pathname)?.shift();
-    return next === undefined ? answer(method, url, body) : respond(next);
+    const next = path === null ? undefined : scripted.get(path)?.shift();
+    return next === undefined ? answer(method, path, url, body) : respond(next);
   };
 
   return {
