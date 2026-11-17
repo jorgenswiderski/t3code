@@ -133,6 +133,17 @@ export function mcpAppReferencesEqual(left: McpAppReference, right: McpAppRefere
   );
 }
 
+export function withMcpAppServerHidden(
+  servers: ReadonlyArray<string>,
+  server: string,
+  hidden: boolean,
+): ReadonlyArray<string> {
+  const target = server.trim();
+  const list = [...new Set(servers.map((entry) => entry.trim()).filter((entry) => entry !== ""))];
+  if (!hidden) return list.filter((entry) => entry !== target);
+  return target === "" || list.includes(target) ? list : [...list, target];
+}
+
 /** Reads a tool's `_meta.ui.resourceUri`, or the deprecated flat `ui/resourceUri`. */
 export function mcpAppToolResourceUri(meta: unknown): string | undefined {
   if (!Predicate.isObject(meta)) return undefined;
