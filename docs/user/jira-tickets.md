@@ -11,7 +11,9 @@ T3 Code works with Jira Cloud sites, whose address looks like `your-team.atlassi
 
 1. Create an API token with scopes at
    [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens).
-   Choose **Jira** as the app, pick an expiry, and grant exactly these read-only scopes:
+   Choose **Jira** as the app, pick an expiry, and grant the read-only scopes `read:jira-work` and
+   `read:jira-user`. `read:jira-work` also allows reading comments, attachments and worklogs, which
+   T3 Code doesn't use. For the tightest access, grant these granular scopes instead:
 
    ```text
    read:application-role:jira

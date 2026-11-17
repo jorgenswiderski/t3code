@@ -28,8 +28,11 @@ export function normalizeJiraSiteUrl(input: string): string | null {
   }
 }
 
-/** The read-only granular scopes the API token needs for every Jira call T3 Code makes. */
-export const JIRA_API_TOKEN_SCOPES = [
+/** The classic read-only scopes that cover every Jira call T3 Code makes; the quick setup. */
+export const JIRA_CLASSIC_TOKEN_SCOPES = ["read:jira-work", "read:jira-user"] as const;
+
+/** The granular read-only scopes that cover the same calls; the tightest setup. */
+export const JIRA_GRANULAR_TOKEN_SCOPES = [
   "read:application-role:jira",
   "read:avatar:jira",
   "read:field:jira",

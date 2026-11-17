@@ -1,7 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   isSecretReference,
-  JIRA_API_TOKEN_SCOPES,
+  JIRA_CLASSIC_TOKEN_SCOPES,
+  JIRA_GRANULAR_TOKEN_SCOPES,
   type EnvironmentId,
   type JiraConnectionStatus,
   type JiraErrorKind,
@@ -219,7 +220,9 @@ function JiraConnection({
       <fieldset disabled={busy || !canEdit} className="contents">
         <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
           Link threads to Jira Cloud issues to read their status and priority. Use an API token with
-          scopes for Jira, read-only, from the Atlassian account that can see those issues.{" "}
+          scopes for Jira from the Atlassian account that can see those issues, and grant the
+          read-only scopes <code>{JIRA_CLASSIC_TOKEN_SCOPES[0]}</code> and{" "}
+          <code>{JIRA_CLASSIC_TOKEN_SCOPES[1]}</code>.{" "}
           <InlineButton
             render={<a href={API_TOKEN_URL} target="_blank" rel="noreferrer noopener" />}
           >
@@ -313,27 +316,30 @@ function TestOutcomeText({ outcome }: { readonly outcome: TestOutcome }) {
 }
 
 function TokenScopes() {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ timeout: 1500, target: "scopes" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    timeout: 1500,
+    target: "granular scopes",
+  });
   return (
     <div className="max-w-2xl text-xs text-muted-foreground">
       <Collapsible>
         <div className="flex items-center gap-1">
           <CollapsibleTrigger render={<InlineButton tone="muted" />}>
             <ChevronRightIcon aria-hidden className="size-3 [[data-panel-open]_&]:rotate-90" />
-            Scopes it needs
+            Tighter: granular scopes instead
           </CollapsibleTrigger>
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label="Copy scopes"
-            onClick={() => copyToClipboard(JIRA_API_TOKEN_SCOPES.join("\n"), undefined)}
+            aria-label="Copy granular scopes"
+            onClick={() => copyToClipboard(JIRA_GRANULAR_TOKEN_SCOPES.join("\n"), undefined)}
           >
             {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
           </Button>
         </div>
         <CollapsiblePanel>
           <ul role="list" className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono">
-            {JIRA_API_TOKEN_SCOPES.map((scope) => (
+            {JIRA_GRANULAR_TOKEN_SCOPES.map((scope) => (
               <li key={scope}>{scope}</li>
             ))}
           </ul>
