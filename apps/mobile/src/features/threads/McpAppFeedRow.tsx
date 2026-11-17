@@ -34,46 +34,46 @@ export function McpAppFeedRow(props: {
   });
   const writing = useRef(false);
 
-  const hide = async () => {
+  const write = async () => {
+    const current =
+      appAtomRegistry.get(serverEnvironment.settingsValueAtom(environmentId))
+        ?.hiddenMcpAppServers ?? [];
+    const result = await updateSettings({
+      environmentId,
+      input: { patch: { hiddenMcpAppServers: withMcpAppServerHidden(current, app.server, true) } },
+    });
+    if (result._tag === "Success") {
+      const server = app.server.trim();
+      if (result.value.hiddenMcpAppServers.some((entry) => entry.trim() === server)) {
+        showGitActionResult({
+          type: "success",
+          title: `Apps from ${app.server} hidden`,
+          description: "Show them again in Settings → Threads.",
+        });
+      } else {
+        showGitActionResult({
+          type: "error",
+          title: `Could not hide apps from ${app.server}`,
+          description: OUTDATED_SERVER_MESSAGE,
+        });
+      }
+      return;
+    }
+    if (isAtomCommandInterrupted(result)) return;
+    const error = squashAtomCommandFailure(result);
+    showGitActionResult({
+      type: "error",
+      title: `Could not hide apps from ${app.server}`,
+      description: error instanceof Error ? error.message : String(error),
+    });
+  };
+
+  const hide = () => {
     if (writing.current) return;
     writing.current = true;
-    try {
-      const current =
-        appAtomRegistry.get(serverEnvironment.settingsValueAtom(environmentId))
-          ?.hiddenMcpAppServers ?? [];
-      const result = await updateSettings({
-        environmentId,
-        input: {
-          patch: { hiddenMcpAppServers: withMcpAppServerHidden(current, app.server, true) },
-        },
-      });
-      if (result._tag === "Success") {
-        const server = app.server.trim();
-        if (result.value.hiddenMcpAppServers.some((entry) => entry.trim() === server)) {
-          showGitActionResult({
-            type: "success",
-            title: `Apps from ${app.server} hidden`,
-            description: "Show them again in Settings → Threads.",
-          });
-        } else {
-          showGitActionResult({
-            type: "error",
-            title: `Could not hide apps from ${app.server}`,
-            description: OUTDATED_SERVER_MESSAGE,
-          });
-        }
-        return;
-      }
-      if (isAtomCommandInterrupted(result)) return;
-      const error = squashAtomCommandFailure(result);
-      showGitActionResult({
-        type: "error",
-        title: `Could not hide apps from ${app.server}`,
-        description: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
+    void write().finally(() => {
       writing.current = false;
-    }
+    });
   };
 
   return (
@@ -91,7 +91,7 @@ export function McpAppFeedRow(props: {
             accessibilityLabel={`Hide apps from ${app.server}`}
             accessibilityRole="button"
             className="min-h-11 min-w-11 items-center justify-center active:opacity-60"
-            onPress={() => void hide()}
+            onPress={hide}
           >
             <SymbolView
               name="eye.slash"
