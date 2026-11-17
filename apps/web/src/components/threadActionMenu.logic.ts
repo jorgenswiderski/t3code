@@ -109,7 +109,7 @@ function ticketMenuItems(
         })),
         {
           id: PRIORITY_CLEAR_MENU_ID,
-          label: "Clear my priority",
+          label: "Clear priority",
           disabled: !canClear,
           separatorBefore: entries.length > 0,
         },

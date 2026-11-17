@@ -187,6 +187,7 @@ describe("setThreadPriorityValue", () => {
   it.each<[string, ThreadPriority, "user" | "agent", typeof High | null]>([
     ["the same user value", { user: High, agent: null }, "user", { ...High }],
     ["clearing an empty agent value", empty, "agent", null],
+    ["a user clear with nothing set", empty, "user", null],
   ])("is a no-op for %s", (_label, stored, source, priority) => {
     expect(setThreadPriorityValue(stored, { source, priority })).toBe(stored);
   });
@@ -194,6 +195,15 @@ describe("setThreadPriorityValue", () => {
   it.each<[string, ThreadPriority, "user" | "agent", typeof High | null, ThreadPriority]>([
     ["sets user", empty, "user", High, { user: High, agent: null }],
     ["clears user", { user: High, agent: null }, "user", null, empty],
+    ["a user clear also clears the agent guess", { user: High, agent: Low }, "user", null, empty],
+    ["a user clear removes an agent-only guess", { user: null, agent: Low }, "user", null, empty],
+    [
+      "an agent clear keeps the user value",
+      { user: High, agent: Low },
+      "agent",
+      null,
+      { user: High, agent: null },
+    ],
     [
       "replaces on a name change",
       { user: null, agent: Low },

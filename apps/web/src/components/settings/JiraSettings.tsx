@@ -1,15 +1,18 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   isSecretReference,
+  JIRA_CLASSIC_TOKEN_SCOPES,
+  JIRA_GRANULAR_TOKEN_SCOPES,
   type EnvironmentId,
   type JiraConnectionStatus,
   type JiraErrorKind,
   type JiraSettings,
   type SecretReference,
 } from "@t3tools/contracts";
-import { ExternalLinkIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { CheckIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
+import { Fragment, useState, type ReactNode } from "react";
 
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
@@ -17,6 +20,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { type JiraDraft, jiraSettingsPatch } from "./JiraSettings.logic";
@@ -215,15 +219,23 @@ function JiraConnection({
     >
       <fieldset disabled={busy || !canEdit} className="contents">
         <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-          Link threads to Jira Cloud issues to read their status and priority. Use an API token from
-          the Atlassian account that can see those issues.{" "}
+          Link threads to Jira Cloud issues to read their status and priority. Use a scoped Jira API
+          token from the Atlassian account that can see those issues, with the read-only scopes{" "}
+          {JIRA_CLASSIC_TOKEN_SCOPES.map((scope, index) => (
+            <Fragment key={scope}>
+              {index > 0 ? " and " : null}
+              <code>{scope}</code>
+            </Fragment>
+          ))}
+          . These also allow reading comments and attachments, which T3 Code doesn't use.{" "}
           <InlineButton
             render={<a href={API_TOKEN_URL} target="_blank" rel="noreferrer noopener" />}
           >
-            Create an API token
+            Create an API token with scopes
             <ExternalLinkIcon aria-hidden className="size-3" />
           </InlineButton>
         </p>
+        <TokenScopes />
         {!canEdit ? (
           <p className="text-xs text-muted-foreground">
             This connection lacks permission to change settings on this environment.
@@ -305,6 +317,40 @@ function TestOutcomeText({ outcome }: { readonly outcome: TestOutcome }) {
     >
       {outcome?.message}
     </p>
+  );
+}
+
+function TokenScopes() {
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    timeout: 1500,
+    target: "granular scopes",
+  });
+  return (
+    <div className="max-w-2xl text-xs text-muted-foreground">
+      <Collapsible>
+        <div className="flex items-center gap-1">
+          <CollapsibleTrigger render={<InlineButton tone="muted" />}>
+            <ChevronRightIcon aria-hidden className="size-3 [[data-panel-open]_&]:rotate-90" />
+            Tighter option: granular scopes
+          </CollapsibleTrigger>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Copy granular scopes"
+            onClick={() => copyToClipboard(JIRA_GRANULAR_TOKEN_SCOPES.join("\n"), undefined)}
+          >
+            {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+          </Button>
+        </div>
+        <CollapsiblePanel>
+          <ul role="list" className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono">
+            {JIRA_GRANULAR_TOKEN_SCOPES.map((scope) => (
+              <li key={scope}>{scope}</li>
+            ))}
+          </ul>
+        </CollapsiblePanel>
+      </Collapsible>
+    </div>
   );
 }
 

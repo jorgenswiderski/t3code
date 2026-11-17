@@ -32,10 +32,12 @@ import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as Settings from "../serverSettings.ts";
 import { SECRET_REDACTED } from "../settingsSecrets.ts";
 import {
+  type JiraApiConnection,
   type JiraConnection,
   MAX_KEYS_PER_REQUEST,
   fetchTicketBatch,
   readAccountName,
+  readCloudId,
   readPriorityScale,
   readProjectKeys,
   readRankFieldId,
@@ -55,7 +57,7 @@ export class JiraUnavailableError extends Schema.TaggedError<JiraUnavailableErro
 ) {}
 export class JiraResponseError extends Schema.TaggedError<JiraResponseError>()(
   "JiraResponseError",
-  { message: Schema.String },
+  { message: Schema.String, status: Schema.optional(Schema.Number) },
 ) {}
 export type JiraError =
   | JiraNotConfiguredError
@@ -137,6 +139,7 @@ type ConnectionRead =
 
 interface ConnectionCache {
   readonly generation: number;
+  readonly cloudId: string | null;
   readonly rankFieldId: Option.Option<string | null>;
   readonly projectKeys: ReadonlySet<string> | null;
   /** False when this connection began with a token its secret provider could not read. */
@@ -166,6 +169,7 @@ export const make = Effect.gen(function* () {
   const scaleRef = yield* Ref.make<ReadonlyArray<PriorityRef>>(DEFAULT_TICKET_PRIORITY_SCALE);
   const cacheRef = yield* Ref.make<ConnectionCache>({
     generation: 0,
+    cloudId: null,
     rankFieldId: Option.none(),
     projectKeys: null,
     tokenRead: true,
@@ -233,6 +237,27 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  /** The gateway connection, reading the site's cloud ID once per connection generation. */
+  const apiConnection = Effect.fn("JiraService.apiConnection")(function* (
+    generation: number,
+    connection: JiraConnection,
+  ) {
+    const cache = yield* Ref.get(cacheRef);
+    const cached = cache.generation === generation ? cache.cloudId : null;
+    const cloudId =
+      cached ??
+      (yield* readCloudId(connection.siteUrl).pipe(
+        withHttp,
+        Effect.tapError((error) => record(generation, { type: "failure", error })),
+      ));
+    if (cached === null) yield* updateCache(generation, (current) => ({ ...current, cloudId }));
+    return {
+      cloudId,
+      email: connection.email,
+      apiToken: connection.apiToken,
+    } satisfies JiraApiConnection;
+  });
+
   const resolveConnection = Effect.fn("JiraService.resolveConnection")(function* (
     jira: JiraSettings | null,
   ) {
@@ -244,7 +269,7 @@ export const make = Effect.gen(function* () {
         type: "invalid",
         siteUrl,
         kind: "response",
-        message: "The saved Jira site URL is not a valid https address.",
+        message: "The saved Jira site is not a Jira Cloud site (your-team.atlassian.net).",
       } satisfies ConnectionRead;
     }
     const token = yield* requireSettingsSecret(secrets, jira.apiToken).pipe(Effect.result);
@@ -295,8 +320,9 @@ export const make = Effect.gen(function* () {
 
   const refreshSite = Effect.fn("JiraService.refreshSite")(function* (
     generation: number,
-    connection: JiraConnection,
+    site: JiraConnection,
   ) {
+    const connection = yield* apiConnection(generation, site);
     yield* tracked(generation, readAccountName(connection), (name) => name);
     const scale = yield* tracked(generation, readPriorityScale(connection));
     yield* whenCurrent(generation, publishScale(scale));
@@ -318,6 +344,7 @@ export const make = Effect.gen(function* () {
       const next = (yield* Ref.get(cacheRef)).generation + 1;
       yield* Ref.set(cacheRef, {
         generation: next,
+        cloudId: null,
         rankFieldId: Option.none(),
         projectKeys: null,
         tokenRead: !(read.type === "invalid" && read.kind === "auth"),
@@ -386,11 +413,12 @@ export const make = Effect.gen(function* () {
   const fetchTickets = Effect.fn("JiraService.fetchTickets")(function* (
     keys: ReadonlyArray<ThreadTicketKey>,
   ) {
-    const { connection, cache } = yield* readyConnection;
+    const { connection: site, cache } = yield* readyConnection;
     const unique = [...new Set(keys)];
     const results = new Map<ThreadTicketKey, JiraTicketFetchResult>();
     if (unique.length === 0) return results as ReadonlyMap<ThreadTicketKey, JiraTicketFetchResult>;
     const { generation } = cache;
+    const connection = yield* apiConnection(generation, site);
     let rankFieldId: string | null;
     if (Option.isSome(cache.rankFieldId)) {
       rankFieldId = cache.rankFieldId.value;
@@ -413,7 +441,8 @@ export const make = Effect.gen(function* () {
   const projectKeys = Effect.gen(function* () {
     const { connection, cache } = yield* readyConnection;
     if (cache.projectKeys !== null) return cache.projectKeys;
-    const keys = yield* tracked(cache.generation, readProjectKeys(connection));
+    const api = yield* apiConnection(cache.generation, connection);
+    const keys = yield* tracked(cache.generation, readProjectKeys(api));
     yield* updateCache(cache.generation, (current) => ({ ...current, projectKeys: keys }));
     return keys;
   }).pipe(Effect.withSpan("JiraService.projectKeys"));
@@ -457,25 +486,31 @@ export const make = Effect.gen(function* () {
         message: token._tag === "Failure" ? token.failure.message : UNREADABLE_TOKEN,
       } satisfies JiraTestConnectionResult;
     }
-    const connection = { siteUrl, email: settings.email, apiToken: token.success };
     const { generation, tokenRead } = yield* Ref.get(cacheRef);
-    const result = yield* Effect.all([
-      readAccountName(connection),
-      readPriorityScale(connection),
-    ]).pipe(withHttp, Effect.result);
-    if (result._tag === "Failure") {
-      const error = result.failure;
-      return {
+    const failed = (error: JiraRequestError, responseKind: "response" | "invalid_site") =>
+      ({
         type: "failed",
         kind:
           error._tag === "JiraAuthError"
             ? "auth"
             : error._tag === "JiraUnavailableError"
               ? "unavailable"
-              : "response",
+              : responseKind,
         message: error.message,
-      } satisfies JiraTestConnectionResult;
-    }
+      }) satisfies JiraTestConnectionResult;
+    const cloudId = yield* readCloudId(siteUrl).pipe(withHttp, Effect.result);
+    // A site that can't be found is the site field's problem, not the token's.
+    if (cloudId._tag === "Failure") return failed(cloudId.failure, "invalid_site");
+    const connection: JiraApiConnection = {
+      cloudId: cloudId.success,
+      email: settings.email,
+      apiToken: token.success,
+    };
+    const result = yield* Effect.all([
+      readAccountName(connection),
+      readPriorityScale(connection),
+    ]).pipe(withHttp, Effect.result);
+    if (result._tag === "Failure") return failed(result.failure, "response");
     const [accountName, priorityScale] = result.success;
     // A passing test of the saved settings ends an auth pause without waiting for the hourly refresh.
     if (input.settings === undefined && (yield* readConnection).type === "ready") {

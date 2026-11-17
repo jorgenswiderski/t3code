@@ -1491,7 +1491,7 @@ function OpenCommandPaletteDialog(props: {
                 kind: "action" as const,
                 value: "action:thread-priority:clear",
                 searchTerms: ["clear", "remove", "priority"],
-                title: "Clear my priority",
+                title: "Clear priority",
                 icon: <FlagIcon className={ITEM_ICON_CLASS} />,
                 disabled: !menu.canClear,
                 run: () => setThreadPriority(threadRef, null),

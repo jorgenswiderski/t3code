@@ -5,13 +5,21 @@ import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SettingsSecretValue } from "./settingsSecretValue.ts";
 import { PriorityRef } from "./threadTicket.ts";
 
-/** The site's https origin; a bare host gets https, and any path (a pasted board URL) is dropped. */
+const JIRA_CLOUD_HOST = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+atlassian\.net$/;
+
+/** A Jira Cloud site's https origin; a bare host gets https, and any path (a pasted board URL) is dropped. */
 export function normalizeJiraSiteUrl(input: string): string | null {
   const trimmed = input.trim();
   if (trimmed === "") return null;
   try {
     const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
-    if (url.protocol !== "https:" || url.username || url.password || url.hostname === "") {
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.port !== "" ||
+      !JIRA_CLOUD_HOST.test(url.hostname)
+    ) {
       return null;
     }
     return url.origin;
@@ -19,6 +27,33 @@ export function normalizeJiraSiteUrl(input: string): string | null {
     return null;
   }
 }
+
+/** The classic read-only scopes that cover every Jira call T3 Code makes; the quick setup. */
+export const JIRA_CLASSIC_TOKEN_SCOPES = ["read:jira-work", "read:jira-user"] as const;
+
+/** The granular read-only scopes that cover the same calls; the tightest setup. */
+export const JIRA_GRANULAR_TOKEN_SCOPES = [
+  "read:application-role:jira",
+  "read:avatar:jira",
+  "read:field:jira",
+  "read:field-configuration:jira",
+  "read:group:jira",
+  "read:issue:jira",
+  "read:issue-meta:jira",
+  "read:issue-security-level:jira",
+  "read:issue-type:jira",
+  "read:issue-type-hierarchy:jira",
+  "read:issue.changelog:jira",
+  "read:issue.vote:jira",
+  "read:priority:jira",
+  "read:project:jira",
+  "read:project-category:jira",
+  "read:project.component:jira",
+  "read:project.property:jira",
+  "read:project-version:jira",
+  "read:status:jira",
+  "read:user:jira",
+] as const;
 
 export const JiraSiteUrl = TrimmedNonEmptyString.check(
   Schema.makeFilter((value) => normalizeJiraSiteUrl(value) === value),

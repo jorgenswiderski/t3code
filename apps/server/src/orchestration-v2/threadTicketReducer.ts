@@ -102,6 +102,12 @@ export function setThreadPriorityValue(
   priority: ThreadPriority,
   input: { readonly source: "user" | "agent"; readonly priority: PriorityRef | null },
 ): ThreadPriority {
+  // The user's clear also drops the agent's guess, so the thread can return to no priority.
+  if (input.source === "user" && input.priority === null) {
+    return priority.user === null && priority.agent === null
+      ? priority
+      : { user: null, agent: null };
+  }
   const current = priority[input.source];
   const next = input.priority;
   const same =

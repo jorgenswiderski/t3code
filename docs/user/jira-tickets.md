@@ -7,9 +7,43 @@ Servers running an older version of T3 Code do not offer any of this.
 
 ## Connect Jira
 
-Open **Settings → Source control → Jira** on web or desktop, choose the environment, and enter your
-site address, the email of your Atlassian account, and an API token. Choose **Test connection** to
-check them, then **Connect**. **Disconnect** removes the connection and the saved token.
+T3 Code works with Jira Cloud sites, whose address looks like `your-team.atlassian.net`.
+
+1. Create an API token with scopes at
+   [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens).
+   Choose **Jira** as the app, pick an expiry, and grant the read-only scopes `read:jira-work` and
+   `read:jira-user`. `read:jira-work` also allows reading comments, attachments and worklogs, which
+   T3 Code doesn't use. For the tightest access, grant these granular scopes instead:
+
+   ```text
+   read:application-role:jira
+   read:avatar:jira
+   read:field:jira
+   read:field-configuration:jira
+   read:group:jira
+   read:issue:jira
+   read:issue-meta:jira
+   read:issue-security-level:jira
+   read:issue-type:jira
+   read:issue-type-hierarchy:jira
+   read:issue.changelog:jira
+   read:issue.vote:jira
+   read:priority:jira
+   read:project:jira
+   read:project-category:jira
+   read:project.component:jira
+   read:project.property:jira
+   read:project-version:jira
+   read:status:jira
+   read:user:jira
+   ```
+
+2. Open **Settings → Source control → Jira** on web or desktop, choose the environment, and enter
+   your site address, the email of your Atlassian account, and the token. Choose **Test connection**
+   to check them, then **Connect**. **Disconnect** removes the connection and the saved token.
+
+When the token expires, Jira reports an authentication error. Create a new one with the same scopes
+and save it.
 
 - The connection belongs to the machine that runs the server. Each environment you use needs its own.
 - T3 Code reads only the tickets the token's account can see.
@@ -45,11 +79,13 @@ Medium, Low, Lowest.
 A thread's priority comes from the first of these that applies:
 
 1. The priority you set. Open the thread's menu or the command palette and choose **Priority**.
-   **Clear my priority** removes it.
 2. The highest priority among its linked tickets. A Done ticket still counts until you settle the
    thread.
-3. The agent's guess. **Clear my priority** does not remove it. Set your own priority to override it,
-   or ask the agent to clear it.
+3. The agent's guess. Set your own priority to override it.
+
+**Clear priority** removes both your priority and the agent's guess. A linked ticket's priority still
+shows until you unlink the ticket, it loses its priority in Jira, or it is Done and you settle the
+thread.
 
 On mobile, touch and hold a thread in the list and choose **Priority**, or use **Priority** at the top
 of the **Jira tickets** sheet.

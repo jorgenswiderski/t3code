@@ -23,47 +23,51 @@ const MAX_PAGES = 20;
 export const MAX_KEYS_PER_REQUEST = 100;
 
 export interface JiraConnection {
-  /** Normalized https origin. */
+  /** Normalized https origin of a Jira Cloud site. */
   readonly siteUrl: string;
   readonly email: string;
   /** The literal token, already resolved. */
   readonly apiToken: string;
 }
 
+/** Where authenticated reads go: scoped API tokens work only through Atlassian's gateway. */
+export interface JiraApiConnection {
+  readonly cloudId: string;
+  readonly email: string;
+  readonly apiToken: string;
+}
+
+const JIRA_GATEWAY = "https://api.atlassian.com/ex/jira";
 const UNREADABLE_REPLY = "Jira returned a reply T3 Code couldn't read.";
+const SITE_NOT_FOUND = "Couldn't find that Jira site.";
 
 /** Sends one Jira request and decodes its 2xx JSON body; messages never carry credentials or bodies. */
 const sendJira = Effect.fn("Jira.send")(
   function* <S extends Schema.Decoder<unknown>>(
-    connection: JiraConnection,
     request: HttpClientRequest.HttpClientRequest,
     schema: S,
+    redirect: "error" | "manual" = "error",
   ) {
     const http = yield* HttpClient.HttpClient;
-    const response = yield* http
-      .execute(
-        request.pipe(
-          HttpClientRequest.basicAuth(connection.email, connection.apiToken),
-          HttpClientRequest.acceptJson,
-        ),
-      )
-      .pipe(
-        // A redirect could carry the credential to another origin.
-        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
-        Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-        Effect.mapError(() => new JiraUnavailableError({ message: "Couldn't reach Jira." })),
-      );
+    const response = yield* http.execute(request.pipe(HttpClientRequest.acceptJson)).pipe(
+      // A redirect could carry the credential to another origin.
+      Effect.provideService(FetchHttpClient.RequestInit, { redirect }),
+      Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+      Effect.mapError(() => new JiraUnavailableError({ message: "Couldn't reach Jira." })),
+    );
     const status = response.status;
     if (status === 401) {
       return yield* new JiraAuthError({
         status,
-        message: "Jira rejected the email or API token (401).",
+        message:
+          "Jira rejected the email or API token (401). T3 Code needs an API token with scopes.",
       });
     }
     if (status === 403) {
       return yield* new JiraAuthError({
         status,
-        message: "Jira refused access for this account (403).",
+        message:
+          "The API token is missing a required read scope, or the account can't use Jira (403).",
       });
     }
     if (status === 429) {
@@ -79,7 +83,7 @@ const sendJira = Effect.fn("Jira.send")(
       return yield* new JiraUnavailableError({ message: `Jira returned HTTP ${status}.` });
     }
     if (status < 200 || status >= 300) {
-      return yield* new JiraResponseError({ message: `Jira returned HTTP ${status}.` });
+      return yield* new JiraResponseError({ status, message: `Jira returned HTTP ${status}.` });
     }
     const body = yield* response.json.pipe(
       Effect.mapError(() => new JiraResponseError({ message: UNREADABLE_REPLY })),
@@ -103,10 +107,12 @@ const Myself = Schema.Struct({
   displayName: Schema.optional(Schema.NullOr(Schema.String)),
   emailAddress: Schema.optional(Schema.NullOr(Schema.String)),
 });
-const PriorityPage = Schema.Struct({
-  values: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
-  isLast: Schema.optional(Schema.Boolean),
+const TenantInfo = Schema.Struct({
+  cloudId: Schema.String.check(
+    Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+  ),
 });
+const Priorities = Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String }));
 const Fields = Schema.Array(
   Schema.Struct({
     id: Schema.String,
@@ -144,20 +150,38 @@ const IssueFields = Schema.Struct({
 });
 const decodeIssueFields = Schema.decodeUnknownOption(IssueFields);
 
-const url = (connection: JiraConnection, path: string) => `${connection.siteUrl}${path}`;
+const authed = (connection: JiraApiConnection, request: HttpClientRequest.HttpClientRequest) =>
+  request.pipe(
+    HttpClientRequest.prependUrl(`${JIRA_GATEWAY}/${connection.cloudId}`),
+    HttpClientRequest.basicAuth(connection.email, connection.apiToken),
+  );
+
+/** The site's cloud ID, read without credentials so the token never reaches the site host. */
+export const readCloudId = Effect.fn("Jira.readCloudId")(function* (siteUrl: string) {
+  const siteNotFound = () => Effect.fail(new JiraResponseError({ message: SITE_NOT_FOUND }));
+  // No credential is sent, so a redirect is read as a 3xx (a site that isn't there) instead of followed.
+  const info = yield* sendJira(
+    HttpClientRequest.get(`${siteUrl}/_edge/tenant_info`),
+    TenantInfo,
+    "manual",
+  ).pipe(Effect.catchTags({ JiraAuthError: siteNotFound, JiraResponseError: siteNotFound }));
+  return info.cloudId;
+});
 
 const readPages = Effect.fn("Jira.readPages")(function* <
   S extends Schema.Decoder<{
     readonly values: ReadonlyArray<unknown>;
     readonly isLast?: boolean | undefined;
   }>,
->(connection: JiraConnection, path: string, schema: S) {
+>(connection: JiraApiConnection, path: string, schema: S) {
   const values: Array<S["Type"]["values"][number]> = [];
   for (let page = 0; page < MAX_PAGES; page++) {
     const body = yield* sendJira(
-      connection,
-      HttpClientRequest.get(url(connection, path)).pipe(
-        HttpClientRequest.setUrlParams({ startAt: values.length, maxResults: PAGE_SIZE }),
+      authed(
+        connection,
+        HttpClientRequest.get(path).pipe(
+          HttpClientRequest.setUrlParams({ startAt: values.length, maxResults: PAGE_SIZE }),
+        ),
       ),
       schema,
     );
@@ -168,20 +192,33 @@ const readPages = Effect.fn("Jira.readPages")(function* <
 });
 
 export const readAccountName = Effect.fn("Jira.readAccountName")(function* (
-  connection: JiraConnection,
+  connection: JiraApiConnection,
 ) {
   const myself = yield* sendJira(
-    connection,
-    HttpClientRequest.get(url(connection, "/rest/api/3/myself")),
+    authed(connection, HttpClientRequest.get("/rest/api/3/myself")),
     Myself,
   );
   return myself.displayName?.trim() || myself.emailAddress?.trim() || myself.accountId;
 });
 
 export const readPriorityScale = Effect.fn("Jira.readPriorityScale")(function* (
-  connection: JiraConnection,
+  connection: JiraApiConnection,
 ) {
-  const values = yield* readPages(connection, "/rest/api/3/priority/search", PriorityPage);
+  // /priority/search needs the admin scope manage:jira-configuration; this deprecated list needs only read:priority:jira.
+  const values = yield* sendJira(
+    authed(connection, HttpClientRequest.get("/rest/api/3/priority")),
+    Priorities,
+  ).pipe(
+    Effect.catchTags({
+      // Only a removed endpoint falls back; other errors keep the last good scale and show in the status.
+      JiraResponseError: (error) =>
+        error.status === 404 || error.status === 410
+          ? Effect.logWarning("Jira no longer lists priorities; using the default scale").pipe(
+              Effect.as([]),
+            )
+          : Effect.fail(error),
+    }),
+  );
   const scale: ReadonlyArray<PriorityRef> = values
     .map((value) => ({ id: value.id, name: value.name.trim() }))
     .filter((value) => value.id !== "" && value.name !== "");
@@ -193,11 +230,10 @@ export const readPriorityScale = Effect.fn("Jira.readPriorityScale")(function* (
 });
 
 export const readRankFieldId = Effect.fn("Jira.readRankFieldId")(function* (
-  connection: JiraConnection,
+  connection: JiraApiConnection,
 ) {
   const fields = yield* sendJira(
-    connection,
-    HttpClientRequest.get(url(connection, "/rest/api/3/field")),
+    authed(connection, HttpClientRequest.get("/rest/api/3/field")),
     Fields,
   );
   const rankFields = fields.filter((field) => field.schema?.custom === RANK_FIELD_TYPE);
@@ -205,7 +241,7 @@ export const readRankFieldId = Effect.fn("Jira.readRankFieldId")(function* (
 });
 
 export const readProjectKeys = Effect.fn("Jira.readProjectKeys")(function* (
-  connection: JiraConnection,
+  connection: JiraApiConnection,
 ) {
   const values = yield* readPages(connection, "/rest/api/3/project/search", ProjectPage);
   return new Set(values.map((value) => value.key.toUpperCase())) as ReadonlySet<string>;
@@ -234,18 +270,20 @@ function toTicketSnapshot(
 
 /** One chunk of at most MAX_KEYS_PER_REQUEST keys; missing and invisible issues read not_found. */
 export const fetchTicketBatch = Effect.fn("Jira.fetchTicketBatch")(function* (
-  connection: JiraConnection,
+  connection: JiraApiConnection,
   keys: ReadonlyArray<ThreadTicketKey>,
   rankFieldId: string | null,
 ) {
   const body = yield* sendJira(
-    connection,
-    HttpClientRequest.post(url(connection, "/rest/api/3/issue/bulkfetch")).pipe(
-      HttpClientRequest.bodyJsonUnsafe({
-        issueIdsOrKeys: keys,
-        fields: ["summary", "status", "priority", ...(rankFieldId === null ? [] : [rankFieldId])],
-        fieldsByKeys: false,
-      }),
+    authed(
+      connection,
+      HttpClientRequest.post("/rest/api/3/issue/bulkfetch").pipe(
+        HttpClientRequest.bodyJsonUnsafe({
+          issueIdsOrKeys: keys,
+          fields: ["summary", "status", "priority", ...(rankFieldId === null ? [] : [rankFieldId])],
+          fieldsByKeys: false,
+        }),
+      ),
     ),
     BulkFetch,
   );
