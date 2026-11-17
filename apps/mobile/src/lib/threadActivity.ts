@@ -313,6 +313,8 @@ const projectedEntriesCache = new WeakMap<
   OrchestrationV2ProjectedTurnItem,
   {
     readonly attemptId: RunAttemptId | null;
+    /** Set only for a row that carries an MCP app: its entry depends on whether that server is hidden. */
+    readonly appServer?: string | undefined;
     readonly entry: RawThreadFeedEntry;
   }
 >();
@@ -2115,6 +2117,7 @@ interface ThreadFeedBuild {
   readonly nodes: ReadonlyArray<OrchestrationV2ExecutionNode> | undefined;
   readonly checkpointSummaries: ReadonlyArray<ThreadCheckpointSummary> | undefined;
   readonly foldedAnswerMessageIds: ReadonlySet<string>;
+  readonly hiddenMcpAppServers: ReadonlySet<string>;
   readonly delegatedChildrenByRun: ReadonlyMap<RunId, ReadonlySet<string>>;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   /** Grouping is empty before `row`: the rows before it produced `feed.slice(0, feedLength)`. */
@@ -2184,6 +2187,8 @@ function firstChangedIndex<T>(previous: ReadonlyArray<T>, next: ReadonlyArray<T>
   return index;
 }
 
+const NO_HIDDEN_MCP_APP_SERVERS: ReadonlySet<string> = new Set();
+
 export function buildThreadFeed(
   visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
   options?: {
@@ -2192,9 +2197,11 @@ export function buildThreadFeed(
     readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
     readonly checkpointSummaries?: ReadonlyArray<ThreadCheckpointSummary>;
     readonly cache?: ThreadFeedCache;
+    readonly hiddenMcpAppServers?: ReadonlySet<string>;
   },
 ): ThreadFeedEntry[] {
   const anchoredMessages = options?.anchoredMessages ?? [];
+  const hiddenMcpAppServers = options?.hiddenMcpAppServers ?? NO_HIDDEN_MCP_APP_SERVERS;
   const attemptByRootNodeId = new Map(
     (options?.attempts ?? []).map((attempt) => [attempt.rootNodeId, attempt] as const),
   );
@@ -2239,6 +2246,7 @@ export function buildThreadFeed(
     previous.nodes === options?.nodes &&
     checkpointSummariesEqual(previous.checkpointSummaries, options?.checkpointSummaries) &&
     setsEqual(previous.foldedAnswerMessageIds, foldedAnswerMessageIds) &&
+    setsEqual(previous.hiddenMcpAppServers, hiddenMcpAppServers) &&
     setMapsEqual(previous.delegatedChildrenByRun, delegatedChildrenByRun)
   ) {
     const firstChanged = firstChangedIndex(previous.rows, visibleTurnItems);
@@ -2288,7 +2296,11 @@ export function buildThreadFeed(
     }
     const attemptId = resolveAttemptId(item);
     const cached = projectedEntriesCache.get(row);
-    if (cached?.attemptId === attemptId) {
+    if (
+      cached?.attemptId === attemptId &&
+      (cached.appServer === undefined ||
+        hiddenMcpAppServers.has(cached.appServer) === (cached.entry.type !== "mcp-app"))
+    ) {
       entries.push(cached.entry);
       entryRows.push(index);
       continue;
@@ -2312,7 +2324,8 @@ export function buildThreadFeed(
       continue;
     }
     const app = item.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
-    if (app) {
+    const appServer = app?.server.trim();
+    if (app && !hiddenMcpAppServers.has(app.server.trim())) {
       const entry: RawThreadFeedEntry = {
         type: "mcp-app",
         id: `mcp-app:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
@@ -2323,7 +2336,7 @@ export function buildThreadFeed(
         revision: turnItemDetailRevision(item),
         app,
       };
-      projectedEntriesCache.set(row, { attemptId, entry });
+      projectedEntriesCache.set(row, { attemptId, appServer, entry });
       entries.push(entry);
       entryRows.push(index);
       continue;
@@ -2372,7 +2385,7 @@ export function buildThreadFeed(
       runId: item.runId,
       activity,
     };
-    projectedEntriesCache.set(row, { attemptId, entry });
+    projectedEntriesCache.set(row, { attemptId, appServer, entry });
     entries.push(entry);
     entryRows.push(index);
   }
@@ -2447,6 +2460,7 @@ export function buildThreadFeed(
             nodes: options?.nodes,
             checkpointSummaries: options?.checkpointSummaries,
             foldedAnswerMessageIds,
+            hiddenMcpAppServers,
             delegatedChildrenByRun,
             feed,
             restarts,
