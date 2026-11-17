@@ -66,7 +66,8 @@ const sendJira = Effect.fn("Jira.send")(
     if (status === 403) {
       return yield* new JiraAuthError({
         status,
-        message: "The API token is missing a required read scope (403).",
+        message:
+          "The API token is missing a required read scope, or the account can't use Jira (403).",
       });
     }
     if (status === 429) {
