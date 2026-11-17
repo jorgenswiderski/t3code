@@ -5,13 +5,21 @@ import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SettingsSecretValue } from "./settingsSecretValue.ts";
 import { PriorityRef } from "./threadTicket.ts";
 
-/** The site's https origin; a bare host gets https, and any path (a pasted board URL) is dropped. */
+const JIRA_CLOUD_HOST = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+atlassian\.net$/;
+
+/** A Jira Cloud site's https origin; a bare host gets https, and any path (a pasted board URL) is dropped. */
 export function normalizeJiraSiteUrl(input: string): string | null {
   const trimmed = input.trim();
   if (trimmed === "") return null;
   try {
     const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
-    if (url.protocol !== "https:" || url.username || url.password || url.hostname === "") {
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.port !== "" ||
+      !JIRA_CLOUD_HOST.test(url.hostname)
+    ) {
       return null;
     }
     return url.origin;

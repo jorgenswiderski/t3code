@@ -244,7 +244,7 @@ export const make = Effect.gen(function* () {
         type: "invalid",
         siteUrl,
         kind: "response",
-        message: "The saved Jira site URL is not a valid https address.",
+        message: "The saved Jira site is not a Jira Cloud site (your-team.atlassian.net).",
       } satisfies ConnectionRead;
     }
     const token = yield* requireSettingsSecret(secrets, jira.apiToken).pipe(Effect.result);
