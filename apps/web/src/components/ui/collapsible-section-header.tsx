@@ -6,6 +6,7 @@ const tones = {
   muted: { label: "text-sidebar-muted-foreground", line: "bg-sidebar-border/50" },
   emphasized: { label: "text-sidebar-foreground/80", line: "bg-sidebar-foreground/25" },
   accent: { label: "text-primary", line: "bg-primary/50" },
+  warning: { label: "text-warning-foreground", line: "bg-warning/40" },
 } as const;
 
 export function CollapsibleSectionHeader({

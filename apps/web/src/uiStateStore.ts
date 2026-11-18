@@ -47,6 +47,9 @@ export interface UiThreadState {
   // default. Session memory only: unbounded per workflow, and never persisted
   // because the aim is surviving thread switches, not reloads.
   lineageExpandedByKey: Record<string, boolean>;
+  // Explicit Jira ticket panel fold choices (see `ticketsSectionKey`, `ticketsGroupKey`),
+  // with the same session-only lifetime as `lineageExpandedByKey`.
+  ticketsExpandedByKey: Record<string, boolean>;
 }
 
 export interface UiEndpointState {
@@ -67,6 +70,7 @@ const initialState: UiState = {
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   lineageExpandedByKey: {},
+  ticketsExpandedByKey: {},
   defaultAdvertisedEndpointKey: null,
   pullRequestMergeMethod: "merge",
 };
@@ -157,6 +161,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
         : {},
     lineageExpandedByKey: {},
+    ticketsExpandedByKey: {},
     defaultAdvertisedEndpointKey: sanitizeOptionalKey(parsed.defaultAdvertisedEndpointKey),
     sidebarProjectScopeKeys: sanitizeStringArray(
       parsed.sidebarProjectScopeKeys ?? [parsed.sidebarProjectScopeKey],
@@ -358,6 +363,25 @@ export function setLineageExpanded(state: UiState, key: string, expanded: boolea
   };
 }
 
+/** Ticket panel folds are per viewed thread; `threadKey` is the scoped thread key. */
+export function ticketsSectionKey(threadKey: string): string {
+  return `tickets:${threadKey}:section`;
+}
+
+export function ticketsGroupKey(threadKey: string, group: string): string {
+  return `tickets:${threadKey}:group:${group}`;
+}
+
+export function setTicketsExpanded(state: UiState, key: string, expanded: boolean): UiState {
+  if (state.ticketsExpandedByKey[key] === expanded) {
+    return state;
+  }
+  return {
+    ...state,
+    ticketsExpandedByKey: { ...state.ticketsExpandedByKey, [key]: expanded },
+  };
+}
+
 function setDefaultAdvertisedEndpointKey(state: UiState, key: string | null): UiState {
   const nextKey = key && key.length > 0 ? key : null;
   if (state.defaultAdvertisedEndpointKey === nextKey) {
@@ -471,6 +495,7 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setLineageExpanded: (key: string, expanded: boolean) => void;
+  setTicketsExpanded: (key: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setSidebarProjectScopeKeys: (projectKeys: readonly string[]) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
@@ -491,6 +516,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setLineageExpanded: (key, expanded) => set((state) => setLineageExpanded(state, key, expanded)),
+  setTicketsExpanded: (key, expanded) => set((state) => setTicketsExpanded(state, key, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setSidebarProjectScopeKeys: (projectKeys) =>

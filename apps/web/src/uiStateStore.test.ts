@@ -16,6 +16,8 @@ import {
   resolveProjectExpanded,
   setLineageExpanded,
   setProjectExpanded,
+  setTicketsExpanded,
+  ticketsGroupKey,
   type UiState,
 } from "./uiStateStore";
 
@@ -27,6 +29,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     lineageExpandedByKey: {},
+    ticketsExpandedByKey: {},
     defaultAdvertisedEndpointKey: null,
     pullRequestMergeMethod: "merge",
     ...overrides,
@@ -163,6 +166,7 @@ describe("parsePersistedState", () => {
       sidebarProjectScopeKeys: [],
       pullRequestMergeMethod: "merge",
       lineageExpandedByKey: {},
+      ticketsExpandedByKey: {},
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -282,10 +286,10 @@ describe("uiStateStore persistence", () => {
     });
   });
 
-  it("does not persist or restore lineage expansion", () => {
-    const state = setLineageExpanded(
-      makeUiState(),
-      lineageWorkflowKey("env-1", "workflow-1"),
+  it("does not persist or restore lineage or ticket fold state", () => {
+    const state = setTicketsExpanded(
+      setLineageExpanded(makeUiState(), lineageWorkflowKey("env-1", "workflow-1"), true),
+      ticketsGroupKey("env-1:thread-1", "done"),
       true,
     );
 
@@ -294,9 +298,14 @@ describe("uiStateStore persistence", () => {
     const raw = localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}";
     expect(raw).not.toContain("lineage");
     expect(raw).not.toContain("workflow-1");
+    expect(raw).not.toContain("tickets");
     expect(
       parsePersistedState({ lineageExpandedByKey: { a: true } } as PersistedUiState)
         .lineageExpandedByKey,
+    ).toEqual({});
+    expect(
+      parsePersistedState({ ticketsExpandedByKey: { a: true } } as PersistedUiState)
+        .ticketsExpandedByKey,
     ).toEqual({});
   });
 

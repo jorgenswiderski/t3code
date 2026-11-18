@@ -32,6 +32,7 @@ import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import {
   parseTicketMenuAction,
+  threadCardTicket,
   threadHasTicketData,
   threadPriorityIndicator,
   threadPriorityMenu,
@@ -96,6 +97,7 @@ import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { buildTicketMenuItems } from "./thread-ticket-menu";
 import { ThreadPriorityGlyph } from "./ThreadPriorityGlyph";
+import { ThreadCardTicketChip, threadCardTicketAccessibilityLabel } from "./ThreadTicketRows";
 import { useThreadTicketActions } from "./useThreadTicketActions";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
@@ -786,6 +788,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     variant === "card" && threadHasTicketData({ priority: threadPriority, ticketLinks })
       ? threadPriorityIndicator({ priority: threadPriority, ticketLinks }, ticketScale)
       : null;
+  // The ticket chip takes the same gate: card rows with ticket data on a ticket-capable environment.
+  const cardTicket =
+    variant === "card" &&
+    ticketUiLevel !== "off" &&
+    threadHasTicketData({ priority: threadPriority, ticketLinks })
+      ? threadCardTicket({ priority: threadPriority, ticketLinks }, ticketScale, {
+          jiraConnected: ticketUiLevel === "link",
+          siteUrl: null,
+        })
+      : null;
 
   const theme = useUniwindTheme();
   const sidebarPane = props.pane === "sidebar";
@@ -802,7 +814,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
-  const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${priorityIndicator ? `, ${priorityIndicator.accessibilityLabel}` : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
+  const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${priorityIndicator ? `, ${priorityIndicator.accessibilityLabel}` : ""}${cardTicket ? `, ${threadCardTicketAccessibilityLabel(cardTicket)}` : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
   const timeLabel = props.timeLabel;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
@@ -1364,30 +1376,54 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           >
             {thread.runtime.lastError}
           </Text>
-        ) : props.environmentLabel ? (
-          <View className="min-w-0 flex-1 flex-row items-center gap-1">
-            {props.environmentMachine ? (
-              <EnvironmentMachineSymbol
-                kind={props.environmentMachine}
-                size={machineIconSize}
-                tintColorClassName={
+        ) : cardTicket || props.environmentLabel ? (
+          <View className="min-w-0 flex-1 flex-row items-center gap-2">
+            {cardTicket ? (
+              <ThreadCardTicketChip
+                chip={cardTicket.chip}
+                others={cardTicket.others}
+                selected={selected}
+                mutedTintClassName={rowAppearance.mutedIconTintClassName}
+                selectedTintClassName={selectedThreadRowColors.iconTintClassName}
+                mutedTextClassName={
                   selected
-                    ? selectedThreadRowColors.mutedIconTintClassName
-                    : rowAppearance.tertiaryIconTintClassName
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.mutedForegroundClassName
                 }
+                faintTextClassName={
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.tertiaryForegroundClassName
+                }
+                monoFontFamily={MONO_FONT}
               />
             ) : null}
-            <Text
-              className={cn(
-                "shrink text-xs",
-                selected
-                  ? selectedThreadRowColors.mutedForegroundClassName
-                  : rowAppearance.tertiaryForegroundClassName,
-              )}
-              numberOfLines={1}
-            >
-              {props.environmentLabel}
-            </Text>
+            {props.environmentLabel ? (
+              <View className="min-w-0 shrink flex-row items-center gap-1">
+                {props.environmentMachine ? (
+                  <EnvironmentMachineSymbol
+                    kind={props.environmentMachine}
+                    size={machineIconSize}
+                    tintColorClassName={
+                      selected
+                        ? selectedThreadRowColors.mutedIconTintClassName
+                        : rowAppearance.tertiaryIconTintClassName
+                    }
+                  />
+                ) : null}
+                <Text
+                  className={cn(
+                    "shrink text-xs",
+                    selected
+                      ? selectedThreadRowColors.mutedForegroundClassName
+                      : rowAppearance.tertiaryForegroundClassName,
+                  )}
+                  numberOfLines={1}
+                >
+                  {props.environmentLabel}
+                </Text>
+              </View>
+            ) : null}
           </View>
         ) : (
           <View className="flex-1" />
