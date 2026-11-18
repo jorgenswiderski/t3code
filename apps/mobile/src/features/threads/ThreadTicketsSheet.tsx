@@ -2,6 +2,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { LegendList } from "@legendapp/list/react-native";
 import {
   jiraSyncNotice,
+  orderTicketChips,
   threadPriorityIndicator,
   threadPriorityMenu,
   ticketUiAvailability,
@@ -45,10 +46,12 @@ export function ThreadTicketsSheet(
   const ticketLinks = selectedThread?.ticketLinks;
   const chips = useMemo(
     () =>
-      visibleTicketChips(ticketLinks ?? [], {
-        jiraConnected: availability.jiraConnected,
-        siteUrl,
-      }),
+      orderTicketChips(
+        visibleTicketChips(ticketLinks ?? [], {
+          jiraConnected: availability.jiraConnected,
+          siteUrl,
+        }),
+      ),
     [ticketLinks, availability.jiraConnected, siteUrl],
   );
   const notice = jiraSyncNotice(config?.jiraStatus);

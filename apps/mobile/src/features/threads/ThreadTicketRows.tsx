@@ -1,5 +1,6 @@
 import type {
   TicketChip,
+  TicketChipGroup,
   threadPriorityIndicator,
   threadPriorityMenu,
 } from "@t3tools/client-runtime/state/thread-ticket-presentation";
@@ -30,8 +31,71 @@ function statusPresentation(chip: TicketChip) {
     case "unreachable":
       return { text: chip.status.label, className: "text-warning-foreground" };
     case "pending":
-      return { text: chip.status.label, className: "text-warning-foreground" };
+      return {
+        text: chip.status.label,
+        className:
+          chip.status.tone === "warning" ? "text-warning-foreground" : "text-foreground-muted",
+      };
   }
+}
+
+const GROUP_TINT_CLASS = {
+  inProgress: "accent-adaptive-sky-600-400",
+  toDo: null,
+  pending: null,
+  unreachable: "accent-warning-foreground",
+  done: "accent-adaptive-emerald-600-400",
+} as const satisfies Record<TicketChipGroup, string | null>;
+
+function cardChipTintClass(chip: TicketChip): string | null {
+  return chip.group === "pending" &&
+    chip.status.kind === "pending" &&
+    chip.status.tone === "warning"
+    ? "accent-warning-foreground"
+    : GROUP_TINT_CLASS[chip.group];
+}
+
+/** Spoken form of the inbox card's ticket chip, appended to the row's accessibility label. */
+export function threadCardTicketAccessibilityLabel(card: {
+  readonly chip: TicketChip;
+  readonly others: number;
+}): string {
+  const { chip, others } = card;
+  const status = statusPresentation(chip).text;
+  const more = others > 0 ? ` and ${others} more ${others === 1 ? "ticket" : "tickets"}` : "";
+  return `Jira ${chip.key}, ${status}${more}`;
+}
+
+/** Non-interactive: the row press opens the thread, and tiny tap targets inside rows are poor on touch. */
+export function ThreadCardTicketChip(props: {
+  readonly chip: TicketChip;
+  readonly others: number;
+  readonly selected: boolean;
+  readonly mutedTintClassName: string;
+  readonly mutedTextClassName: string;
+  readonly faintTextClassName: string;
+  readonly selectedTintClassName: string;
+  readonly monoFontFamily: string;
+}) {
+  const { chip, others, selected } = props;
+  const tint = selected
+    ? props.selectedTintClassName
+    : (cardChipTintClass(chip) ?? props.mutedTintClassName);
+  return (
+    <View className="shrink-0 flex-row items-center gap-1" testID="thread-card-ticket">
+      <SymbolView name="ticket" size={12} tintColorClassName={tint} type="monochrome" />
+      <Text
+        className={cn("text-xs", props.mutedTextClassName)}
+        style={{ fontFamily: props.monoFontFamily }}
+        numberOfLines={1}
+      >
+        {chip.key}
+      </Text>
+      {others > 0 ? (
+        <Text className={cn("text-xs", props.faintTextClassName)}>+{others}</Text>
+      ) : null}
+    </View>
+  );
 }
 
 export function ticketChipRowKey(chip: TicketChip) {
