@@ -4,7 +4,13 @@ import { threadHasTicketData } from "@t3tools/client-runtime/state/thread-ticket
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadContextGlyphBadge, ThreadContextTooltipLine } from "../pacing/ThreadContextGlyph";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
+import {
+  TICKET_CHIP_DIFF_HIDE_CLASS,
+  TICKET_CHIP_PR_HIDE_CLASS,
+  ThreadCardTicketSlot,
+} from "../tickets/ThreadCardTicket";
 import { ThreadPriorityIndicator } from "../tickets/ThreadPriorityIndicator";
+import { ThreadTicketHoverFooter } from "../tickets/ThreadTicketHoverSummary";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
@@ -34,6 +40,7 @@ import {
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
+  visibleThreadTicketLinks,
 } from "@t3tools/contracts";
 
 import type { TimestampFormat } from "@t3tools/contracts/settings";
@@ -232,6 +239,9 @@ function SidebarProviderStack(props: {
   );
 }
 
+const HOVER_CARD_FOOTER_CLASS_NAME =
+  "border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground";
+
 function SidebarThreadTooltip({
   thread,
   project,
@@ -269,15 +279,23 @@ function SidebarThreadTooltip({
     .filter((instanceId) => instanceId !== modelInstanceId)
     .map((instanceId) => providerEntryByInstanceId.get(instanceId)?.displayName ?? instanceId);
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
+  const pullRequests =
+    supportsMultiplePullRequests && thread.pullRequests.length > 0 ? (
+      <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} />
+    ) : null;
   return (
     <ThreadHoverCardPopup side="right" align="start" sideOffset={4}>
       <ThreadHoverCard
         title={thread.title}
         footer={
-          supportsMultiplePullRequests && thread.pullRequests.length > 0 ? (
-            <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
-              <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} />
-            </div>
+          visibleThreadTicketLinks(thread.ticketLinks).length > 0 ? (
+            <ThreadTicketHoverFooter
+              thread={thread}
+              pullRequests={pullRequests}
+              className={HOVER_CARD_FOOTER_CLASS_NAME}
+            />
+          ) : pullRequests ? (
+            <div className={HOVER_CARD_FOOTER_CLASS_NAME}>{pullRequests}</div>
           ) : null
         }
       >
@@ -1161,38 +1179,55 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </span>
     ) : null;
   const diff = latestRunDiff(thread);
+  const hasTicketLinks = visibleThreadTicketLinks(thread.ticketLinks).length > 0;
   // Only the trailing icons would remain, so the row moves them to the title line instead.
   const metaLineEmpty =
     !thread.branch &&
     !showsScratchMachine &&
+    !hasTicketLinks &&
     prBadge === null &&
     diff === null &&
     runningTerminalIds.length === 0;
+  const branchSlot = thread.branch ? (
+    <>
+      <ThreadWorktreeIndicator thread={thread} />
+      <span className="flex min-w-0 flex-1">
+        <MiddleTruncate value={thread.branch} showTitle={false} />
+      </span>
+    </>
+  ) : showsScratchMachine ? (
+    <>
+      <EnvironmentMachineIcon
+        aria-hidden
+        kind={props.environmentMachine}
+        className="size-3 shrink-0"
+      />
+      <span className="min-w-0 flex-1 truncate">{props.scratchMachineLabel}</span>
+    </>
+  ) : (
+    <span className="flex-1" />
+  );
+  const handleTicketListClick = () => {
+    if (!props.isRouteThread) onThreadActivate(threadRef);
+  };
   const metaLine = metaLineEmpty ? null : (
-    <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-      {thread.branch ? (
-        <>
-          <ThreadWorktreeIndicator thread={thread} />
-          <span className="flex min-w-0 flex-1">
-            <MiddleTruncate value={thread.branch} showTitle={false} />
-          </span>
-        </>
-      ) : showsScratchMachine ? (
-        <>
-          <EnvironmentMachineIcon
-            aria-hidden
-            kind={props.environmentMachine}
-            className="size-3 shrink-0"
-          />
-          <span className="min-w-0 flex-1 truncate">{props.scratchMachineLabel}</span>
-        </>
+    <div className="group/meta @container/meta mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+      {/* The ticket takes the branch's place; rows without links never mount the slot. */}
+      {hasTicketLinks ? (
+        <ThreadCardTicketSlot
+          thread={thread}
+          fallback={branchSlot}
+          onOpenTicketList={handleTicketListClick}
+        />
       ) : (
-        <span className="flex-1" />
+        branchSlot
       )}
       {terminalStatusIcon}
-      {prBadge}
+      {prBadge ? (
+        <span className={cn("contents", TICKET_CHIP_PR_HIDE_CLASS)}>{prBadge}</span>
+      ) : null}
       {diff ? (
-        <span className="shrink-0 font-mono">
+        <span className={cn("shrink-0 font-mono", TICKET_CHIP_DIFF_HIDE_CLASS)}>
           <span className="text-diff-addition-foreground">+{formatDiffCount(diff.insertions)}</span>{" "}
           <span className="text-diff-deletion-foreground">−{formatDiffCount(diff.deletions)}</span>
         </span>
