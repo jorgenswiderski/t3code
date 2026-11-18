@@ -44,7 +44,7 @@ function Card({
   fixture,
   rows = 1,
   growingSection = "data-thread-automations-panel",
-  automationRows = 0,
+  growingRows = 0,
   serverOverflowRows = 0,
 }: {
   threadRef: ScopedThreadRef;
@@ -52,10 +52,10 @@ function Card({
   fixture: ReturnType<typeof setup>;
   /** Rows of 100px shown at full density. Compact always takes 50px. */
   rows?: number;
-  /** Marker of the growing section that `automationRows` renders. */
+  /** Marker of the section that `growingRows` renders. */
   growingSection?: "data-thread-automations-panel" | "data-thread-tickets-panel";
   /** Rows of 100px in a growing section shown at full density. */
-  automationRows?: number;
+  growingRows?: number;
   /** Rows of 100px that expanded server lists add, which density ignores. */
   serverOverflowRows?: number;
 }) {
@@ -86,8 +86,8 @@ function Card({
               <p style={{ height: density === "full" ? rows * 100 : 50 }}>
                 Details for {threadRef.threadId}
               </p>
-              {density === "full" && automationRows > 0 ? (
-                <section {...{ [growingSection]: "" }} style={{ height: automationRows * 100 }} />
+              {density === "full" && growingRows > 0 ? (
+                <section {...{ [growingSection]: "" }} style={{ height: growingRows * 100 }} />
               ) : null}
               {density === "full" && serverOverflowRows > 0 ? (
                 <div
@@ -191,7 +191,7 @@ it.each([
       fixture={fixture}
       rows={2}
       growingSection={growingSection}
-      automationRows={6}
+      growingRows={6}
     />,
   );
   await expect.element(page.getByText("Details for thread-b")).toBeVisible();
