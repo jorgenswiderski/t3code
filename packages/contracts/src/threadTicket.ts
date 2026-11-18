@@ -122,6 +122,11 @@ export function visibleThreadTicketLinks(
   return links.filter((link) => link.source !== "branch-dismissed");
 }
 
+/** Allocation-free `visibleThreadTicketLinks(links).length > 0`, for per-row render gates. */
+export function hasVisibleThreadTicketLinks(links: ReadonlyArray<ThreadTicketLink>): boolean {
+  return links.some((link) => link.source !== "branch-dismissed");
+}
+
 export function isReadableThreadTicketLink(link: ThreadTicketLink): boolean {
   return link.source !== "branch-dismissed" && link.snapshot !== null && link.syncError === null;
 }

@@ -1,6 +1,7 @@
 import {
   findPriorityInScale,
   jiraBrowseUrl,
+  hasVisibleThreadTicketLinks,
   visibleThreadTicketLinks,
   type PriorityRef,
   type ThreadTicketLink,
@@ -89,7 +90,7 @@ export function threadPriorityIndicator(
 /** Rows without any ticket data skip mounting the indicator, so they subscribe to nothing extra. */
 export function threadHasTicketData(thread: IndicatorThread): boolean {
   return (
-    visibleThreadTicketLinks(thread.ticketLinks).length > 0 ||
+    hasVisibleThreadTicketLinks(thread.ticketLinks) ||
     thread.priority.user !== null ||
     thread.priority.agent !== null
   );

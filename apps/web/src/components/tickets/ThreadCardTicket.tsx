@@ -41,7 +41,11 @@ export const TICKET_CHIP_PR_HIDE_CLASS =
 export const TICKET_CHIP_DIFF_HIDE_CLASS =
   "@max-[216px]/meta:group-has-[[data-ticket-chip=s]]/meta:hidden @max-[238px]/meta:group-has-[[data-ticket-chip=m]]/meta:hidden @max-[259px]/meta:group-has-[[data-ticket-chip=l]]/meta:hidden @max-[288px]/meta:group-has-[[data-ticket-chip=xl]]/meta:hidden";
 
-/** Mounted only for threads with visible ticket links; renders `fallback` when the environment has no ticket support. */
+/**
+ * Mounted only for threads with visible ticket links; renders `fallback` when the environment has
+ * no ticket support. A null `onOpenTicketList` means there is nowhere to go (the thread is already
+ * open), so several tickets render as a plain label instead of a button that does nothing.
+ */
 export function ThreadCardTicketSlot({
   thread,
   fallback,
@@ -52,7 +56,7 @@ export function ThreadCardTicketSlot({
     "environmentId" | "id" | "ticketLinks" | "priority"
   >;
   readonly fallback: ReactNode;
-  readonly onOpenTicketList: () => void;
+  readonly onOpenTicketList: (() => void) | null;
 }) {
   const context = useAtomValue(environmentTicketChipContextAtom(thread.environmentId));
   const scale = useAtomValue(environmentTicketPriorityScaleAtom(thread.environmentId));
@@ -80,7 +84,7 @@ function ThreadCardTicketChip({
   readonly thread: Pick<EnvironmentThreadShell, "environmentId" | "id">;
   readonly chip: TicketChip;
   readonly others: number;
-  readonly onOpenTicketList: () => void;
+  readonly onOpenTicketList: (() => void) | null;
 }) {
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const openLink = useOpenLink(threadRef);
@@ -108,7 +112,7 @@ function ThreadCardTicketChip({
   const openList = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    onOpenTicketList();
+    onOpenTicketList?.();
   };
 
   const content = (
@@ -132,14 +136,14 @@ function ThreadCardTicketChip({
     </TooltipPopup>
   );
 
-  if (!opensLink && others === 0) {
+  if (!opensLink && !(others > 0 && onOpenTicketList !== null)) {
     return (
       <Tooltip>
         <TooltipTrigger
           render={
             <span
               role="img"
-              aria-label={label}
+              aria-label={chip.title === null ? label : `${label}, ${chip.title}`}
               data-ticket-chip={chipSize(chip.key, others)}
               className="inline-flex shrink-0 items-center"
             />

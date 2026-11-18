@@ -40,7 +40,7 @@ import {
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
-  visibleThreadTicketLinks,
+  hasVisibleThreadTicketLinks,
 } from "@t3tools/contracts";
 
 import type { TimestampFormat } from "@t3tools/contracts/settings";
@@ -288,7 +288,7 @@ function SidebarThreadTooltip({
       <ThreadHoverCard
         title={thread.title}
         footer={
-          visibleThreadTicketLinks(thread.ticketLinks).length > 0 ? (
+          hasVisibleThreadTicketLinks(thread.ticketLinks) ? (
             <ThreadTicketHoverFooter
               thread={thread}
               pullRequests={pullRequests}
@@ -1179,7 +1179,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </span>
     ) : null;
   const diff = latestRunDiff(thread);
-  const hasTicketLinks = visibleThreadTicketLinks(thread.ticketLinks).length > 0;
+  const hasTicketLinks = hasVisibleThreadTicketLinks(thread.ticketLinks);
   // Only the trailing icons would remain, so the row moves them to the title line instead.
   const metaLineEmpty =
     !thread.branch &&
@@ -1207,9 +1207,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   ) : (
     <span className="flex-1" />
   );
-  const handleTicketListClick = () => {
-    if (!props.isRouteThread) onThreadActivate(threadRef);
-  };
+  const handleTicketListClick = () => onThreadActivate(threadRef);
   const metaLine = metaLineEmpty ? null : (
     <div className="group/meta @container/meta mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
       {/* The ticket takes the branch's place; rows without links never mount the slot. */}
@@ -1217,7 +1215,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         <ThreadCardTicketSlot
           thread={thread}
           fallback={branchSlot}
-          onOpenTicketList={handleTicketListClick}
+          onOpenTicketList={props.isRouteThread ? null : handleTicketListClick}
         />
       ) : (
         branchSlot
