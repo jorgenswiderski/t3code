@@ -34,7 +34,7 @@ import {
 } from "./threadPullRequest.ts";
 import { secretRequestPageUrl } from "./secretRequest.ts";
 import { hasOnlyPairedSurrogates } from "./threadMetadataMcp.ts";
-import { ThreadTicketLink } from "./threadTicket.ts";
+import { StoredThreadTicketLinks } from "./threadTicket.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
   OrchestrationV2Actor,
@@ -447,7 +447,7 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
   pullRequests: Schema.optional(Schema.Array(OrchestratorMcpThreadPullRequest)),
-  ticketLinks: Schema.optional(Schema.Array(ThreadTicketLink)),
+  ticketLinks: Schema.optional(StoredThreadTicketLinks),
   titleRegeneration: Schema.NullOr(ThreadTitleRegeneration),
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
