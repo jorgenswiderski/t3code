@@ -25,35 +25,17 @@ import { useEnvironmentScope } from "../../state/session";
 import { formatDayAwareTimestamp, formatRelativeTimeLabel } from "../../timestampFormat";
 import { ticketsGroupKey, ticketsSectionKey, useUiStateStore } from "../../uiStateStore";
 import { openLinkTicketDialog } from "../tickets/linkTicketDialogState";
+import {
+  ticketChipFallbackText,
+  ticketChipIconToneClass,
+  ticketChipStatusText,
+} from "../tickets/ticketChipPresentation";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { THREAD_DETAILS_PANEL_LABEL_CLASS } from "./threadDetailsPanelStyles";
-
-type ChipTone = "success" | "info" | "neutral" | "muted" | "warning";
-
-const TONE_TEXT_CLASS: Record<ChipTone, string> = {
-  info: "text-info-foreground",
-  success: "text-success-foreground",
-  warning: "text-warning-foreground",
-  neutral: "text-muted-foreground",
-  muted: "text-muted-foreground",
-};
-
-function chipTone(chip: TicketChip): ChipTone {
-  return chip.status.kind === "unreachable" ? "warning" : chip.status.tone;
-}
-
-function chipStatusText(chip: TicketChip): string {
-  const status = chip.status;
-  return status.kind === "synced"
-    ? status.name
-    : status.kind === "unreachable"
-      ? status.reasonText
-      : status.label;
-}
 
 function TicketTooltipBody({ chip }: { readonly chip: TicketChip }) {
   const syncedAgo = chip.syncedAt ? formatRelativeTimeLabel(chip.syncedAt) : "";
@@ -63,7 +45,7 @@ function TicketTooltipBody({ chip }: { readonly chip: TicketChip }) {
       <div className="min-w-0 font-medium text-foreground">{chip.title ?? chip.key}</div>
       <div className="grid gap-1 text-foreground/75">
         <div className="min-w-0 truncate">
-          <span className={TONE_TEXT_CLASS[chipTone(chip)]}>{chipStatusText(chip)}</span>
+          <span className={ticketChipIconToneClass(chip)}>{ticketChipStatusText(chip)}</span>
           {chip.priorityName ? ` \u00b7 Priority ${chip.priorityName}` : null}
         </div>
         <div className="min-w-0 truncate">{source}</div>
@@ -84,8 +66,7 @@ function TicketRow({
   onOpen,
   onUnlink,
 }: TicketRowActions & { chip: TicketChip }) {
-  const tone = chipTone(chip);
-  const fallback = chip.status.kind === "synced" ? "" : chipStatusText(chip);
+  const fallback = ticketChipFallbackText(chip);
   return (
     <li
       data-ticket-key={chip.key}
@@ -109,7 +90,10 @@ function TicketRow({
             />
           }
         >
-          <TicketIcon aria-hidden className={cn("size-4 shrink-0", TONE_TEXT_CLASS[tone])} />
+          <TicketIcon
+            aria-hidden
+            className={cn("size-4 shrink-0", ticketChipIconToneClass(chip))}
+          />
           <span
             className={cn(
               "flex min-w-0 flex-1 items-center gap-2",
@@ -122,14 +106,14 @@ function TicketRow({
               className={cn(
                 "min-w-0 flex-1 truncate",
                 THREAD_DETAILS_PANEL_LABEL_CLASS,
-                chip.title !== null
+                fallback === null
                   ? "text-muted-foreground"
-                  : tone === "warning"
+                  : fallback.warning
                     ? "text-warning-foreground"
                     : "text-muted-foreground italic",
               )}
             >
-              {chip.title ?? fallback}
+              {chip.title ?? fallback?.text}
             </span>
           </span>
         </TooltipTrigger>
