@@ -852,6 +852,9 @@ function threadDetail(
     interactionMode: projection.thread.interactionMode,
     linkedPullRequest: projection.thread.linkedPullRequest ?? null,
     pullRequests: threadPullRequests(projection.thread.pullRequests),
+    ...(projection.thread.ticketLinks?.length
+      ? { ticketLinks: projection.thread.ticketLinks }
+      : {}),
     titleRegeneration:
       projection.thread.titleRegeneration === undefined ||
       projection.thread.titleRegeneration === null
