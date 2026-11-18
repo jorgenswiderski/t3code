@@ -122,15 +122,38 @@ function makeRun(input: {
   };
 }
 
-it("readThread preserves caller access errors and prefers activity-run status over a newer cancelled queued run", async () => {
+it("readThread preserves caller access errors, carries ticket links, and prefers activity-run status over a newer cancelled queued run", async () => {
   let callerUnavailable = false;
+  const ticketLinks = [
+    {
+      tracker: "jira" as const,
+      key: "ACME-1",
+      url: "https://acme.atlassian.net/browse/ACME-1",
+      source: "manual" as const,
+      linkedAt: "2026-08-04T12:00:00.000Z",
+      snapshot: null,
+      syncError: "not_found" as const,
+    },
+    {
+      tracker: "jira" as const,
+      key: "ACME-2",
+      url: null,
+      source: "branch-dismissed" as const,
+      linkedAt: "2026-08-04T12:00:00.000Z",
+      snapshot: null,
+      syncError: null,
+    },
+  ];
   const projection = {
-    thread: baseThread({
-      threadId: parentThreadId,
-      title: "Parent",
-      instanceId: parentInstanceId,
-      model: "gpt-5.4",
-    }),
+    thread: {
+      ...baseThread({
+        threadId: parentThreadId,
+        title: "Parent",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      ticketLinks,
+    },
     runs: [
       makeRun({ id: activeRunId, ordinal: 1, status: "running" }),
       makeRun({ id: cancelledRunId, ordinal: 2, status: "cancelled" }),
@@ -197,6 +220,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     expect(result.thread.status).toBe("running");
     expect(result.thread.latestRunId).toBe(cancelledRunId);
     expect(result.thread.activeRunId).toBe(activeRunId);
+    expect(result.thread.ticketLinks).toEqual(ticketLinks);
 
     callerUnavailable = true;
     const denied = yield* service
@@ -215,12 +239,15 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
   const text = "a😀bc";
   const itemId = TurnItemId.make("turn-item-mcp-reasoning");
   const projection = {
-    thread: baseThread({
-      threadId: parentThreadId,
-      title: "Parent",
-      instanceId: parentInstanceId,
-      model: "gpt-5.4",
-    }),
+    thread: {
+      ...baseThread({
+        threadId: parentThreadId,
+        title: "Parent",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      ticketLinks: [],
+    },
     runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
     visibleTurnItems: [],
     providerTurns: [],
@@ -293,6 +320,7 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
           textOffset,
           maxCharsPerItem,
         });
+        expect(result.thread).not.toHaveProperty("ticketLinks");
         textOffset += text.length;
         expect(result.items[0]).toMatchObject({
           text,
