@@ -128,7 +128,9 @@ export type TicketChipStatus =
       readonly label: string;
       readonly reasonText: string;
     }
-  | { readonly kind: "pending"; readonly label: string };
+  | { readonly kind: "pending"; readonly label: string; readonly tone: "muted" | "warning" };
+
+export type TicketChipGroup = "inProgress" | "toDo" | "pending" | "unreachable" | "done";
 
 export interface TicketChip {
   readonly key: string;
@@ -137,6 +139,8 @@ export interface TicketChip {
   readonly sourceLabel: string;
   readonly priorityName: string | null;
   readonly status: TicketChipStatus;
+  readonly group: TicketChipGroup;
+  readonly syncedAt: string | null;
   readonly unreachable: boolean;
 }
 
@@ -176,6 +180,7 @@ export function ticketChipModel(link: ThreadTicketLink, context: TicketChipConte
         : {
             kind: "pending",
             label: context.jiraConnected ? "Waiting for Jira" : "Jira not connected",
+            tone: context.jiraConnected ? "muted" : "warning",
           };
   return {
     key: link.key,
@@ -184,8 +189,23 @@ export function ticketChipModel(link: ThreadTicketLink, context: TicketChipConte
     sourceLabel: SOURCE_LABELS[link.source],
     priorityName: link.snapshot?.priority?.name ?? null,
     status,
+    group: chipGroupOf(link),
+    syncedAt: link.snapshot?.syncedAt ?? null,
     unreachable: link.syncError !== null,
   };
+}
+
+function chipGroupOf(link: ThreadTicketLink): TicketChipGroup {
+  if (link.syncError !== null) return "unreachable";
+  if (link.snapshot === null) return "pending";
+  switch (link.snapshot.statusCategory) {
+    case "done":
+      return "done";
+    case "indeterminate":
+      return "inProgress";
+    default:
+      return "toDo";
+  }
 }
 
 export function visibleTicketChips(
@@ -193,6 +213,107 @@ export function visibleTicketChips(
   context: TicketChipContext,
 ): ReadonlyArray<TicketChip> {
   return visibleThreadTicketLinks(links).map((link) => ticketChipModel(link, context));
+}
+
+export const TICKET_CHIP_GROUP_ORDER: ReadonlyArray<TicketChipGroup> = [
+  "inProgress",
+  "toDo",
+  "pending",
+  "unreachable",
+  "done",
+];
+
+const GROUP_RANK = Object.fromEntries(
+  TICKET_CHIP_GROUP_ORDER.map((group, index) => [group, index]),
+) as Record<TicketChipGroup, number>;
+
+/** Stable: group order first, link order within a group. The one ordering every surface uses. */
+export function orderTicketChips(chips: ReadonlyArray<TicketChip>): ReadonlyArray<TicketChip> {
+  return chips
+    .map((chip, index) => ({ chip, index }))
+    .sort((a, b) => GROUP_RANK[a.chip.group] - GROUP_RANK[b.chip.group] || a.index - b.index)
+    .map(({ chip }) => chip);
+}
+
+export interface TicketChipGroupModel {
+  readonly group: TicketChipGroup;
+  readonly label: string;
+  readonly tone: "info" | "neutral" | "muted" | "warning" | "success";
+  readonly chips: ReadonlyArray<TicketChip>;
+  readonly defaultCollapsed: boolean;
+}
+
+/** Non-empty groups only, in `TICKET_CHIP_GROUP_ORDER`. */
+export function groupTicketChips(
+  chips: ReadonlyArray<TicketChip>,
+): ReadonlyArray<TicketChipGroupModel> {
+  const models: TicketChipGroupModel[] = [];
+  for (const group of TICKET_CHIP_GROUP_ORDER) {
+    const members = chips.filter((chip) => chip.group === group);
+    const first = members[0];
+    if (!first) continue;
+    const pending = first.status.kind === "pending" ? first.status : null;
+    models.push({
+      group,
+      label:
+        group === "inProgress"
+          ? "In progress"
+          : group === "toDo"
+            ? "To do"
+            : group === "unreachable"
+              ? "Unreachable"
+              : group === "done"
+                ? "Done"
+                : (pending?.label ?? "Pending"),
+      tone:
+        group === "inProgress"
+          ? "info"
+          : group === "toDo"
+            ? "neutral"
+            : group === "unreachable"
+              ? "warning"
+              : group === "done"
+                ? "success"
+                : (pending?.tone ?? "muted"),
+      chips: members,
+      defaultCollapsed: group === "unreachable" || group === "done",
+    });
+  }
+  return models;
+}
+
+/** The one ticket the inbox card shows. Null when the thread has no visible links. */
+export function threadCardTicket(
+  thread: IndicatorThread,
+  scale: ReadonlyArray<PriorityRef>,
+  context: TicketChipContext,
+): { readonly chip: TicketChip; readonly others: number } | null {
+  const chips = visibleTicketChips(thread.ticketLinks, context);
+  if (chips.length === 0) return null;
+  const effective = effectiveThreadPriority(thread, scale);
+  const byPriority =
+    effective?.source === "jira" ? chips.find((chip) => chip.key === effective.ticketKey) : null;
+  const chip = byPriority ?? chips.find((candidate) => candidate.group !== "done") ?? chips[0]!;
+  return { chip, others: chips.length - 1 };
+}
+
+export function ticketHoverSummary(
+  chips: ReadonlyArray<TicketChip>,
+  cap = 4,
+): {
+  readonly lines: ReadonlyArray<TicketChip>;
+  readonly hidden: number;
+  readonly hiddenUnreachable: number;
+  readonly hiddenDone: number;
+} {
+  const ordered = orderTicketChips(chips);
+  const hidden = ordered.slice(cap);
+  return {
+    lines: ordered.slice(0, cap),
+    hidden: hidden.length,
+    hiddenUnreachable: hidden.filter((chip) => chip.group === "unreachable").length,
+    hiddenDone: hidden.filter((chip) => chip.group === "done").length,
+  };
 }
 
 export interface TicketUiConfigInput {

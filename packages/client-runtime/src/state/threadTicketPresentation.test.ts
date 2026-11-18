@@ -10,13 +10,18 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  groupTicketChips,
   jiraSyncNotice,
+  orderTicketChips,
   parseTicketMenuAction,
   priorityGlyphLevel,
+  TICKET_CHIP_GROUP_ORDER,
+  threadCardTicket,
   threadHasTicketData,
   threadPriorityIndicator,
   threadPriorityMenu,
   ticketChipModel,
+  ticketHoverSummary,
   ticketUiAvailability,
   visibleTicketChips,
 } from "./threadTicketPresentation.ts";
@@ -259,11 +264,25 @@ describe("ticketChipModel", () => {
     expect(ticketChipModel(link("A-1", { snapshot: null }), connected).status).toEqual({
       kind: "pending",
       label: "Waiting for Jira",
+      tone: "muted",
     });
     expect(
       ticketChipModel(link("A-1", { snapshot: null }), { jiraConnected: false, siteUrl: null })
         .status,
-    ).toEqual({ kind: "pending", label: "Jira not connected" });
+    ).toEqual({ kind: "pending", label: "Jira not connected", tone: "warning" });
+  });
+
+  it("groups chips by status and keeps the sync time", () => {
+    const group = (options: Parameters<typeof link>[1]) =>
+      ticketChipModel(link("A-1", options), connected).group;
+    expect(group({ statusCategory: "indeterminate" })).toBe("inProgress");
+    expect(group({ statusCategory: "new" })).toBe("toDo");
+    expect(group({ statusCategory: "done" })).toBe("done");
+    expect(group({ syncError: "not_found" })).toBe("unreachable");
+    expect(group({ snapshot: null })).toBe("pending");
+    expect(group({ snapshot: null, syncError: "forbidden" })).toBe("unreachable");
+    expect(ticketChipModel(link("A-1"), connected).syncedAt).toBe("2026-06-01T00:00:00.000Z");
+    expect(ticketChipModel(link("A-1", { snapshot: null }), connected).syncedAt).toBeNull();
   });
 
   it("opens the link's own url, else the saved site's browse url, else nothing", () => {
@@ -296,6 +315,125 @@ describe("ticketChipModel", () => {
       ["C-3", "Linked by the agent"],
       ["D-4", "Found in the branch name"],
     ]);
+  });
+});
+
+describe("ticket grouping and card selection", () => {
+  const connected = { jiraConnected: true, siteUrl: null };
+  const mixed = [
+    link("D-1", { statusCategory: "done" }),
+    link("U-1", { syncError: "not_found" }),
+    link("T-1", { statusCategory: "new" }),
+    link("P-1", { snapshot: null }),
+    link("I-1", { statusCategory: "indeterminate" }),
+    link("T-2", { statusCategory: "new" }),
+    link("D-2", { statusCategory: "done" }),
+  ];
+  const chips = visibleTicketChips(mixed, connected);
+
+  it("orders by group, then link order, without mutating the input", () => {
+    expect(orderTicketChips(chips).map((chip) => chip.key)).toEqual([
+      "I-1",
+      "T-1",
+      "T-2",
+      "P-1",
+      "U-1",
+      "D-1",
+      "D-2",
+    ]);
+    expect(chips[0]?.key).toBe("D-1");
+    expect(TICKET_CHIP_GROUP_ORDER).toEqual([
+      "inProgress",
+      "toDo",
+      "pending",
+      "unreachable",
+      "done",
+    ]);
+  });
+
+  it("builds non-empty group models with labels, tones and fold defaults", () => {
+    expect(
+      groupTicketChips(chips).map((model) => [
+        model.group,
+        model.label,
+        model.tone,
+        model.chips.length,
+        model.defaultCollapsed,
+      ]),
+    ).toEqual([
+      ["inProgress", "In progress", "info", 1, false],
+      ["toDo", "To do", "neutral", 2, false],
+      ["pending", "Waiting for Jira", "muted", 1, false],
+      ["unreachable", "Unreachable", "warning", 1, true],
+      ["done", "Done", "success", 2, true],
+    ]);
+    expect(groupTicketChips(chips.filter((chip) => chip.group === "done"))).toHaveLength(1);
+    expect(groupTicketChips([])).toEqual([]);
+    const offline = visibleTicketChips([link("P-1", { snapshot: null })], {
+      jiraConnected: false,
+      siteUrl: null,
+    });
+    expect(groupTicketChips(offline)[0]).toMatchObject({
+      label: "Jira not connected",
+      tone: "warning",
+    });
+  });
+
+  it("picks the card ticket: jira-priority ticket, else first not done, else first", () => {
+    const high = ref("High");
+    const low = ref("Low");
+    const scale = [high, low];
+    expect(threadCardTicket(thread(), scale, connected)).toBeNull();
+    expect(
+      threadCardTicket(
+        thread([link("D-1", { statusCategory: "done" }), link("T-1"), link("T-2")]),
+        scale,
+        connected,
+      ),
+    ).toMatchObject({ chip: { key: "T-1" }, others: 2 });
+    expect(
+      threadCardTicket(
+        thread([link("T-1", { priority: low }), link("T-2", { priority: high }), link("T-3")]),
+        scale,
+        connected,
+      )?.chip.key,
+    ).toBe("T-2");
+    expect(
+      threadCardTicket(
+        thread([link("D-1", { statusCategory: "done", priority: high }), link("T-1")]),
+        scale,
+        connected,
+      )?.chip.key,
+    ).toBe("D-1");
+    expect(
+      threadCardTicket(
+        thread([link("D-1", { statusCategory: "done" }), link("D-2", { statusCategory: "done" })]),
+        scale,
+        connected,
+      ),
+    ).toMatchObject({ chip: { key: "D-1" }, others: 1 });
+    expect(
+      threadCardTicket(
+        thread([link("B-1", { source: "branch-dismissed" }), link("T-1")]),
+        scale,
+        connected,
+      ),
+    ).toMatchObject({ chip: { key: "T-1" }, others: 0 });
+    expect(
+      threadCardTicket(thread([link("B-1", { source: "branch-dismissed" })]), scale, connected),
+    ).toBeNull();
+  });
+
+  it("caps hover lines and counts unreachable and done among the hidden ones", () => {
+    const summary = ticketHoverSummary(chips);
+    expect(summary.lines.map((chip) => chip.key)).toEqual(["I-1", "T-1", "T-2", "P-1"]);
+    expect(summary).toMatchObject({ hidden: 3, hiddenUnreachable: 1, hiddenDone: 2 });
+    expect(ticketHoverSummary(chips, 6)).toMatchObject({
+      hidden: 1,
+      hiddenUnreachable: 0,
+      hiddenDone: 1,
+    });
+    expect(ticketHoverSummary(chips, 20)).toMatchObject({ hidden: 0, hiddenDone: 0 });
   });
 });
 
