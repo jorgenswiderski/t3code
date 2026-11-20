@@ -165,3 +165,10 @@ export function findPriorityInScale(
   const ref = scale[position];
   return ref === undefined ? null : { ref, position };
 }
+
+/** Keys thread search matches: every link the thread shows, so not dismissed branch links. */
+export function searchableTicketKeys(
+  links: ReadonlyArray<ThreadTicketLink> | undefined,
+): ReadonlyArray<string> {
+  return (links ?? []).flatMap((link) => (link.source === "branch-dismissed" ? [] : [link.key]));
+}

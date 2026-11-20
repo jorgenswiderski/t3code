@@ -8,6 +8,7 @@ import {
   ThreadId,
   type OrchestrationV2DomainEvent,
   type ThreadLinkedPullRequest,
+  type ThreadTicketLink,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
@@ -74,6 +75,7 @@ const thread = (
     readonly settledAt?: DateTime.Utc;
     readonly linkedPullRequest?: ThreadLinkedPullRequest;
     readonly branchPullRequest?: ThreadLinkedPullRequest;
+    readonly ticketLinks?: ReadonlyArray<ThreadTicketLink>;
   } = {},
 ): OrchestrationV2DomainEvent => ({
   id: EventId.make(`created:${threadId}`),
@@ -95,6 +97,7 @@ const thread = (
     worktreePath: null,
     linkedPullRequest: overrides.linkedPullRequest ?? null,
     branchPullRequest: overrides.branchPullRequest ?? null,
+    ...(overrides.ticketLinks ? { ticketLinks: overrides.ticketLinks } : {}),
     activeProviderThreadId: null,
     lineage: overrides.subagentOf
       ? {
@@ -119,6 +122,16 @@ const thread = (
     lastVisitedAt: null,
     deletedAt: overrides.deletedAt ?? null,
   },
+});
+
+const ticketLink = (key: string, source: ThreadTicketLink["source"]): ThreadTicketLink => ({
+  tracker: "jira",
+  key,
+  url: null,
+  source,
+  linkedAt: DateTime.formatIso(at(0)),
+  snapshot: null,
+  syncError: null,
 });
 
 const message = (
@@ -1041,7 +1054,7 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
     }),
   );
 
-  it.effect("matches the branch and linked pull requests, like the palette", () =>
+  it.effect("matches the branch, linked pull requests, and ticket keys, like the palette", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const search = yield* ThreadSearch.ThreadSearch;
@@ -1055,8 +1068,20 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
       });
       const branch = ThreadId.make("thread:heron-branch");
       const linked = ThreadId.make("thread:heron-linked");
+      const ticketed = ThreadId.make("thread:heron-ticket");
+      const dismissed = ThreadId.make("thread:heron-dismissed");
       yield* Effect.forEach(
         [
+          thread(ticketed, project, {
+            title: "Heron",
+            settledAt: at(10),
+            ticketLinks: [ticketLink("EPG-242", "manual")],
+          }),
+          thread(dismissed, project, {
+            title: "Heron",
+            settledAt: at(10),
+            ticketLinks: [ticketLink("EPG-243", "branch-dismissed")],
+          }),
           thread(branch, project, {
             title: "Heron",
             settledAt: at(10),
@@ -1079,6 +1104,8 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
         });
       assert.deepEqual(yield* find("#4101"), [branch]);
       assert.deepEqual(yield* find("acme/heron#4202"), [linked]);
+      assert.deepEqual(yield* find("EPG-242"), [ticketed]);
+      assert.deepEqual(yield* find("EPG-243"), []);
     }),
   );
 });
@@ -1223,8 +1250,13 @@ it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
       const midWord = ThreadId.make("thread:mid-word");
       const messageOnly = ThreadId.make("thread:message-only");
       const elsewhere = ThreadId.make("thread:elsewhere");
+      const ticketed = ThreadId.make("thread:ticketed");
       yield* Effect.forEach(
         [
+          thread(ticketed, project, {
+            title: "Guide import",
+            ticketLinks: [ticketLink("EPG-242", "agent")],
+          }),
           thread(midWord, project, { title: "Fix oauth redirect" }),
           thread(wordStart, project, { title: "Clean up auth tokens" }),
           thread(messageOnly, project, { title: "Unrelated" }),
@@ -1269,6 +1301,12 @@ it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
           (match) => match.title,
         ),
         ["Clean up auth tokens"],
+      );
+      assert.deepEqual(
+        (yield* search.searchThreads({ query: "epg 242", projectId: project })).matches.map(
+          (match) => match.threadId,
+        ),
+        [ticketed],
       );
     }),
   );
