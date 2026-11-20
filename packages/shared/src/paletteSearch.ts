@@ -818,6 +818,8 @@ export interface ThreadSearchSubject {
     /** Values such as URLs, matched only by the whole query. */
     readonly references?: ReadonlyArray<string>;
   }>;
+  /** Linked ticket keys, such as Jira's "EPG-242". */
+  readonly tickets?: ReadonlyArray<string>;
   /** Latest user activity, in epoch ms. */
   readonly activityAt: number | null;
   readonly opens?: ThreadOpenStats | null;
@@ -947,6 +949,7 @@ function matchHint(
       label: "PR",
       text: `#${pullRequest.number}${pullRequest.title ? ` ${pullRequest.title}` : ""}`,
     })),
+    ...(thread.tickets ?? []).map((key) => ({ label: "Ticket", text: key })),
     { label: "Branch", text: searchableBranch(thread.branch) },
     { label: "Project", text: thread.projectTitle },
     { label: "Environment", text: thread.environmentLabel },
@@ -983,6 +986,7 @@ function threadSearchFields(thread: ThreadSearchSubject): ReadonlyArray<Weighted
     fields.push({ value: `#${pullRequest.number}`, weight: 1 });
     if (pullRequest.title) fields.push({ value: pullRequest.title, weight: 0.5 });
   }
+  for (const key of thread.tickets ?? []) fields.push({ value: key, weight: 1 });
   const branch = searchableBranch(thread.branch);
   if (branch) fields.push({ value: branch, weight: 0.6 });
   if (thread.projectTitle) {

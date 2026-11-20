@@ -314,6 +314,17 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
     });
   });
 
+  it("matches linked ticket keys like pull request numbers", () => {
+    const linked = thread("Fix guide import", { tickets: ["EPG-242"] });
+    for (const query of ["EPG-242", "epg 242", "epg-24"]) {
+      expect(scoreThreadSearch(foldSearchQuery(query), linked, NOW)?.explain?.(), query).toEqual(
+        expect.objectContaining({ label: "Ticket", text: "EPG-242" }),
+      );
+    }
+    expect(scoreThreadSearch(foldSearchQuery("EPG-243"), linked, NOW)).toBeNull();
+    expect(rankTitles("EPG-242", [thread("Unrelated"), linked])).toEqual(["Fix guide import"]);
+  });
+
   it("says which field matched when the title does not", () => {
     const subject = thread("Trim model lists", {
       branch: "t3/cleanup-payloads",

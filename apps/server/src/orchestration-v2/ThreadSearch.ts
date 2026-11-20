@@ -4,6 +4,8 @@ import {
   OrchestrationThreadSearchSource,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ThreadOpens,
+  searchableTicketKeys,
+  StoredThreadTicketLinks,
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
   type OrchestrationSearchThreadsInput,
@@ -317,6 +319,7 @@ const OlderSettledTitleRow = Schema.Struct({
   pullRequests: Schema.NullOr(Schema.fromJsonString(Schema.Array(ThreadPullRequestLink))),
   linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
   branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
+  ticketLinks: Schema.NullOr(Schema.fromJsonString(StoredThreadTicketLinks)),
   opens: Schema.NullOr(Schema.String),
   createdAt: IsoDateTime,
   projectTitle: Schema.String,
@@ -381,6 +384,7 @@ export const make = Effect.gen(function* () {
         json_extract(threads.payload_json, '$.pullRequests') AS "pullRequests",
         json_extract(threads.payload_json, '$.linkedPullRequest') AS "linkedPullRequest",
         json_extract(threads.payload_json, '$.branchPullRequest') AS "branchPullRequest",
+        json_extract(threads.payload_json, '$.ticketLinks') AS "ticketLinks",
         json_extract(threads.payload_json, '$.opens') AS opens,
         json_extract(threads.payload_json, '$.createdAt') AS "createdAt",
         projects.title AS "projectTitle",
@@ -560,6 +564,7 @@ export const make = Effect.gen(function* () {
           branch: row.thread.branch,
           projectTitle: row.projectTitle,
           pullRequests: threadSearchPullRequests(row.thread),
+          tickets: searchableTicketKeys(row.thread.ticketLinks),
           // Like the clients: what the user last wrote, else when the thread began.
           activityAt: Date.parse(
             row.latestUserMessageAt ?? DateTime.formatIso(row.thread.createdAt),
@@ -623,6 +628,7 @@ export const make = Effect.gen(function* () {
         linkedPullRequest: row.linkedPullRequest,
         branchPullRequest: row.branchPullRequest,
       }),
+      tickets: searchableTicketKeys(row.ticketLinks ?? undefined),
       // Like the clients: what the user last wrote, else when the thread began.
       activityAt: Date.parse(row.latestUserMessageAt ?? row.createdAt),
       opens: Option.getOrNull(decodeThreadOpens(row.opens)),

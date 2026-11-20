@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   OrchestrationSearchThreadsInput,
   ProjectId,
+  searchableTicketKeys,
   type OrchestrationThreadSearchMatch,
   type OrchestrationV2SearchThreadsInput,
   type OrchestrationV2SearchThreadsResult,
@@ -200,7 +201,12 @@ export type ThreadSearchShell = Pick<
   | "latestUserAuthoredMessageAt"
   | "opens"
 > &
-  Partial<Pick<EnvironmentThreadShell, "pullRequests" | "linkedPullRequest" | "branchPullRequest">>;
+  Partial<
+    Pick<
+      EnvironmentThreadShell,
+      "pullRequests" | "linkedPullRequest" | "branchPullRequest" | "ticketLinks"
+    >
+  >;
 
 /**
  * What the web and mobile palettes rank a thread shell by. Pass the
@@ -262,6 +268,7 @@ function buildThreadSearchSubject(
     projectTitle: projectTitle ?? null,
     environmentLabel: environmentLabel ?? null,
     pullRequests: threadSearchPullRequests(thread),
+    tickets: searchableTicketKeys(thread.ticketLinks),
     activityAt: Number.isFinite(activityAt) ? activityAt : null,
     // This client's own latest open counts too: the server merged it, or has
     // no record yet (an older server ignores opens).
