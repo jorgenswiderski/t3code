@@ -986,7 +986,7 @@ function threadSearchFields(thread: ThreadSearchSubject): ReadonlyArray<Weighted
     fields.push({ value: `#${pullRequest.number}`, weight: 1 });
     if (pullRequest.title) fields.push({ value: pullRequest.title, weight: 0.5 });
   }
-  for (const key of thread.tickets ?? []) fields.push({ value: key, weight: 1 });
+  for (const key of thread.tickets ?? []) fields.push({ value: key, weight: 0.6 });
   const branch = searchableBranch(thread.branch);
   if (branch) fields.push({ value: branch, weight: 0.6 });
   if (thread.projectTitle) {

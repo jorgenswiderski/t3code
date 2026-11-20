@@ -323,6 +323,10 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
     }
     expect(scoreThreadSearch(foldSearchQuery("EPG-243"), linked, NOW)).toBeNull();
     expect(rankTitles("EPG-242", [thread("Unrelated"), linked])).toEqual(["Fix guide import"]);
+    expect(rankTitles("epg", [linked, thread("EPG coverage")])).toEqual([
+      "EPG coverage",
+      "Fix guide import",
+    ]);
   });
 
   it("says which field matched when the title does not", () => {
